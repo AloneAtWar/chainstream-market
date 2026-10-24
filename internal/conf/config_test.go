@@ -23,6 +23,10 @@ chains:
 	if config.Storage.Driver != StorageMemory {
 		t.Fatalf("storage driver = %q", config.Storage.Driver)
 	}
+	if config.Market.MaxHops != defaultMaxHops || len(config.Market.Intervals) != len(DefaultIntervals()) ||
+		config.Market.MinLiquidityUSD != defaultMinLiquidityUSD || config.Market.HistoryDepth != defaultHistoryDepth {
+		t.Fatalf("market defaults = %+v", config.Market)
+	}
 }
 
 func TestParseRejectsInvalidConfig(t *testing.T) {
@@ -34,6 +38,8 @@ func TestParseRejectsInvalidConfig(t *testing.T) {
 		"duplicate id":    "kafka: {brokers: [b]}\nchains: [{name: eth, chain_id: 1, topic: a}, {name: base, chain_id: 1, topic: b}]",
 		"duplicate name":  "kafka: {brokers: [b]}\nchains: [{name: eth, chain_id: 1, topic: a}, {name: eth, chain_id: 2, topic: b}]",
 		"duplicate topic": "kafka: {brokers: [b]}\nchains: [{name: eth, chain_id: 1, topic: a}, {name: base, chain_id: 2, topic: a}]",
+		"bad interval":    "kafka: {brokers: [b]}\nmarket: {intervals: [1500ms]}\nchains: [{name: eth, chain_id: 1, topic: a}]",
+		"negative liq":    "kafka: {brokers: [b]}\nmarket: {min_liquidity_usd: -1}\nchains: [{name: eth, chain_id: 1, topic: a}]",
 		"unknown driver":  "kafka: {brokers: [b]}\nstorage: {driver: clickhouse}\nchains: [{name: eth, chain_id: 1, topic: a}]",
 	}
 	for name, raw := range tests {
