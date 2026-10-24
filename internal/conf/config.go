@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"slices"
 	"strings"
 	"time"
 
@@ -20,7 +21,21 @@ type Config struct {
 	API      API      `yaml:"api"`
 	Holders  Holders  `yaml:"holders"`
 	Registry Registry `yaml:"registry"`
+	Rankings Rankings `yaml:"rankings"`
 	Chains   []Chain  `yaml:"chains"`
+}
+
+// Rankings tunes market-rankings, which rolls market-engine's ClickHouse
+// output, holder counts and registry metadata into the token_rankings table
+// that market-api lists.
+type Rankings struct {
+	RefreshInterval time.Duration `yaml:"refresh_interval"`
+	// CandleInterval is the token candle size summed for the 24h columns;
+	// it must be one of market.intervals.
+	CandleInterval time.Duration `yaml:"candle_interval"`
+	// ReorgWindow is how far behind the last refresh's chain head latest
+	// prices are read again, so a reorg that moved them is picked up.
+	ReorgWindow time.Duration `yaml:"reorg_window"`
 }
 
 // Registry tunes market-registry, which keeps token and pool metadata in
@@ -156,6 +171,10 @@ const (
 	defaultHoldersReconcileBatch = 200
 	defaultRPCBatchSize          = 100
 	defaultRPCTimeout            = 30 * time.Second
+
+	defaultRankingsRefreshInterval = time.Minute
+	defaultRankingsCandleInterval  = 5 * time.Minute
+	defaultRankingsReorgWindow     = time.Hour
 )
 
 // DefaultIntervals are the candle sizes used when none are configured.
@@ -233,6 +252,18 @@ func (config *Config) applyDefaults() {
 	if config.Holders.RPCTimeout == 0 {
 		config.Holders.RPCTimeout = defaultRPCTimeout
 	}
+	if config.Rankings.RefreshInterval == 0 {
+		config.Rankings.RefreshInterval = defaultRankingsRefreshInterval
+	}
+	if config.Rankings.CandleInterval == 0 {
+		config.Rankings.CandleInterval = slices.Min(config.Market.Intervals)
+		if slices.Contains(config.Market.Intervals, defaultRankingsCandleInterval) {
+			config.Rankings.CandleInterval = defaultRankingsCandleInterval
+		}
+	}
+	if config.Rankings.ReorgWindow == 0 {
+		config.Rankings.ReorgWindow = defaultRankingsReorgWindow
+	}
 	if strings.TrimSpace(config.State.Driver) == "" {
 		config.State.Driver = StateMemory
 	}
@@ -286,6 +317,12 @@ func (config *Config) Validate() error {
 	}
 	if config.Registry.HistoryDepth < 0 {
 		return errors.New("conf: registry.history_depth must be positive")
+	}
+	if config.Rankings.RefreshInterval < 0 || config.Rankings.ReorgWindow < 0 {
+		return errors.New("conf: rankings durations must be positive")
+	}
+	if !slices.Contains(config.Market.Intervals, config.Rankings.CandleInterval) || config.Rankings.CandleInterval > 24*time.Hour {
+		return fmt.Errorf("conf: rankings.candle_interval %s must be one of market.intervals and at most 24h", config.Rankings.CandleInterval)
 	}
 	switch config.State.Driver {
 	case StateMemory:

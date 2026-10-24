@@ -11,10 +11,12 @@ Market data services built on the [chainstream-evm](https://github.com/AloneAtWa
 | `cmd/market-api` | HTTP API over the ClickHouse store, plus holders from PostgreSQL. |
 | `cmd/holder-indexer` | Consumes the same chain topics and keeps ERC-20 balances per holder in PostgreSQL. |
 | `cmd/market-registry` | Consumes the same chain topics and keeps the latest token and pool metadata in PostgreSQL. |
+| `cmd/market-rankings` | Periodically rolls prices, 24h activity, holder counts and metadata into the PostgreSQL token rankings. |
 | `internal/api` | market-api handlers. |
 | `internal/engine` | Per-chain ordered apply loop: reverts, continuity checks and checkpoints, driving a `Handler`. |
 | `internal/holders` | holder-indexer's handler: transfer deltas, balanceOf seeding and reconciliation. |
 | `internal/registry` | market-registry's handler: asset and pool facts to token and pool metadata. |
+| `internal/rankings` | market-rankings' refresher: reads the ClickHouse output and commits one chain's rankings. |
 | `internal/rpc` | Minimal JSON-RPC client for batched `balanceOf` calls. |
 | `internal/market` | Per-chain processor: pool state, base/quote orientation, the USD price graph and candles. |
 | `internal/source` | Kafka reader for partition zero of a chain topic. |
@@ -80,6 +82,7 @@ go run ./cmd/market-api -conf configs/config.yaml   # needs storage.driver: clic
 | `GET /v1/chains/{chain}/tokens/{token}` | Token metadata from market-registry: standard, recognition, name, symbol, decimals, deployment and the raw metadata JSON. Served only with `state.driver: postgres`. |
 | `GET /v1/chains/{chain}/tokens/{token}/pools` | Pools that trade the token, most recently observed first. Accepts `limit`. Served only with `state.driver: postgres`. |
 | `GET /v1/chains/{chain}/pools/{pool}` | Pool metadata: protocol, DEX, tokens and the raw metadata JSON. Served only with `state.driver: postgres`. |
+| `GET /v1/chains/{chain}/tokens?sort=volume_24h` | The token list from market-rankings, see [market-rankings](#market-rankings). Served only with `state.driver: postgres`. |
 | `GET /healthz` | 204 when the process is up. |
 
 - `{chain}` is the numeric chain ID. For prices, candles and trades the native pseudo-address is an alias for the wrapped token; holders and registry routes take addresses as they are.
@@ -130,6 +133,35 @@ market-registry reads each chain topic on its own checkpoint and keeps the lates
 | `registry_tokens` | `(chain_id, address)` with the fields above, plus the heights the token was first stored and last updated. |
 | `registry_pools` | `(chain_id, pool_id)` with the fields above, plus first and last updated heights. |
 | `registry_undo` | Per block and row, the row's previous value as JSONB, or NULL when the block created it. |
+
+## market-rankings
+
+```sh
+go run ./cmd/market-rankings -conf configs/config.yaml   # needs storage.driver: clickhouse and state.driver: postgres
+```
+
+market-rankings keeps `token_rankings` in PostgreSQL, a rollup that market-api's token list reads with one indexed query. Every `rankings.refresh_interval` it rebuilds each chain's rows and commits them in one transaction:
+
+- **24h activity.** Volume, trade count and price change come from the token's aggregated candles of `rankings.candle_interval`, summed over the 24h before the chain head (the newest block in ClickHouse, not the wall clock). The window starts at a bucket boundary, so it can be up to one interval longer than 24h. Each bucket opens at the previous close, so the first bucket's open is the price before the window, and `price_change_24h` is the ratio `close / open - 1` (`-0.25` means down 25%). Tokens that did not trade drop to zero.
+- **Price and liquidity.** The latest `token_prices` row. Only tokens priced since the last refresh's head, less `rankings.reorg_window`, are read again; the first refresh reads every token. A token whose recent prices a reorg removed falls back to its older price, or loses it. Liquidity is that of the pool the price came through.
+- **Holders.** The count of positive `holder_balances`, recounted for every ranked token through the `holder_balances_top` index.
+- **Created.** The deployment height and time market-registry recorded, when known.
+
+A token is ranked once it has a price or traded in the window. Activity, holders and recent prices are recomputed on every refresh, so the rankings follow a reorg within one refresh. Recounting holders reads every positive holding of every ranked token; if that grows too slow, holder-indexer should keep the counts itself.
+
+| Table | Contents |
+| --- | --- |
+| `token_rankings` | `(chain_id, token)` with price, liquidity, 24h volume, trades and price change, holders and creation height, with an index per sort column. |
+| `ranking_checkpoints` | One row per chain: the chain head time of the last refresh, which starts the next price scan, and when it ran. |
+
+`GET /v1/chains/{chain}/tokens` accepts:
+
+- `sort`: `volume_24h` (default), `price_change_24h`, `liquidity`, `holders` or `created`. `created` lists only tokens with a known deployment.
+- `order`: `desc` (default) or `asc`. Ties order by address in the same direction.
+- `q`: a full address finds that token; anything else matches symbols by case-insensitive prefix. Search covers every registry token, including ones with no market data (`"ranked": false`). Exact symbol matches come first, then ranked tokens, then `sort`.
+- `min_liquidity_usd`, `limit` (default 200, at most 1000) and `offset` (at most 10000).
+
+Name, symbol and decimals come from market-registry. The response includes `refreshed_at`, the unix time of the last refresh.
 
 ## Pricing and candles
 
