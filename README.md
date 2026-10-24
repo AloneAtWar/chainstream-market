@@ -15,6 +15,7 @@ Market data services built on the [chainstream-evm](https://github.com/AloneAtWa
 | `internal/source` | Kafka reader for partition zero of a chain topic. |
 | `internal/storage` | Output models (oriented trades, token prices, candles), store interfaces and the in-memory backend. |
 | `internal/storage/chstore` | ClickHouse output store and schema. |
+| `internal/storage/pgstore` | PostgreSQL checkpoint and market state store. |
 | `internal/conf` | YAML configuration. |
 
 ## market-engine
@@ -38,7 +39,22 @@ Each chain runs its own engine, which reads the chain topic in offset order with
 
 Rows are keyed by `(chain_id, height)`. A revert deletes every row above `rollback_to`; candles drop the newer versions, so the previous version becomes current again. Writing a height that may already exist deletes it first, which makes a replay idempotent. Deletes use ClickHouse lightweight `DELETE`.
 
-Checkpoints and processor state are still in memory, so a restart replays each topic from offset zero and rewrites the heights already in ClickHouse. Persisting state snapshots is future work.
+## State
+
+`state.driver` decides where checkpoints and market state (pools, prices, orientations, open candles, oracle answers and their undo history) are kept.
+
+- `memory`: a restart replays each topic from offset zero and rewrites the heights already in the output store.
+- `postgres`: after each record, the engine commits that record's state changes and its checkpoint in one transaction. A restart loads the state and resumes at the next record, with no replay.
+
+The PostgreSQL store creates these tables in `state.postgres.schema`:
+
+| Table | Contents |
+| --- | --- |
+| `engine_checkpoints` | One row per chain: Kafka offset, height, hash and the pruned height. |
+| `engine_state` | Current state as `(chain_id, kind, key) -> value JSONB`, where kind is `pools`, `prices`, `orientations`, `candles`, `decimals` or `oracle`. |
+| `engine_state_undo` | For each key a block changed, the value it held before that block. A revert deletes rows above `rollback_to`; pruning deletes rows at or below the finalized height and `history_depth`. |
+
+Computation stays in memory, so PostgreSQL is written once per block and never read on the hot path. A crash between the output write and the commit replays one block, which the output store overwrites.
 
 ## market-api
 
@@ -79,7 +95,7 @@ Each block goes through `internal/market` in three steps:
 
 Oracle answers come from `oracle_updates` (Chainlink `AnswerUpdated` logs) whose feed address is listed under `chains[].feeds`. A feed can also cover a non-anchor token, such as native ETH or WBTC. That token keeps its per-block graph price while the price stays within `oracle_deviation` of the latest answer; beyond that, or when the graph has no price, the oracle answer is used instead. The default config lists no feeds. Add each aggregator address, which `proxy.aggregator()` returns, to turn this on.
 
-All state is journaled by height. A revert undoes it exactly, as long as the reorg stays above the finalized height and within `history_depth` blocks. A deeper reorg stops the engine. State lives in memory and is rebuilt by replaying the topic from offset zero. Snapshotting it alongside persistent stores is future work.
+All state is journaled by height. A revert undoes it exactly, as long as the reorg stays above the finalized height and within `history_depth` blocks. A deeper reorg stops the engine. State is computed in memory and persisted per block when `state.driver` is `postgres`; see [State](#state).
 
 ```sh
 go run ./cmd/market-engine -conf configs/config.yaml
@@ -94,6 +110,6 @@ make generate   # regenerate proto/stream/v1 and tidy both modules
 make verify     # buf lint, gofmt, golangci-lint, go test -race
 ```
 
-The ClickHouse store tests run only when `CLICKHOUSE_ADDR` is set, for example `CLICKHOUSE_ADDR=127.0.0.1:9000 make test`. CI starts a ClickHouse service for them.
+The ClickHouse store tests run only when `CLICKHOUSE_ADDR` is set, for example `CLICKHOUSE_ADDR=127.0.0.1:9000 make test`. The PostgreSQL tests run only when `POSTGRES_DSN` is set, for example `POSTGRES_DSN=postgres://market:market@127.0.0.1:5432/market make test`. CI starts both services.
 
 `proto/stream/v1/event.proto` is copied from chainstream-evm's `api/stream/v1`, with only `go_package` changed. chainstream-evm still publishes from its own copy. The two must stay wire-compatible until chainstream-evm imports this module.

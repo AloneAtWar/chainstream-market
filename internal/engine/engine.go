@@ -29,14 +29,19 @@ var (
 type SourceFactory func(start int64) (source.Source, error)
 
 type Options struct {
-	ChainID     uint64
-	Chain       string
-	Open        SourceFactory
-	Processor   Processor
-	Output      storage.Output
+	ChainID   uint64
+	Chain     string
+	Open      SourceFactory
+	Processor Processor
+	Output    storage.Output
+	// Checkpoints persists the checkpoint alone. It is used when State is
+	// nil, and the processor then rebuilds its state by replaying the topic.
 	Checkpoints storage.CheckpointStore
-	Logger      *slog.Logger
-	Now         func() time.Time
+	// State persists the processor's state with each checkpoint. The
+	// processor must implement Stateful.
+	State  storage.StateStore
+	Logger *slog.Logger
+	Now    func() time.Time
 }
 
 // Engine consumes one chain topic. Each record is applied and checkpointed
@@ -47,14 +52,23 @@ type Engine struct {
 	processor   Processor
 	output      storage.Output
 	checkpoints storage.CheckpointStore
+	state       storage.StateStore
+	stateful    Stateful
 	logger      *slog.Logger
 	now         func() time.Time
 }
 
 func New(options Options) (*Engine, error) {
-	if options.ChainID == 0 || options.Open == nil || options.Processor == nil ||
-		options.Output == nil || options.Checkpoints == nil {
-		return nil, errors.New("engine: chain id, source, processor, output and checkpoints are required")
+	if options.ChainID == 0 || options.Open == nil || options.Processor == nil || options.Output == nil ||
+		(options.Checkpoints == nil && options.State == nil) {
+		return nil, errors.New("engine: chain id, source, processor, output and checkpoints or state are required")
+	}
+	var stateful Stateful
+	if options.State != nil {
+		var ok bool
+		if stateful, ok = options.Processor.(Stateful); !ok {
+			return nil, fmt.Errorf("engine: processor %T cannot persist state", options.Processor)
+		}
 	}
 	logger := options.Logger
 	if logger == nil {
@@ -66,19 +80,16 @@ func New(options Options) (*Engine, error) {
 	}
 	return &Engine{
 		chainID: options.ChainID, open: options.Open, processor: options.Processor,
-		output: options.Output, checkpoints: options.Checkpoints,
+		output: options.Output, checkpoints: options.Checkpoints, state: options.State, stateful: stateful,
 		logger: logger.With("chain", options.Chain, "chain_id", options.ChainID), now: now,
 	}, nil
 }
 
 // Run consumes until ctx is done, returning nil, or a record fails to apply.
 func (engine *Engine) Run(ctx context.Context) error {
-	checkpoint, ok, err := engine.checkpoints.Load(ctx, engine.chainID)
+	checkpoint, err := engine.load(ctx)
 	if err != nil {
-		return fmt.Errorf("engine: load checkpoint: %w", err)
-	}
-	if !ok {
-		checkpoint = storage.Checkpoint{ChainID: engine.chainID, Offset: -1}
+		return err
 	}
 	stream, err := engine.open(checkpoint.Offset + 1)
 	if err != nil {
@@ -130,10 +141,57 @@ func (engine *Engine) handle(ctx context.Context, checkpoint storage.Checkpoint,
 	}
 	next.Offset = message.Offset
 	next.UpdatedAt = engine.now()
-	if err := engine.checkpoints.Save(ctx, next); err != nil {
-		return checkpoint, fmt.Errorf("save checkpoint: %w", err)
+	if err := engine.save(ctx, next); err != nil {
+		return checkpoint, err
 	}
 	return next, nil
+}
+
+// load returns the checkpoint to resume from, restoring processor state
+// when it is persisted.
+func (engine *Engine) load(ctx context.Context) (storage.Checkpoint, error) {
+	start := storage.Checkpoint{ChainID: engine.chainID, Offset: -1}
+	if engine.state == nil {
+		checkpoint, ok, err := engine.checkpoints.Load(ctx, engine.chainID)
+		if err != nil {
+			return start, fmt.Errorf("engine: load checkpoint: %w", err)
+		}
+		if !ok {
+			return start, nil
+		}
+		return checkpoint, nil
+	}
+	state, ok, err := engine.state.LoadState(ctx, engine.chainID)
+	if err != nil {
+		return start, fmt.Errorf("engine: load state: %w", err)
+	}
+	if !ok {
+		return start, nil
+	}
+	if err := engine.stateful.Restore(state); err != nil {
+		return start, fmt.Errorf("engine: restore state: %w", err)
+	}
+	engine.logger.Info("state restored", "entries", len(state.Entries), "undo", len(state.Undo))
+	return state.Checkpoint, nil
+}
+
+// save persists the checkpoint, with the processor's state changes when
+// state is persisted.
+func (engine *Engine) save(ctx context.Context, checkpoint storage.Checkpoint) error {
+	if engine.state == nil {
+		if err := engine.checkpoints.Save(ctx, checkpoint); err != nil {
+			return fmt.Errorf("save checkpoint: %w", err)
+		}
+		return nil
+	}
+	delta, err := engine.stateful.TakeDelta()
+	if err != nil {
+		return fmt.Errorf("take state delta: %w", err)
+	}
+	if err := engine.state.Commit(ctx, checkpoint, delta); err != nil {
+		return fmt.Errorf("commit state: %w", err)
+	}
+	return nil
 }
 
 func (engine *Engine) revert(ctx context.Context, checkpoint storage.Checkpoint, revert *streamv1.BlockRevert, next *storage.Checkpoint) error {

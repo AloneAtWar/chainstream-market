@@ -19,6 +19,7 @@ import (
 	"github.com/AloneAtWar/chainstream-market/internal/source"
 	"github.com/AloneAtWar/chainstream-market/internal/storage"
 	"github.com/AloneAtWar/chainstream-market/internal/storage/chstore"
+	"github.com/AloneAtWar/chainstream-market/internal/storage/pgstore"
 	"github.com/shopspring/decimal"
 )
 
@@ -53,6 +54,11 @@ func run(configPath string, logger *slog.Logger) error {
 			logger.Error("close storage", "error", closeErr)
 		}
 	}()
+	state, closeState, err := openState(ctx, config.State)
+	if err != nil {
+		return err
+	}
+	defer closeState()
 	engines := make([]*engine.Engine, 0, len(config.Chains))
 	for _, chain := range config.Chains {
 		options := source.KafkaOptions{
@@ -81,7 +87,7 @@ func run(configPath string, logger *slog.Logger) error {
 			Open: func(start int64) (source.Source, error) {
 				return source.NewKafka(options, start)
 			},
-			Processor: processor, Output: output, Checkpoints: memory,
+			Processor: processor, Output: output, Checkpoints: memory, State: state,
 			Logger: logger,
 		})
 		if newErr != nil {
@@ -108,6 +114,19 @@ func run(configPath string, logger *slog.Logger) error {
 		return cause
 	}
 	return nil
+}
+
+// openState returns the persistent state store, or nil when checkpoints stay
+// in memory.
+func openState(ctx context.Context, config conf.State) (storage.StateStore, func(), error) {
+	if config.Driver != conf.StatePostgres {
+		return nil, func() {}, nil
+	}
+	store, err := pgstore.Open(ctx, pgstore.Options{DSN: config.Postgres.DSN, Schema: config.Postgres.Schema})
+	if err != nil {
+		return nil, nil, err
+	}
+	return store, store.Close, nil
 }
 
 // openOutput returns the configured output store and its closer.

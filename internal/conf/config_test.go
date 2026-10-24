@@ -23,6 +23,9 @@ chains:
 	if config.Storage.Driver != StorageMemory {
 		t.Fatalf("storage driver = %q", config.Storage.Driver)
 	}
+	if config.State.Driver != StateMemory {
+		t.Fatalf("state driver = %q", config.State.Driver)
+	}
 	if config.Market.MaxHops != defaultMaxHops || len(config.Market.Intervals) != len(DefaultIntervals()) ||
 		config.Market.MinLiquidityUSD != defaultMinLiquidityUSD || config.Market.HistoryDepth != defaultHistoryDepth {
 		t.Fatalf("market defaults = %+v", config.Market)
@@ -44,6 +47,8 @@ func TestParseRejectsInvalidConfig(t *testing.T) {
 		"duplicate feed":     "kafka: {brokers: [b]}\nchains: [{name: eth, chain_id: 1, topic: a, feeds: [{address: f, token: t}, {address: F, token: u}]}]",
 		"clickhouse no addr": "kafka: {brokers: [b]}\nstorage: {driver: clickhouse}\nchains: [{name: eth, chain_id: 1, topic: a}]",
 		"unknown driver":     "kafka: {brokers: [b]}\nstorage: {driver: postgres}\nchains: [{name: eth, chain_id: 1, topic: a}]",
+		"postgres no dsn":    "kafka: {brokers: [b]}\nstate: {driver: postgres}\nchains: [{name: eth, chain_id: 1, topic: a}]",
+		"unknown state":      "kafka: {brokers: [b]}\nstate: {driver: redis}\nchains: [{name: eth, chain_id: 1, topic: a}]",
 	}
 	for name, raw := range tests {
 		t.Run(name, func(t *testing.T) {
@@ -89,6 +94,22 @@ chains: [{name: eth, chain_id: 1, topic: a}]
 	}
 	if config.Storage.ClickHouse.Database != defaultClickHouseDatabase {
 		t.Fatalf("database = %q", config.Storage.ClickHouse.Database)
+	}
+}
+
+func TestParsePostgresState(t *testing.T) {
+	config, err := Parse([]byte(`
+kafka: {brokers: [b]}
+state:
+  driver: postgres
+  postgres: {dsn: "postgres://market@127.0.0.1:5432/market", schema: engine}
+chains: [{name: eth, chain_id: 1, topic: a}]
+`))
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	if config.State.Postgres.DSN != "postgres://market@127.0.0.1:5432/market" || config.State.Postgres.Schema != "engine" {
+		t.Fatalf("state = %+v", config.State)
 	}
 }
 

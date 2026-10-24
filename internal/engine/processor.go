@@ -17,6 +17,17 @@ type Processor interface {
 	Revert(ctx context.Context, rollbackTo int64) error
 }
 
+// Stateful is a Processor whose state the engine persists through a
+// storage.StateStore, so a restart resumes where it stopped.
+type Stateful interface {
+	Processor
+	// Restore loads persisted state into a processor that has not applied
+	// any block.
+	Restore(state storage.State) error
+	// TakeDelta returns the state changed since the last call.
+	TakeDelta() (storage.StateDelta, error)
+}
+
 // HeaderProcessor emits only block headers. It stands in until orientation,
 // pricing and candle aggregation are added.
 type HeaderProcessor struct{}

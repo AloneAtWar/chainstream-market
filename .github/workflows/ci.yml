@@ -23,8 +23,22 @@ jobs:
           --health-interval 5s
           --health-timeout 5s
           --health-retries 20
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: market
+          POSTGRES_PASSWORD: market
+          POSTGRES_DB: market
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U market"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
     env:
       CLICKHOUSE_ADDR: 127.0.0.1:9000
+      POSTGRES_DSN: postgres://market:market@127.0.0.1:5432/market
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
