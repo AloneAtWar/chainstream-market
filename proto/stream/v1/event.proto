@@ -1,0 +1,143 @@
+syntax = "proto3";
+
+package stream.v1;
+
+option go_package = "github.com/AloneAtWar/chainstream-market/proto/stream/v1;streamv1";
+
+// StreamRecord is the value of every record in a chain topic. Records are
+// totally ordered on partition zero: a revert always precedes the replacement
+// blocks that follow it.
+message StreamRecord {
+  oneof payload {
+    BlockEvent block = 1;
+    BlockRevert revert = 2;
+  }
+}
+
+// BlockRevert tells consumers to discard every fact above rollback_to before
+// applying the blocks that follow it. It may be delivered more than once.
+message BlockRevert {
+  uint64 chain_id = 1;
+  string chain = 2;
+  int64 rollback_to = 3;
+}
+
+// BlockEvent is the complete downstream fact set for one canonical block.
+message BlockEvent {
+  uint64 chain_id = 1;
+  string chain = 2;
+  int64 block_height = 3;
+  string block_hash = 4;
+  string parent_hash = 5;
+  int64 block_time = 6;
+  repeated Trade trades = 7;
+  repeated AssetFact assets = 8;
+  repeated PoolFact pools = 9;
+  // Pricing moved to the downstream market engine.
+  reserved 10, 11;
+  reserved "block_prices", "reference_prices";
+  repeated TokenTransfer transfers = 12;
+  // safe_height and finalized_height are the node's chain-wide finality
+  // heights observed when this block was published; zero means unknown.
+  int64 safe_height = 13;
+  int64 finalized_height = 14;
+}
+
+// TradeAction is the protocol-neutral operation category. Buy/sell depends on
+// base/quote orientation, which the downstream market engine owns.
+enum TradeAction {
+  TRADE_ACTION_UNSPECIFIED = 0;
+  TRADE_ACTION_SWAP = 1;
+  TRADE_ACTION_LIQUIDITY_ADDED = 2;
+  TRADE_ACTION_LIQUIDITY_REMOVED = 3;
+}
+
+message Trade {
+  string transaction_hash = 1;
+  int64 transaction_index = 2;
+  uint32 operation_index = 3;
+  string protocol = 4;
+  string dex_address = 5;
+  string pool_id = 6;
+  string sender = 7;
+  // Orientation and pricing moved to the downstream market engine.
+  reserved 8 to 18;
+  reserved "type", "base_asset", "quote_asset", "base_amount", "quote_amount", "price",
+    "quote_price_usd", "price_usd", "value_usd", "eligible", "rejection_reasons";
+  // amounts are pool-perspective signed deltas aligned with the pool's tokens:
+  // positive values enter the pool, negative values leave it.
+  repeated Amount amounts = 19;
+  uint32 log_index = 20;
+  // trader is the transaction sender (EOA); sender is the protocol-level caller.
+  string trader = 21;
+  string recipient = 22;
+  PoolState pool_state = 23;
+  TradeAction action = 24;
+}
+
+// PoolState carries post-operation pool state when the protocol event exposes
+// it. Empty fields are unavailable rather than zero.
+message PoolState {
+  repeated string reserves_after = 1;
+  string sqrt_price_x96 = 2;
+  string liquidity = 3;
+  string tick = 4;
+  // active_bin_id is the liquidity-book active bin; its price also needs the
+  // pool's bin step from pool metadata.
+  optional uint32 active_bin_id = 5;
+}
+
+message TokenTransfer {
+  string token = 1;
+  string from = 2;
+  string to = 3;
+  string raw_amount = 4;
+  int64 transaction_index = 5;
+  string transaction_hash = 6;
+  uint32 log_index = 7;
+}
+
+message Amount {
+  string asset = 1;
+  string raw = 2;
+  string value = 3;
+  uint32 decimals = 4;
+  bool decimals_known = 5;
+}
+
+enum AssetFactType {
+  ASSET_FACT_TYPE_UNSPECIFIED = 0;
+  ASSET_FACT_TYPE_OBSERVED = 1;
+  ASSET_FACT_TYPE_CREATED = 2;
+}
+
+message AssetFact {
+  string address = 1;
+  string standard = 2;
+  string recognition = 3;
+  bool metadata_complete = 4;
+  AssetFactType type = 5;
+  int64 source_height = 6;
+  DeploymentRef deployment = 7;
+  bytes metadata_json = 8;
+}
+
+message DeploymentRef {
+  int64 block_height = 1;
+  int64 block_time = 2;
+  int64 transaction_index = 3;
+  string transaction_hash = 4;
+  string trace_id = 5;
+}
+
+message PoolFact {
+  string pool_id = 1;
+  string protocol = 2;
+  string dex_address = 3;
+  repeated string token_addresses = 4;
+  int64 source_height = 5;
+  int64 source_time = 6;
+  bool created = 7;
+  bytes metadata_json = 8;
+}
+

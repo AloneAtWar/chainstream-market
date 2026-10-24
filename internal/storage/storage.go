@@ -1,0 +1,144 @@
+// Package storage defines what market-engine persists and the interfaces its
+// ClickHouse, Redis and memory backends implement.
+//
+// Every write is keyed by (chain, block height) so that replaying a block
+// after a crash, or rewinding after a reorg, leaves exactly one copy of each
+// fact. The engine saves its checkpoint only after Output.WriteBlock returns,
+// so a store must tolerate the same block being written twice.
+package storage
+
+import (
+	"context"
+	"time"
+
+	"github.com/shopspring/decimal"
+)
+
+// Checkpoint is the last chain-topic record the engine fully applied.
+type Checkpoint struct {
+	ChainID uint64
+	// Offset is the Kafka offset of the last applied record; consumption
+	// resumes at Offset+1.
+	Offset int64
+	// Height and Hash identify the last applied block. Hash is empty right
+	// after a revert, when the block at Height is no longer known.
+	Height    int64
+	Hash      string
+	UpdatedAt time.Time
+}
+
+// CheckpointStore persists one Checkpoint per chain.
+type CheckpointStore interface {
+	Load(ctx context.Context, chainID uint64) (Checkpoint, bool, error)
+	Save(ctx context.Context, checkpoint Checkpoint) error
+}
+
+// Output stores what the engine derives from each block.
+type Output interface {
+	// WriteBlock replaces everything previously written for block.Height.
+	WriteBlock(ctx context.Context, block BlockOutput) error
+	// Rewind removes everything written above rollbackTo and restores
+	// running aggregates, such as open candles, to their state at that height.
+	Rewind(ctx context.Context, chainID uint64, rollbackTo int64) error
+}
+
+// BlockOutput is everything derived from one block.
+type BlockOutput struct {
+	ChainID   uint64
+	Height    int64
+	Hash      string
+	BlockTime time.Time
+	// Finalized reports whether the block was at or below the chain's
+	// finalized height when it was published.
+	Finalized bool
+	Trades    []Trade
+	Prices    []TokenPrice
+	Candles   []Candle
+}
+
+// Side is the trade direction from the base token's point of view.
+type Side uint8
+
+const (
+	SideUnknown Side = iota
+	SideBuy
+	SideSell
+	SideLiquidityAdded
+	SideLiquidityRemoved
+)
+
+// Trade is one pool operation oriented to a base/quote pair and valued in USD.
+type Trade struct {
+	ChainID          uint64
+	BlockHeight      int64
+	BlockTime        time.Time
+	TransactionHash  string
+	TransactionIndex int64
+	LogIndex         uint32
+	OperationIndex   uint32
+	Protocol         string
+	PoolID           string
+	Trader           string
+	Side             Side
+	BaseToken        string
+	QuoteToken       string
+	BaseAmount       decimal.Decimal
+	QuoteAmount      decimal.Decimal
+	// PriceQuote is quote per base; PriceUSD and ValueUSD are zero when no
+	// USD path exists for the quote token.
+	PriceQuote decimal.Decimal
+	PriceUSD   decimal.Decimal
+	ValueUSD   decimal.Decimal
+}
+
+// PriceSource says how a token's USD price was obtained.
+type PriceSource uint8
+
+const (
+	PriceSourceUnknown PriceSource = iota
+	// PriceSourceAnchor is a Chainlink-style reference feed.
+	PriceSourceAnchor
+	// PriceSourceGraph is propagated through liquid pools from an anchor.
+	PriceSourceGraph
+)
+
+// TokenPrice is a token's USD price as of a block.
+type TokenPrice struct {
+	ChainID     uint64
+	Token       string
+	BlockHeight int64
+	BlockTime   time.Time
+	PriceUSD    decimal.Decimal
+	Source      PriceSource
+	// Hops is the graph distance from the nearest anchor; zero for anchors.
+	Hops uint8
+	// LiquidityUSD is the liquidity of the pool the price came through.
+	LiquidityUSD decimal.Decimal
+}
+
+// CandleSubject says whether a candle aggregates one pool or a whole token.
+type CandleSubject uint8
+
+const (
+	CandleSubjectUnknown CandleSubject = iota
+	CandleSubjectPool
+	// CandleSubjectToken aggregates every pool above the liquidity filter.
+	CandleSubjectToken
+)
+
+// Candle is an OHLCV bucket. A new bucket opens at the previous close.
+type Candle struct {
+	ChainID      uint64
+	Subject      CandleSubject
+	Key          string // pool id or token address
+	Interval     time.Duration
+	OpenTime     time.Time
+	Open         decimal.Decimal
+	High         decimal.Decimal
+	Low          decimal.Decimal
+	Close        decimal.Decimal
+	VolumeBase   decimal.Decimal
+	VolumeUSD    decimal.Decimal
+	Trades       uint32
+	UpdateHeight int64
+}
