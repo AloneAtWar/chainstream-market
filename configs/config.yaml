@@ -18,8 +18,16 @@ market:
   intervals: [1m, 5m, 15m, 1h, 4h, 24h]
   # Blocks kept revertible beyond the finalized height.
   history_depth: 256
+  # A feed-backed token falls back to its oracle answer when the graph price
+  # deviates by more than this fraction.
+  oracle_deviation: 0.02
 
 # One chainstream-evm topic per chain, each consumed in order by its own engine.
+# feeds lists trusted Chainlink USD aggregators (the contract behind each proxy,
+# found with proxy.aggregator()); any other AnswerUpdated log is ignored.
+# Example:
+#   feeds:
+#     - {address: "0x<ETH/USD aggregator>", token: "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee", decimals: 8}
 chains:
   - name: eth
     chain_id: 1

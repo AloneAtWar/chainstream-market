@@ -49,6 +49,10 @@ func run(configPath string, logger *slog.Logger) error {
 			Brokers: config.Kafka.Brokers, ClientID: config.Kafka.ClientID, Topic: chain.Topic,
 			FetchMaxBytes: config.Kafka.FetchMaxBytes, FetchMaxWait: config.Kafka.FetchMaxWait,
 		}
+		feeds := make([]market.Feed, len(chain.Feeds))
+		for index, feed := range chain.Feeds {
+			feeds[index] = market.Feed{Address: feed.Address, Token: feed.Token, Decimals: feed.Decimals}
+		}
 		processor, processorErr := market.NewProcessor(market.Options{
 			Catalog:               market.DefaultCatalog(chain.ChainID),
 			MinLiquidityUSD:       decimal.NewFromFloat(config.Market.MinLiquidityUSD),
@@ -56,6 +60,8 @@ func run(configPath string, logger *slog.Logger) error {
 			MaxHops:               config.Market.MaxHops,
 			Intervals:             config.Market.Intervals,
 			HistoryDepth:          config.Market.HistoryDepth,
+			Feeds:                 feeds,
+			OracleDeviation:       decimal.NewFromFloat(config.Market.OracleDeviation),
 		})
 		if processorErr != nil {
 			return fmt.Errorf("chain %s: %w", chain.Name, processorErr)

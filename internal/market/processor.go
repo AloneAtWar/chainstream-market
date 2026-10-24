@@ -33,6 +33,20 @@ type Options struct {
 	// HistoryDepth is how many blocks of undo history to keep in addition to
 	// everything above the finalized height.
 	HistoryDepth int64
+	// Feeds are the oracle aggregators trusted for USD prices. Updates from
+	// any other address are ignored.
+	Feeds []Feed
+	// OracleDeviation is the largest relative gap allowed between a
+	// feed-backed token's graph price and its oracle price before the oracle
+	// price is used instead.
+	OracleDeviation decimal.Decimal
+}
+
+// Feed is a trusted Chainlink-style aggregator answering in USD.
+type Feed struct {
+	Address  string
+	Token    string
+	Decimals uint8
 }
 
 // tokenPrice is a graph-derived USD price.
@@ -43,6 +57,7 @@ type tokenPrice struct {
 	pool         string
 	liquidityUSD decimal.Decimal
 	height       int64
+	oracle       bool // the price is an oracle answer, not a graph price
 }
 
 // orientation fixes a pool's quote token once it is known.
@@ -65,6 +80,9 @@ type Processor struct {
 	prices       *journal[string, tokenPrice]
 	orientations *journal[string, orientation]
 	candles      *journal[candleKey, storage.Candle]
+	// oracle holds the latest trusted oracle answer per canonical token.
+	oracle *journal[string, decimal.Decimal]
+	feeds  map[string]Feed
 	// tokenPools indexes pools by canonical token. It only grows; pools that
 	// a revert removed are skipped on lookup.
 	tokenPools map[string][]string
@@ -87,6 +105,21 @@ func NewProcessor(options Options) (*Processor, error) {
 	if options.HistoryDepth <= 0 {
 		return nil, errors.New("market: history depth must be positive")
 	}
+	if options.OracleDeviation.IsNegative() {
+		return nil, errors.New("market: oracle deviation must not be negative")
+	}
+	feeds := make(map[string]Feed, len(options.Feeds))
+	for _, feed := range options.Feeds {
+		address := normalize(feed.Address)
+		if address == "" || normalize(feed.Token) == "" {
+			return nil, errors.New("market: feeds need an address and a token")
+		}
+		if _, duplicate := feeds[address]; duplicate {
+			return nil, fmt.Errorf("market: duplicate feed %s", address)
+		}
+		feed.Token = options.Catalog.Canonical(feed.Token)
+		feeds[address] = feed
+	}
 	return &Processor{
 		options:      options,
 		decimals:     newJournal[string, uint32](),
@@ -94,6 +127,8 @@ func NewProcessor(options Options) (*Processor, error) {
 		prices:       newJournal[string, tokenPrice](),
 		orientations: newJournal[string, orientation](),
 		candles:      newJournal[candleKey, storage.Candle](),
+		oracle:       newJournal[string, decimal.Decimal](),
+		feeds:        feeds,
 		tokenPools:   make(map[string][]string),
 	}, nil
 }
@@ -108,6 +143,7 @@ func (processor *Processor) Apply(ctx context.Context, block *streamv1.BlockEven
 	height := block.GetBlockHeight()
 
 	touched := make(map[string]struct{})
+	processor.applyOracle(height, block, touched)
 	for _, trade := range block.GetTrades() {
 		processor.learnDecimals(height, trade)
 		processor.observe(height, trade, touched)
@@ -137,6 +173,7 @@ func (processor *Processor) Revert(_ context.Context, rollbackTo int64) error {
 	processor.prices.revert(rollbackTo)
 	processor.orientations.revert(rollbackTo)
 	processor.candles.revert(rollbackTo)
+	processor.oracle.revert(rollbackTo)
 	return nil
 }
 
@@ -153,6 +190,7 @@ func (processor *Processor) prune(block *streamv1.BlockEvent) {
 	processor.prices.prune(through)
 	processor.orientations.prune(through)
 	processor.candles.prune(through)
+	processor.oracle.prune(through)
 	processor.prunedThrough = through
 }
 
@@ -185,12 +223,58 @@ func (processor *Processor) observe(height int64, trade *streamv1.Trade, touched
 	}
 }
 
+// applyOracle records answers from trusted feeds and marks their tokens for
+// repricing.
+func (processor *Processor) applyOracle(height int64, block *streamv1.BlockEvent, touched map[string]struct{}) {
+	for _, update := range block.GetOracleUpdates() {
+		feed, ok := processor.feeds[normalize(update.GetFeed())]
+		if !ok {
+			continue
+		}
+		answer, err := decimal.NewFromString(update.GetAnswer())
+		if err != nil || !answer.IsPositive() {
+			continue
+		}
+		processor.oracle.set(height, feed.Token, answer.Shift(-int32(feed.Decimals)))
+		touched[feed.Token] = struct{}{}
+	}
+}
+
+// anchorPrice returns the USD price of a catalog anchor: its oracle answer
+// when a feed covers it, otherwise the catalog's peg.
+func (processor *Processor) anchorPrice(token string) (decimal.Decimal, bool) {
+	peg, ok := processor.options.Catalog.Anchor(token)
+	if !ok {
+		return decimal.Decimal{}, false
+	}
+	if answer, ok := processor.oracle.get(processor.options.Catalog.Canonical(token)); ok {
+		return answer, true
+	}
+	return peg, true
+}
+
 // priceOf returns token's current USD price, anchors included.
 func (processor *Processor) priceOf(token string) (tokenPrice, bool) {
-	if usd, ok := processor.options.Catalog.Anchor(token); ok {
-		return tokenPrice{usd: usd}, true
+	if usd, ok := processor.anchorPrice(token); ok {
+		return tokenPrice{usd: usd, oracle: true}, true
 	}
 	return processor.prices.get(processor.options.Catalog.Canonical(token))
+}
+
+// guard keeps a feed-backed token's price within OracleDeviation of its
+// oracle answer, and falls back to the answer when the graph has no price.
+func (processor *Processor) guard(height int64, token string, candidate tokenPrice, found bool) (tokenPrice, bool) {
+	answer, ok := processor.oracle.get(token)
+	if !ok {
+		return candidate, found
+	}
+	if found {
+		deviation := candidate.usd.Sub(answer).Abs().DivRound(answer, precision)
+		if !deviation.GreaterThan(processor.options.OracleDeviation) {
+			return candidate, true
+		}
+	}
+	return tokenPrice{usd: answer, height: height, oracle: true}, true
 }
 
 // reprice recomputes every touched token from its most liquid priced
@@ -207,12 +291,14 @@ func (processor *Processor) reprice(height int64, output storage.BlockOutput, to
 			if _, anchor := processor.options.Catalog.Anchor(token); anchor {
 				continue
 			}
-			candidate, ok := processor.bestQuote(height, token)
+			candidate, found := processor.bestQuote(height, token)
+			candidate, ok := processor.guard(height, token, candidate, found)
 			if !ok {
 				continue
 			}
 			current, exists := processor.prices.get(token)
-			if exists && current.height == height && current.via == candidate.via && current.usd.Equal(candidate.usd) {
+			if exists && current.height == height && current.via == candidate.via &&
+				current.oracle == candidate.oracle && current.usd.Equal(candidate.usd) {
 				continue
 			}
 			processor.prices.set(height, token, candidate)
@@ -228,11 +314,14 @@ func (processor *Processor) reprice(height int64, output storage.BlockOutput, to
 		value := storage.TokenPrice{
 			ChainID: output.ChainID, Token: token, BlockHeight: height, BlockTime: output.BlockTime,
 		}
-		if usd, anchor := processor.options.Catalog.Anchor(token); anchor {
+		if usd, anchor := processor.anchorPrice(token); anchor {
 			value.PriceUSD, value.Source = usd, storage.PriceSourceAnchor
 		} else if price, ok := processor.prices.get(token); ok && price.height == height {
 			value.PriceUSD, value.Source = price.usd, storage.PriceSourceGraph
 			value.Hops, value.LiquidityUSD = price.hops, price.liquidityUSD
+			if price.oracle {
+				value.Source = storage.PriceSourceAnchor
+			}
 		} else {
 			continue
 		}

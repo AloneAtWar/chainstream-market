@@ -41,6 +41,22 @@ message BlockEvent {
   // heights observed when this block was published; zero means unknown.
   int64 safe_height = 13;
   int64 finalized_height = 14;
+  // oracle_updates are every Chainlink-style AnswerUpdated log in the block,
+  // from any contract; consumers choose which feeds to trust.
+  repeated OracleUpdate oracle_updates = 15;
+}
+
+// OracleUpdate is one AnswerUpdated(int256 current, uint256 roundId,
+// uint256 updatedAt) log. answer is the signed raw answer; scale it by the
+// feed's decimals.
+message OracleUpdate {
+  string feed = 1;
+  string answer = 2;
+  string round_id = 3;
+  int64 updated_at = 4;
+  int64 transaction_index = 5;
+  string transaction_hash = 6;
+  uint32 log_index = 7;
 }
 
 // TradeAction is the protocol-neutral operation category. Buy/sell depends on
