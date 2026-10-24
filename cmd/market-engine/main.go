@@ -15,8 +15,10 @@ import (
 
 	"github.com/AloneAtWar/chainstream-market/internal/conf"
 	"github.com/AloneAtWar/chainstream-market/internal/engine"
+	"github.com/AloneAtWar/chainstream-market/internal/market"
 	"github.com/AloneAtWar/chainstream-market/internal/source"
 	"github.com/AloneAtWar/chainstream-market/internal/storage"
+	"github.com/shopspring/decimal"
 )
 
 // Version is set at build time.
@@ -47,12 +49,23 @@ func run(configPath string, logger *slog.Logger) error {
 			Brokers: config.Kafka.Brokers, ClientID: config.Kafka.ClientID, Topic: chain.Topic,
 			FetchMaxBytes: config.Kafka.FetchMaxBytes, FetchMaxWait: config.Kafka.FetchMaxWait,
 		}
+		processor, processorErr := market.NewProcessor(market.Options{
+			Catalog:               market.DefaultCatalog(chain.ChainID),
+			MinLiquidityUSD:       decimal.NewFromFloat(config.Market.MinLiquidityUSD),
+			CandleMinLiquidityUSD: decimal.NewFromFloat(config.Market.CandleMinLiquidityUSD),
+			MaxHops:               config.Market.MaxHops,
+			Intervals:             config.Market.Intervals,
+			HistoryDepth:          config.Market.HistoryDepth,
+		})
+		if processorErr != nil {
+			return fmt.Errorf("chain %s: %w", chain.Name, processorErr)
+		}
 		chainEngine, newErr := engine.New(engine.Options{
 			ChainID: chain.ChainID, Chain: chain.Name,
 			Open: func(start int64) (source.Source, error) {
 				return source.NewKafka(options, start)
 			},
-			Processor: engine.HeaderProcessor{}, Output: memory, Checkpoints: memory,
+			Processor: processor, Output: memory, Checkpoints: memory,
 			Logger: logger,
 		})
 		if newErr != nil {

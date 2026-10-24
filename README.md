@@ -9,6 +9,7 @@ Market data services built on the [chainstream-evm](https://github.com/AloneAtWa
 | `proto/` | Separate Go module `github.com/AloneAtWar/chainstream-market/proto` holding the `stream.v1` wire format. It depends only on protobuf so producers can import it cheaply. |
 | `cmd/market-engine` | Consumes one chainstream-evm topic per chain and writes derived market data. |
 | `internal/engine` | Per-chain ordered apply loop: reverts, continuity checks and checkpoints. |
+| `internal/market` | Per-chain processor: pool state, base/quote orientation, the USD price graph and candles. |
 | `internal/source` | Kafka reader for partition zero of a chain topic. |
 | `internal/storage` | Output models (oriented trades, token prices, candles), store interfaces and the in-memory backend. |
 | `internal/conf` | YAML configuration. |
@@ -21,7 +22,24 @@ Each chain runs its own engine, which reads the chain topic in offset order with
 - `BlockEvent` must extend the last applied block. Blocks at or below the applied height are treated as redeliveries from a retried publish and are skipped. A height gap or a parent hash mismatch without a preceding revert stops the engine.
 - Stores must make `WriteBlock` replace a height, because a crash between the write and the checkpoint replays that block.
 
-The processor is a header-only placeholder for now. Orientation, the Chainlink-anchored price graph and liquidity-filtered candles come next. So do the ClickHouse and Redis stores; until they land, `storage.driver` accepts only `memory`.
+ClickHouse and Redis stores are not built yet, so `storage.driver` accepts only `memory`.
+
+## Pricing and candles
+
+Each block goes through `internal/market` in three steps:
+
+1. **Pool state.** Every two-token trade updates its pool:
+   - Constant-product pools use `reserves_after`.
+   - Concentrated-liquidity pools use virtual reserves derived from `sqrt_price_x96` and `liquidity`.
+   - Other pools use the swap's execution price and have no reserves, so they cannot propagate prices. Liquidity-book pools fall in this group for now.
+2. **Price graph.** Anchors are the catalog's USD stablecoins, valued at $1 until Chainlink updates are part of the stream. Every token touched in the block is priced through the pool whose priced counterpart reserve is worth the most in USD. That reserve must reach `min_liquidity_usd`, and the price can spread at most `max_hops` from an anchor. A token is never priced through a counterpart that was itself priced through that token. The wrapped native coin is priced through the graph like any other token, and the native pseudo-address shares its price.
+3. **Trades and candles.**
+   - Each pool's quote token comes from catalog rank first, then from the priced token with fewer hops. Once a pair has a known quote, its orientation stays fixed. Pairs with no known quote stay provisional.
+   - Trades are valued at the block's closing quote price.
+   - Swaps feed pool candles. They also feed the base token's aggregated candles when the pool's quote reserve reaches `candle_min_liquidity_usd`.
+   - A new candle opens at the previous candle's close.
+
+All state is journaled by height. A revert undoes it exactly, as long as the reorg stays above the finalized height and within `history_depth` blocks. A deeper reorg stops the engine. State lives in memory and is rebuilt by replaying the topic from offset zero. Snapshotting it alongside persistent stores is future work.
 
 ```sh
 go run ./cmd/market-engine -conf configs/config.yaml

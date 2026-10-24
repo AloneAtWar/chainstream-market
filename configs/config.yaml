@@ -9,6 +9,16 @@ kafka:
 storage:
   driver: memory
 
+market:
+  # A pool prices a token only when its priced counterpart reserve is worth this much.
+  min_liquidity_usd: 1000
+  # A pool's trades join a token's aggregated candles only above this quote reserve value.
+  candle_min_liquidity_usd: 10000
+  max_hops: 3
+  intervals: [1m, 5m, 15m, 1h, 4h, 24h]
+  # Blocks kept revertible beyond the finalized height.
+  history_depth: 256
+
 # One chainstream-evm topic per chain, each consumed in order by its own engine.
 chains:
   - name: eth

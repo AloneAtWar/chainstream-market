@@ -15,7 +15,23 @@ import (
 type Config struct {
 	Kafka   Kafka   `yaml:"kafka"`
 	Storage Storage `yaml:"storage"`
+	Market  Market  `yaml:"market"`
 	Chains  []Chain `yaml:"chains"`
+}
+
+// Market tunes pricing and candle aggregation for every chain.
+type Market struct {
+	// MinLiquidityUSD is the counterpart reserve value a pool needs before a
+	// price propagates through it.
+	MinLiquidityUSD float64 `yaml:"min_liquidity_usd"`
+	// CandleMinLiquidityUSD is the quote reserve value a pool needs before
+	// its trades join a token's aggregated candles.
+	CandleMinLiquidityUSD float64         `yaml:"candle_min_liquidity_usd"`
+	MaxHops               uint8           `yaml:"max_hops"`
+	Intervals             []time.Duration `yaml:"intervals"`
+	// HistoryDepth is how many recent blocks stay revertible in addition to
+	// everything above the finalized height.
+	HistoryDepth int64 `yaml:"history_depth"`
 }
 
 // Kafka configures the per-chain topic consumers.
@@ -46,7 +62,19 @@ const (
 
 	defaultFetchMaxBytes = 104857600
 	defaultFetchMaxWait  = 500 * time.Millisecond
+
+	defaultMinLiquidityUSD       = 1000
+	defaultCandleMinLiquidityUSD = 10000
+	defaultMaxHops               = 3
+	defaultHistoryDepth          = 256
 )
+
+// DefaultIntervals are the candle sizes used when none are configured.
+func DefaultIntervals() []time.Duration {
+	return []time.Duration{
+		time.Minute, 5 * time.Minute, 15 * time.Minute, time.Hour, 4 * time.Hour, 24 * time.Hour,
+	}
+}
 
 // Load reads, defaults and validates the configuration file at path.
 func Load(path string) (*Config, error) {
@@ -77,6 +105,21 @@ func (config *Config) applyDefaults() {
 	if config.Kafka.FetchMaxWait == 0 {
 		config.Kafka.FetchMaxWait = defaultFetchMaxWait
 	}
+	if config.Market.MinLiquidityUSD == 0 {
+		config.Market.MinLiquidityUSD = defaultMinLiquidityUSD
+	}
+	if config.Market.CandleMinLiquidityUSD == 0 {
+		config.Market.CandleMinLiquidityUSD = defaultCandleMinLiquidityUSD
+	}
+	if config.Market.MaxHops == 0 {
+		config.Market.MaxHops = defaultMaxHops
+	}
+	if len(config.Market.Intervals) == 0 {
+		config.Market.Intervals = DefaultIntervals()
+	}
+	if config.Market.HistoryDepth == 0 {
+		config.Market.HistoryDepth = defaultHistoryDepth
+	}
 	if strings.TrimSpace(config.Storage.Driver) == "" {
 		config.Storage.Driver = StorageMemory
 	}
@@ -94,6 +137,17 @@ func (config *Config) Validate() error {
 	}
 	if config.Kafka.FetchMaxBytes < 0 || config.Kafka.FetchMaxWait < 0 {
 		return errors.New("conf: kafka fetch limits must be positive")
+	}
+	if config.Market.MinLiquidityUSD < 0 || config.Market.CandleMinLiquidityUSD < 0 {
+		return errors.New("conf: market liquidity thresholds must not be negative")
+	}
+	if config.Market.HistoryDepth < 0 {
+		return errors.New("conf: market.history_depth must be positive")
+	}
+	for _, interval := range config.Market.Intervals {
+		if interval < time.Second || interval%time.Second != 0 {
+			return fmt.Errorf("conf: market interval %s must be whole seconds", interval)
+		}
 	}
 	if config.Storage.Driver != StorageMemory {
 		return fmt.Errorf("conf: unsupported storage.driver %q", config.Storage.Driver)
