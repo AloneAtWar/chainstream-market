@@ -23,6 +23,7 @@ const (
 // Server routes market queries to a storage.Reader.
 type Server struct {
 	reader    storage.Reader
+	holders   storage.HolderReader
 	intervals map[string]time.Duration
 	logger    *slog.Logger
 	now       func() time.Time
@@ -64,6 +65,9 @@ func (server *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /v1/chains/{chain}/pools/{pool}/candles", server.candles(storage.CandleSubjectPool, "pool"))
 	mux.HandleFunc("GET /v1/chains/{chain}/tokens/{token}/trades", server.trades("token"))
 	mux.HandleFunc("GET /v1/chains/{chain}/pools/{pool}/trades", server.trades("pool"))
+	if server.holders != nil {
+		mux.HandleFunc("GET /v1/chains/{chain}/tokens/{token}/holders", server.tokenHolders)
+	}
 	return mux
 }
 
