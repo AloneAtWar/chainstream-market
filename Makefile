@@ -9,6 +9,7 @@ build:
 	go build -trimpath -ldflags "-X main.Version=$(VERSION)" -o bin/market-api ./cmd/market-api
 	go build -trimpath -ldflags "-X main.Version=$(VERSION)" -o bin/holder-indexer ./cmd/holder-indexer
 	go build -trimpath -ldflags "-X main.Version=$(VERSION)" -o bin/market-registry ./cmd/market-registry
+	go build -trimpath -ldflags "-X main.Version=$(VERSION)" -o bin/market-rankings ./cmd/market-rankings
 
 generate:
 	cd proto && buf generate

@@ -33,6 +33,11 @@ chains:
 	if config.State.Driver != StateMemory {
 		t.Fatalf("state driver = %q", config.State.Driver)
 	}
+	if config.Rankings.RefreshInterval != defaultRankingsRefreshInterval ||
+		config.Rankings.CandleInterval != defaultRankingsCandleInterval ||
+		config.Rankings.ReorgWindow != defaultRankingsReorgWindow {
+		t.Fatalf("rankings defaults = %+v", config.Rankings)
+	}
 	if config.Market.MaxHops != defaultMaxHops || len(config.Market.Intervals) != len(DefaultIntervals()) ||
 		config.Market.MinLiquidityUSD != defaultMinLiquidityUSD || config.Market.HistoryDepth != defaultHistoryDepth {
 		t.Fatalf("market defaults = %+v", config.Market)
@@ -58,6 +63,8 @@ func TestParseRejectsInvalidConfig(t *testing.T) {
 		"unknown state":      "kafka: {brokers: [b]}\nstate: {driver: redis}\nchains: [{name: eth, chain_id: 1, topic: a}]",
 		"negative holders":   "kafka: {brokers: [b]}\nholders: {rpc_batch_size: -1}\nchains: [{name: eth, chain_id: 1, topic: a}]",
 		"negative registry":  "kafka: {brokers: [b]}\nregistry: {history_depth: -1}\nchains: [{name: eth, chain_id: 1, topic: a}]",
+		"negative rankings":  "kafka: {brokers: [b]}\nrankings: {refresh_interval: -1s}\nchains: [{name: eth, chain_id: 1, topic: a}]",
+		"unknown candle":     "kafka: {brokers: [b]}\nrankings: {candle_interval: 2m}\nchains: [{name: eth, chain_id: 1, topic: a}]",
 	}
 	for name, raw := range tests {
 		t.Run(name, func(t *testing.T) {

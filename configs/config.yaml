@@ -57,9 +57,21 @@ holders:
 registry:
   history_depth: 256
 
+# market-rankings rolls market-engine's ClickHouse output, holder counts and
+# registry metadata into the token_rankings table that market-api lists; it
+# needs storage.driver: clickhouse and state.driver: postgres.
+rankings:
+  refresh_interval: 1m
+  # Token candle size summed for the 24h columns; one of market.intervals.
+  candle_interval: 5m
+  # Latest prices from this far behind the last refresh's chain head are
+  # read again, so a reorg that moved them is picked up.
+  reorg_window: 1h
+
 # market-api serves what market-engine stored; it needs storage.driver: clickhouse.
-# With state.driver: postgres it also serves holders from holder-indexer and
-# token and pool metadata from market-registry.
+# With state.driver: postgres it also serves holders from holder-indexer,
+# token and pool metadata from market-registry and token lists from
+# market-rankings.
 api:
   addr: ":8080"
 
