@@ -1,5 +1,6 @@
 // Command market-api serves prices, candles and trades from the ClickHouse
-// store that market-engine writes.
+// store that market-engine writes, and holders from the PostgreSQL store
+// that holder-indexer writes.
 package main
 
 import (
@@ -17,6 +18,7 @@ import (
 	"github.com/AloneAtWar/chainstream-market/internal/api"
 	"github.com/AloneAtWar/chainstream-market/internal/conf"
 	"github.com/AloneAtWar/chainstream-market/internal/storage/chstore"
+	"github.com/AloneAtWar/chainstream-market/internal/storage/pgstore"
 )
 
 // Version is set at build time.
@@ -57,9 +59,18 @@ func run(configPath string, logger *slog.Logger) error {
 		}
 	}()
 
+	handler := api.New(store, config.Market.Intervals, logger)
+	if config.State.Driver == conf.StatePostgres {
+		holderStore, openErr := pgstore.Open(ctx, pgstore.Options{DSN: config.State.Postgres.DSN, Schema: config.State.Postgres.Schema})
+		if openErr != nil {
+			return openErr
+		}
+		defer holderStore.Close()
+		handler.WithHolders(holderStore)
+	}
 	server := &http.Server{
 		Addr:              config.API.Addr,
-		Handler:           api.New(store, config.Market.Intervals, logger).Handler(),
+		Handler:           handler.Handler(),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 	errs := make(chan error, 1)

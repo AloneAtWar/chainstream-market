@@ -53,7 +53,8 @@ var schema = []string{
 	)`,
 }
 
-// Store implements storage.CheckpointStore and storage.StateStore.
+// Store implements storage.CheckpointStore, storage.StateStore and the
+// holder interfaces.
 type Store struct {
 	pool *pgxpool.Pool
 }
@@ -80,6 +81,7 @@ func Open(ctx context.Context, options Options) (*Store, error) {
 		return nil, fmt.Errorf("postgres store: connect: %w", err)
 	}
 	statements := append([]string{"CREATE SCHEMA IF NOT EXISTS " + name}, schema...)
+	statements = append(statements, holderSchema...)
 	for _, statement := range statements {
 		if _, err := pool.Exec(ctx, statement); err != nil {
 			pool.Close()

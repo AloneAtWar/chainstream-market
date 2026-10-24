@@ -8,21 +8,26 @@ Market data services built on the [chainstream-evm](https://github.com/AloneAtWa
 | --- | --- |
 | `proto/` | Separate Go module `github.com/AloneAtWar/chainstream-market/proto` holding the `stream.v1` wire format. It depends only on protobuf so producers can import it cheaply. |
 | `cmd/market-engine` | Consumes one chainstream-evm topic per chain and writes derived market data. |
-| `cmd/market-api` | HTTP API over the ClickHouse store. |
+| `cmd/market-api` | HTTP API over the ClickHouse store, plus holders from PostgreSQL. |
+| `cmd/holder-indexer` | Consumes the same chain topics and keeps ERC-20 balances per holder in PostgreSQL. |
 | `internal/api` | market-api handlers. |
-| `internal/engine` | Per-chain ordered apply loop: reverts, continuity checks and checkpoints. |
+| `internal/engine` | Per-chain ordered apply loop: reverts, continuity checks and checkpoints, driving a `Handler`. |
+| `internal/holders` | holder-indexer's handler: transfer deltas, balanceOf seeding and reconciliation. |
+| `internal/rpc` | Minimal JSON-RPC client for batched `balanceOf` calls. |
 | `internal/market` | Per-chain processor: pool state, base/quote orientation, the USD price graph and candles. |
 | `internal/source` | Kafka reader for partition zero of a chain topic. |
 | `internal/storage` | Output models (oriented trades, token prices, candles), store interfaces and the in-memory backend. |
 | `internal/storage/chstore` | ClickHouse output store and schema. |
-| `internal/storage/pgstore` | PostgreSQL checkpoint and market state store. |
+| `internal/storage/pgstore` | PostgreSQL checkpoints, market state and holder balances. |
 | `internal/conf` | YAML configuration. |
 
 ## market-engine
 
 Each chain runs its own engine, which reads the chain topic in offset order without a consumer group. After each record the engine saves a checkpoint (offset, height, hash), so a restart resumes at the next unapplied record. If a checkpoint falls outside Kafka retention, the engine stops rather than skipping data.
 
-- `BlockRevert` calls `Processor.Revert`, then `Output.Rewind`, and drops everything above `rollback_to`. A revert at or above the applied height is a no-op, so redelivery is safe.
+The engine only orders records; a `Handler` does the work. market-engine's handler runs the market processor and writes its output, and holder-indexer's handler updates balances. Each record ends with `Handler.Commit`, which saves the checkpoint with everything the record changed.
+
+- `BlockRevert` calls `Handler.Revert`, which for market-engine runs `Processor.Revert` then `Output.Rewind`, and drops everything above `rollback_to`. A revert at or above the applied height is a no-op, so redelivery is safe.
 - `BlockEvent` must extend the last applied block. Blocks at or below the applied height are treated as redeliveries from a retried publish and are skipped. A height gap or a parent hash mismatch without a preceding revert stops the engine.
 - Stores must make `WriteBlock` replace a height, because a crash between the write and the checkpoint replays that block.
 
@@ -69,6 +74,7 @@ go run ./cmd/market-api -conf configs/config.yaml   # needs storage.driver: clic
 | `GET /v1/chains/{chain}/pools/{pool}/candles?interval=1m` | Pool candles. |
 | `GET /v1/chains/{chain}/tokens/{token}/trades` | Recent trades with the token as base, newest first. |
 | `GET /v1/chains/{chain}/pools/{pool}/trades` | Recent trades in the pool. |
+| `GET /v1/chains/{chain}/tokens/{token}/holders` | Holder count and the largest holders, in raw token units. Served only with `state.driver: postgres`. |
 | `GET /healthz` | 204 when the process is up. |
 
 - `{chain}` is the numeric chain ID. The native pseudo-address is an alias for the wrapped token.
@@ -77,6 +83,27 @@ go run ./cmd/market-api -conf configs/config.yaml   # needs storage.driver: clic
 - Decimal values are returned as strings.
 
 Queries go straight to ClickHouse, which is fast enough at local scale. Add a Redis hot view only if latency calls for it.
+
+## holder-indexer
+
+```sh
+go run ./cmd/holder-indexer -conf configs/config.yaml   # needs state.driver: postgres and chains[].rpc_url
+```
+
+holder-indexer reads each chain topic on its own checkpoint and keeps every ERC-20 holding it has seen.
+
+- **Seeding.** The first time a `(token, holder)` appears, its balance is `balanceOf` read at the hash of that block, so the seed already includes the block's transfers and history before the indexer started. The node must serve state for that block, which any full node does near the head. A node without the state stops the indexer rather than guessing. When `balanceOf` itself reverts, the block's net transfers seed the holding and it is marked unverified.
+- **Accumulating.** After that, each block adds its net transfers per holding. Mints and burns use the zero address, which is not a holder. Zero-value transfers are ignored.
+- **Reconciling.** Every `holders.reconcile_every` blocks, the `reconcile_batch` least recently verified holdings are checked against `balanceOf` and corrected. This catches rebasing and fee-on-transfer tokens, whose balances move without a matching `Transfer`.
+- **Reorgs.** Every change is stored as an undoable delta, so a revert subtracts what the reverted blocks added and deletes holdings they created.
+
+| Table | Contents |
+| --- | --- |
+| `holder_checkpoints` | One row per chain: Kafka offset, height, hash and the pruned height. |
+| `holder_balances` | `(chain_id, token, holder) -> balance NUMERIC(78,0)` and the height `balanceOf` last confirmed it. |
+| `holder_undo` | Per block and holding, the delta added or whether the row was created, with the previous verified height. Pruned like `engine_state_undo`. |
+
+Balances live only in PostgreSQL, so memory does not grow with the number of holders.
 
 ## Pricing and candles
 

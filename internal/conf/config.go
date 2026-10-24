@@ -18,7 +18,23 @@ type Config struct {
 	State   State   `yaml:"state"`
 	Market  Market  `yaml:"market"`
 	API     API     `yaml:"api"`
+	Holders Holders `yaml:"holders"`
 	Chains  []Chain `yaml:"chains"`
+}
+
+// Holders tunes holder-indexer, which keeps ERC-20 balances per holder in
+// the state.postgres database.
+type Holders struct {
+	// HistoryDepth is how many recent blocks stay revertible in addition to
+	// everything above the finalized height.
+	HistoryDepth int64 `yaml:"history_depth"`
+	// ReconcileEvery is how often, in blocks, the least recently verified
+	// holdings are checked against balanceOf. Negative disables it.
+	ReconcileEvery int64 `yaml:"reconcile_every"`
+	ReconcileBatch int   `yaml:"reconcile_batch"`
+	// RPCBatchSize caps the balanceOf calls in one JSON-RPC batch.
+	RPCBatchSize int           `yaml:"rpc_batch_size"`
+	RPCTimeout   time.Duration `yaml:"rpc_timeout"`
 }
 
 // API configures market-api, which reads the ClickHouse store.
@@ -91,6 +107,10 @@ type Chain struct {
 	Name    string `yaml:"name"`
 	ChainID uint64 `yaml:"chain_id"`
 	Topic   string `yaml:"topic"`
+	// RPCURL is a JSON-RPC endpoint holder-indexer reads balanceOf from. It
+	// must serve state by block hash for blocks the indexer is applying,
+	// which near the head any full node does.
+	RPCURL string `yaml:"rpc_url"`
 	// Feeds are the Chainlink aggregators trusted on this chain. Use the
 	// aggregator behind each proxy, since it is the contract that emits
 	// AnswerUpdated.
@@ -122,6 +142,11 @@ const (
 	defaultMaxHops               = 3
 	defaultHistoryDepth          = 256
 	defaultOracleDeviation       = 0.02
+
+	defaultHoldersReconcileEvery = 100
+	defaultHoldersReconcileBatch = 200
+	defaultRPCBatchSize          = 100
+	defaultRPCTimeout            = 30 * time.Second
 )
 
 // DefaultIntervals are the candle sizes used when none are configured.
@@ -181,6 +206,21 @@ func (config *Config) applyDefaults() {
 	if strings.TrimSpace(config.Storage.Driver) == "" {
 		config.Storage.Driver = StorageMemory
 	}
+	if config.Holders.HistoryDepth == 0 {
+		config.Holders.HistoryDepth = defaultHistoryDepth
+	}
+	if config.Holders.ReconcileEvery == 0 {
+		config.Holders.ReconcileEvery = defaultHoldersReconcileEvery
+	}
+	if config.Holders.ReconcileBatch == 0 {
+		config.Holders.ReconcileBatch = defaultHoldersReconcileBatch
+	}
+	if config.Holders.RPCBatchSize == 0 {
+		config.Holders.RPCBatchSize = defaultRPCBatchSize
+	}
+	if config.Holders.RPCTimeout == 0 {
+		config.Holders.RPCTimeout = defaultRPCTimeout
+	}
 	if strings.TrimSpace(config.State.Driver) == "" {
 		config.State.Driver = StateMemory
 	}
@@ -227,6 +267,10 @@ func (config *Config) Validate() error {
 		}
 	default:
 		return fmt.Errorf("conf: unsupported storage.driver %q", config.Storage.Driver)
+	}
+	if config.Holders.HistoryDepth < 0 || config.Holders.ReconcileBatch < 0 ||
+		config.Holders.RPCBatchSize < 0 || config.Holders.RPCTimeout < 0 {
+		return errors.New("conf: holders settings must be positive")
 	}
 	switch config.State.Driver {
 	case StateMemory:
