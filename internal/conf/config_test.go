@@ -27,6 +27,9 @@ chains:
 		config.Holders.HistoryDepth != defaultHistoryDepth {
 		t.Fatalf("holders defaults = %+v", config.Holders)
 	}
+	if config.Registry.HistoryDepth != defaultHistoryDepth {
+		t.Fatalf("registry defaults = %+v", config.Registry)
+	}
 	if config.State.Driver != StateMemory {
 		t.Fatalf("state driver = %q", config.State.Driver)
 	}
@@ -54,6 +57,7 @@ func TestParseRejectsInvalidConfig(t *testing.T) {
 		"postgres no dsn":    "kafka: {brokers: [b]}\nstate: {driver: postgres}\nchains: [{name: eth, chain_id: 1, topic: a}]",
 		"unknown state":      "kafka: {brokers: [b]}\nstate: {driver: redis}\nchains: [{name: eth, chain_id: 1, topic: a}]",
 		"negative holders":   "kafka: {brokers: [b]}\nholders: {rpc_batch_size: -1}\nchains: [{name: eth, chain_id: 1, topic: a}]",
+		"negative registry":  "kafka: {brokers: [b]}\nregistry: {history_depth: -1}\nchains: [{name: eth, chain_id: 1, topic: a}]",
 	}
 	for name, raw := range tests {
 		t.Run(name, func(t *testing.T) {

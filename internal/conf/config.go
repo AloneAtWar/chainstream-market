@@ -13,13 +13,22 @@ import (
 
 // Config is the market-engine process configuration.
 type Config struct {
-	Kafka   Kafka   `yaml:"kafka"`
-	Storage Storage `yaml:"storage"`
-	State   State   `yaml:"state"`
-	Market  Market  `yaml:"market"`
-	API     API     `yaml:"api"`
-	Holders Holders `yaml:"holders"`
-	Chains  []Chain `yaml:"chains"`
+	Kafka    Kafka    `yaml:"kafka"`
+	Storage  Storage  `yaml:"storage"`
+	State    State    `yaml:"state"`
+	Market   Market   `yaml:"market"`
+	API      API      `yaml:"api"`
+	Holders  Holders  `yaml:"holders"`
+	Registry Registry `yaml:"registry"`
+	Chains   []Chain  `yaml:"chains"`
+}
+
+// Registry tunes market-registry, which keeps token and pool metadata in
+// the state.postgres database.
+type Registry struct {
+	// HistoryDepth is how many recent blocks stay revertible in addition to
+	// everything above the finalized height.
+	HistoryDepth int64 `yaml:"history_depth"`
 }
 
 // Holders tunes holder-indexer, which keeps ERC-20 balances per holder in
@@ -209,6 +218,9 @@ func (config *Config) applyDefaults() {
 	if config.Holders.HistoryDepth == 0 {
 		config.Holders.HistoryDepth = defaultHistoryDepth
 	}
+	if config.Registry.HistoryDepth == 0 {
+		config.Registry.HistoryDepth = defaultHistoryDepth
+	}
 	if config.Holders.ReconcileEvery == 0 {
 		config.Holders.ReconcileEvery = defaultHoldersReconcileEvery
 	}
@@ -271,6 +283,9 @@ func (config *Config) Validate() error {
 	if config.Holders.HistoryDepth < 0 || config.Holders.ReconcileBatch < 0 ||
 		config.Holders.RPCBatchSize < 0 || config.Holders.RPCTimeout < 0 {
 		return errors.New("conf: holders settings must be positive")
+	}
+	if config.Registry.HistoryDepth < 0 {
+		return errors.New("conf: registry.history_depth must be positive")
 	}
 	switch config.State.Driver {
 	case StateMemory:

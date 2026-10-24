@@ -10,15 +10,17 @@ Market data services built on the [chainstream-evm](https://github.com/AloneAtWa
 | `cmd/market-engine` | Consumes one chainstream-evm topic per chain and writes derived market data. |
 | `cmd/market-api` | HTTP API over the ClickHouse store, plus holders from PostgreSQL. |
 | `cmd/holder-indexer` | Consumes the same chain topics and keeps ERC-20 balances per holder in PostgreSQL. |
+| `cmd/market-registry` | Consumes the same chain topics and keeps the latest token and pool metadata in PostgreSQL. |
 | `internal/api` | market-api handlers. |
 | `internal/engine` | Per-chain ordered apply loop: reverts, continuity checks and checkpoints, driving a `Handler`. |
 | `internal/holders` | holder-indexer's handler: transfer deltas, balanceOf seeding and reconciliation. |
+| `internal/registry` | market-registry's handler: asset and pool facts to token and pool metadata. |
 | `internal/rpc` | Minimal JSON-RPC client for batched `balanceOf` calls. |
 | `internal/market` | Per-chain processor: pool state, base/quote orientation, the USD price graph and candles. |
 | `internal/source` | Kafka reader for partition zero of a chain topic. |
 | `internal/storage` | Output models (oriented trades, token prices, candles), store interfaces and the in-memory backend. |
 | `internal/storage/chstore` | ClickHouse output store and schema. |
-| `internal/storage/pgstore` | PostgreSQL checkpoints, market state and holder balances. |
+| `internal/storage/pgstore` | PostgreSQL checkpoints, market state, holder balances and the token and pool registry. |
 | `internal/conf` | YAML configuration. |
 
 ## market-engine
@@ -74,10 +76,13 @@ go run ./cmd/market-api -conf configs/config.yaml   # needs storage.driver: clic
 | `GET /v1/chains/{chain}/pools/{pool}/candles?interval=1m` | Pool candles. |
 | `GET /v1/chains/{chain}/tokens/{token}/trades` | Recent trades with the token as base, newest first. |
 | `GET /v1/chains/{chain}/pools/{pool}/trades` | Recent trades in the pool. |
-| `GET /v1/chains/{chain}/tokens/{token}/holders` | Holder count and the largest holders, in raw token units. Served only with `state.driver: postgres`. |
+| `GET /v1/chains/{chain}/tokens/{token}/holders` | Holder count and the largest holders. `balance_raw` is in raw token units; when market-registry knows the token's decimals, `decimals` and a converted `balance` are added. Served only with `state.driver: postgres`. |
+| `GET /v1/chains/{chain}/tokens/{token}` | Token metadata from market-registry: standard, recognition, name, symbol, decimals, deployment and the raw metadata JSON. Served only with `state.driver: postgres`. |
+| `GET /v1/chains/{chain}/tokens/{token}/pools` | Pools that trade the token, most recently observed first. Accepts `limit`. Served only with `state.driver: postgres`. |
+| `GET /v1/chains/{chain}/pools/{pool}` | Pool metadata: protocol, DEX, tokens and the raw metadata JSON. Served only with `state.driver: postgres`. |
 | `GET /healthz` | 204 when the process is up. |
 
-- `{chain}` is the numeric chain ID. The native pseudo-address is an alias for the wrapped token.
+- `{chain}` is the numeric chain ID. For prices, candles and trades the native pseudo-address is an alias for the wrapped token; holders and registry routes take addresses as they are.
 - Candles accept `from` and `to` (unix seconds, `from <= open_time < to`) and `limit`. `interval` must be one of `market.intervals`. Buckets with no trades are omitted, and each returned bucket opens at the previous close.
 - Trades accept `limit` and `before_height` for paging backwards.
 - Decimal values are returned as strings.
@@ -104,6 +109,27 @@ holder-indexer reads each chain topic on its own checkpoint and keeps every ERC-
 | `holder_undo` | Per block and holding, the delta added or whether the row was created, with the previous verified height. Pruned like `engine_state_undo`. |
 
 Balances live only in PostgreSQL, so memory does not grow with the number of holders.
+
+## market-registry
+
+```sh
+go run ./cmd/market-registry -conf configs/config.yaml   # needs state.driver: postgres
+```
+
+market-registry reads each chain topic on its own checkpoint and keeps the latest metadata for every asset (`AssetFact`) and pool (`PoolFact`) it has seen.
+
+- **Tokens.** One row per address with standard, recognition, `metadata_complete`, the published `asset.Info` JSON, and the name, symbol and decimals read from it. ERC-20 fields only count when chainstream-evm marked them known. A `created` fact, or any fact with a deployment, sets `created` and keeps the deployment.
+- **Pools.** One row per pool ID with protocol, DEX address, tokens, source height and time, and the protocol metadata JSON. A fact without metadata keeps the stored metadata. A GIN index on `tokens` serves the pools of a token.
+- **Newer wins.** A fact replaces stored metadata unless the stored metadata was read at a higher source height, so a late observation of older metadata is ignored. `created` and the deployment are kept regardless.
+- **Reorgs.** Before a block first changes a row, the row (or its absence) is saved in `registry_undo`. A revert restores the oldest saved image above `rollback_to`. Undo history is pruned at the finalized height and `registry.history_depth`.
+- **Cleaning.** Metadata that is not valid JSON is dropped. NUL characters, which PostgreSQL rejects and token names can contain, are stripped.
+
+| Table | Contents |
+| --- | --- |
+| `registry_checkpoints` | One row per chain: Kafka offset, height, hash and the pruned height. |
+| `registry_tokens` | `(chain_id, address)` with the fields above, plus the heights the token was first stored and last updated. |
+| `registry_pools` | `(chain_id, pool_id)` with the fields above, plus first and last updated heights. |
+| `registry_undo` | Per block and row, the row's previous value as JSONB, or NULL when the block created it. |
 
 ## Pricing and candles
 
