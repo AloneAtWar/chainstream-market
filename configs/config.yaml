@@ -52,8 +52,14 @@ holders:
   rpc_batch_size: 100
   rpc_timeout: 30s
 
+# market-registry keeps token and pool metadata in the state.postgres
+# database; it needs state.driver: postgres.
+registry:
+  history_depth: 256
+
 # market-api serves what market-engine stored; it needs storage.driver: clickhouse.
-# With state.driver: postgres it also serves holders from holder-indexer.
+# With state.driver: postgres it also serves holders from holder-indexer and
+# token and pool metadata from market-registry.
 api:
   addr: ":8080"
 
