@@ -16,7 +16,13 @@ type Config struct {
 	Kafka   Kafka   `yaml:"kafka"`
 	Storage Storage `yaml:"storage"`
 	Market  Market  `yaml:"market"`
+	API     API     `yaml:"api"`
 	Chains  []Chain `yaml:"chains"`
+}
+
+// API configures market-api, which reads the ClickHouse store.
+type API struct {
+	Addr string `yaml:"addr"`
 }
 
 // Market tunes pricing and candle aggregation for every chain.
@@ -87,6 +93,7 @@ const (
 	StorageClickHouse = "clickhouse"
 
 	defaultClickHouseDatabase = "market"
+	defaultAPIAddr            = ":8080"
 
 	defaultFetchMaxBytes = 104857600
 	defaultFetchMaxWait  = 500 * time.Millisecond
@@ -154,6 +161,9 @@ func (config *Config) applyDefaults() {
 	}
 	if strings.TrimSpace(config.Storage.Driver) == "" {
 		config.Storage.Driver = StorageMemory
+	}
+	if strings.TrimSpace(config.API.Addr) == "" {
+		config.API.Addr = defaultAPIAddr
 	}
 	if config.Storage.Driver == StorageClickHouse && config.Storage.ClickHouse.Database == "" {
 		config.Storage.ClickHouse.Database = defaultClickHouseDatabase

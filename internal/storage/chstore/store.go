@@ -185,7 +185,7 @@ func (store *Store) insertTrades(ctx context.Context, block storage.BlockOutput)
 			if err := batch.Append(
 				trade.ChainID, trade.BlockHeight, trade.BlockTime, trade.TransactionHash, trade.TransactionIndex,
 				trade.LogIndex, trade.OperationIndex, trade.Protocol, trade.PoolID, trade.Trader,
-				sideName(trade.Side), trade.BaseToken, trade.QuoteToken, trade.BaseAmount, trade.QuoteAmount,
+				trade.Side.String(), trade.BaseToken, trade.QuoteToken, trade.BaseAmount, trade.QuoteAmount,
 				trade.PriceQuote, trade.PriceUSD, trade.ValueUSD, block.Finalized,
 			); err != nil {
 				return err
@@ -203,7 +203,7 @@ func (store *Store) insertPrices(ctx context.Context, block storage.BlockOutput)
 		for _, price := range block.Prices {
 			if err := batch.Append(
 				price.ChainID, price.Token, price.BlockHeight, price.BlockTime, price.PriceUSD,
-				sourceName(price.Source), price.Hops, price.LiquidityUSD,
+				price.Source.String(), price.Hops, price.LiquidityUSD,
 			); err != nil {
 				return err
 			}
@@ -219,7 +219,7 @@ func (store *Store) insertCandles(ctx context.Context, block storage.BlockOutput
 	return store.insert(ctx, "candles", func(batch driver.Batch) error {
 		for _, candle := range block.Candles {
 			if err := batch.Append(
-				candle.ChainID, subjectName(candle.Subject), candle.Key, uint32(candle.Interval/time.Second),
+				candle.ChainID, candle.Subject.String(), candle.Key, uint32(candle.Interval/time.Second),
 				candle.OpenTime, candle.Open, candle.High, candle.Low, candle.Close,
 				candle.VolumeBase, candle.VolumeUSD, candle.Trades, candle.UpdateHeight,
 			); err != nil {
@@ -242,49 +242,6 @@ func (store *Store) insert(ctx context.Context, table string, fill func(driver.B
 		return fmt.Errorf("clickhouse store: send %s: %w", table, err)
 	}
 	return nil
-}
-
-func sideName(side storage.Side) string {
-	switch side {
-	case storage.SideBuy:
-		return "buy"
-	case storage.SideSell:
-		return "sell"
-	case storage.SideLiquidityAdded:
-		return "liquidity_added"
-	case storage.SideLiquidityRemoved:
-		return "liquidity_removed"
-	case storage.SideUnknown:
-		return "unknown"
-	default:
-		return "unknown"
-	}
-}
-
-func sourceName(source storage.PriceSource) string {
-	switch source {
-	case storage.PriceSourceAnchor:
-		return "anchor"
-	case storage.PriceSourceGraph:
-		return "graph"
-	case storage.PriceSourceUnknown:
-		return "unknown"
-	default:
-		return "unknown"
-	}
-}
-
-func subjectName(subject storage.CandleSubject) string {
-	switch subject {
-	case storage.CandleSubjectPool:
-		return "pool"
-	case storage.CandleSubjectToken:
-		return "token"
-	case storage.CandleSubjectUnknown:
-		return "unknown"
-	default:
-		return "unknown"
-	}
 }
 
 var _ storage.Output = (*Store)(nil)

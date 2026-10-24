@@ -6,6 +6,7 @@ GOLANGCI_LINT_VERSION := v2.12.2
 
 build:
 	go build -trimpath -ldflags "-X main.Version=$(VERSION)" -o bin/$(APP) ./cmd/market-engine
+	go build -trimpath -ldflags "-X main.Version=$(VERSION)" -o bin/market-api ./cmd/market-api
 
 generate:
 	cd proto && buf generate
