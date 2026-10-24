@@ -66,6 +66,8 @@ The PostgreSQL store creates these tables in `state.postgres.schema`:
 | `engine_state` | Current state as `(chain_id, kind, key) -> value JSONB`, where kind is `pools`, `prices`, `orientations`, `candles`, `decimals` or `oracle`. |
 | `engine_state_undo` | For each key a block changed, the value it held before that block. A revert deletes rows above `rollback_to`; pruning deletes rows at or below the finalized height and `history_depth`. |
 
+Every service that uses PostgreSQL creates all the tables it might need when it starts, in one transaction that holds an advisory lock keyed by the schema name. Several services can therefore start together on an empty schema: they create the tables one after another instead of failing with a duplicate key error.
+
 Computation stays in memory, so PostgreSQL is written once per block and never read on the hot path. A crash between the output write and the commit replays one block, which the output store overwrites.
 
 ## market-api

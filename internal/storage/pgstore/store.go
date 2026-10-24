@@ -80,17 +80,42 @@ func Open(ctx context.Context, options Options) (*Store, error) {
 	if err != nil {
 		return nil, fmt.Errorf("postgres store: connect: %w", err)
 	}
+	if err := migrate(ctx, pool, name); err != nil {
+		pool.Close()
+		return nil, fmt.Errorf("postgres store: migrate: %w", err)
+	}
+	return &Store{pool: pool}, nil
+}
+
+// migrate creates the schema and tables in one transaction that holds an
+// advisory lock keyed by the schema name. CREATE ... IF NOT EXISTS is not
+// safe to run concurrently: when several services start on an empty schema,
+// all but one fail with a duplicate key error in the system catalogs. The
+// lock makes them run one after another, so the later ones find everything
+// already created. It is released when the transaction ends.
+func migrate(ctx context.Context, pool *pgxpool.Pool, name string) (err error) {
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err != nil {
+			err = errors.Join(err, rollback(ctx, tx))
+		}
+	}()
+	if _, err = tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, "chainstream-market/migrate/"+name); err != nil {
+		return fmt.Errorf("lock: %w", err)
+	}
 	statements := append([]string{"CREATE SCHEMA IF NOT EXISTS " + name}, schema...)
 	statements = append(statements, holderSchema...)
 	statements = append(statements, registrySchema...)
 	statements = append(statements, rankingSchema...)
 	for _, statement := range statements {
-		if _, err := pool.Exec(ctx, statement); err != nil {
-			pool.Close()
-			return nil, fmt.Errorf("postgres store: migrate: %w", err)
+		if _, err = tx.Exec(ctx, statement); err != nil {
+			return err
 		}
 	}
-	return &Store{pool: pool}, nil
+	return tx.Commit(ctx)
 }
 
 func (store *Store) Close() { store.pool.Close() }
