@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"sync"
 	"testing"
 	"time"
 
@@ -59,5 +60,60 @@ func TestOpenRejectsBadOptions(t *testing.T) {
 	}
 	if _, err := Open(context.Background(), Options{DSN: "postgres://x", Schema: "bad;name"}); err == nil {
 		t.Fatal("Open() with bad schema error = nil")
+	}
+}
+
+// TestOpenConcurrent opens many stores on one empty schema at once, as
+// several services starting together do. Without the migration lock,
+// concurrent CREATE ... IF NOT EXISTS fails with a duplicate key error.
+func TestOpenConcurrent(t *testing.T) {
+	dsn := os.Getenv("POSTGRES_DSN")
+	if dsn == "" {
+		t.Skip("POSTGRES_DSN not set")
+	}
+	ctx := context.Background()
+	schema := fmt.Sprintf("market_test_%d", time.Now().UnixNano())
+	const services = 8
+	stores := make(chan *Store, services)
+	errs := make(chan error, services)
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	for range services {
+		wg.Go(func() {
+			<-start
+			store, err := Open(ctx, Options{DSN: dsn, Schema: schema})
+			if err != nil {
+				errs <- err
+				return
+			}
+			stores <- store
+		})
+	}
+	close(start)
+	wg.Wait()
+	close(stores)
+	close(errs)
+	var opened []*Store
+	for store := range stores {
+		opened = append(opened, store)
+	}
+	t.Cleanup(func() {
+		if len(opened) > 0 {
+			if _, err := opened[0].pool.Exec(ctx, "DROP SCHEMA IF EXISTS "+schema+" CASCADE"); err != nil {
+				t.Errorf("drop schema: %v", err)
+			}
+		}
+		for _, store := range opened {
+			store.Close()
+		}
+	})
+	for err := range errs {
+		t.Errorf("concurrent Open() error = %v", err)
+	}
+	if len(opened) != services {
+		t.Fatalf("opened %d stores, want %d", len(opened), services)
+	}
+	if err := opened[0].Save(ctx, storage.Checkpoint{ChainID: 1, Height: 1, Hash: "0x1", UpdatedAt: time.Now().UTC()}); err != nil {
+		t.Fatalf("Save() after concurrent Open() error = %v", err)
 	}
 }
