@@ -177,3 +177,22 @@ type TradeQuery struct {
 	BeforeHeight int64
 	Limit        int
 }
+
+// Revert says what a reorg undid, so live clients can correct what they were
+// sent.
+type Revert struct {
+	ChainID    uint64
+	RollbackTo int64
+	// Candles lists every candle series a reverted block changed.
+	Candles []CandleReset
+}
+
+// CandleReset is a candle series as of a revert's rollback height. Latest is
+// its newest bucket at that height, or nil when the series had none; any
+// newer bucket that the reverted blocks wrote no longer exists.
+type CandleReset struct {
+	Subject  CandleSubject
+	Key      string
+	Interval time.Duration
+	Latest   *Candle
+}

@@ -42,9 +42,12 @@ type Options struct {
 	Checkpoints storage.CheckpointStore
 	// State persists the processor's state with each checkpoint. The
 	// processor must implement Stateful.
-	State  storage.StateStore
-	Logger *slog.Logger
-	Now    func() time.Time
+	State storage.StateStore
+	// Notifier, when set, receives each block's output and each revert after
+	// they are stored. It is only used with Processor.
+	Notifier Notifier
+	Logger   *slog.Logger
+	Now      func() time.Time
 }
 
 // Engine consumes one chain topic. Each record is applied and committed

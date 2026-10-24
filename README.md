@@ -19,6 +19,7 @@ Market data services built on the [chainstream-evm](https://github.com/AloneAtWa
 | `internal/holders` | holder-indexer's handler: transfer deltas, balanceOf seeding and reconciliation. |
 | `internal/registry` | market-registry's handler: asset and pool facts to token and pool metadata. |
 | `internal/rankings` | market-rankings' refresher: reads the ClickHouse output and commits one chain's rankings. |
+| `internal/live` | Realtime push: market-engine's live topic publisher and market-api's WebSocket hub. |
 | `internal/rpc` | Minimal JSON-RPC client for batched `balanceOf` calls. |
 | `internal/market` | Per-chain processor: pool state, base/quote orientation, the USD price graph and candles. |
 | `internal/source` | Kafka reader for partition zero of a chain topic. |
@@ -90,6 +91,7 @@ go run ./cmd/market-api -conf configs/config.yaml   # needs storage.driver: clic
 | `GET /v1/chains/{chain}/tokens?sort=volume_24h` | The token list from market-rankings, see [market-rankings](#market-rankings). Served only with `state.driver: postgres`. |
 | `GET /v1/chains/{chain}/tokens/{token}/transfers` | The token's ERC-20 transfers from ch-loader, newest first. `holder` narrows them to one party. |
 | `GET /v1/chains/{chain}/holders/{holder}/transfers` | Transfers to or from the holder across tokens, newest first. `token` narrows them to one token. |
+| `GET /v1/stream` | WebSocket stream of live trades and candles, see [Live push](#live-push). Served only with `live.enabled`. |
 | `GET /healthz` | 204 when the process is up. |
 
 - `{chain}` is the numeric chain ID. For prices, candles and trades the native pseudo-address is an alias for the wrapped token; holders and registry routes take addresses as they are.
@@ -99,6 +101,48 @@ go run ./cmd/market-api -conf configs/config.yaml   # needs storage.driver: clic
 - Decimal values are returned as strings.
 
 Queries go straight to ClickHouse, which is fast enough at local scale. Add a Redis hot view only if latency calls for it.
+
+## Live push
+
+With `live.enabled: true`, market-engine publishes what each block derived to a live topic per chain, and market-api streams it to WebSocket clients at `GET /v1/stream`. Unfinalized data is pushed at once and corrected after a reorg, the same way it is stored.
+
+```
+chain topic -> market-engine -> {topic}-live (Kafka) -> market-api hub -> WebSocket clients
+```
+
+**Publishing.** After a block's output is stored and before its checkpoint is committed, market-engine writes the block's oriented trades and every candle bucket it changed to `chains[].live_topic` (default `<topic>-live`), as JSON records on partition 0. A revert writes the height it rolled back to and a reset for every candle series the reverted blocks touched. A failed write stops the engine like a failed store write, so a record is published at least once; a replay republishes the same values, which clients overwrite. Blocks older than `live.max_lag` are skipped so that a catch-up does not push history; reverts are always published. Topics are created on first write when the broker allows auto-creation; otherwise create them with one partition.
+
+**Fan-out.** market-api reads each live topic from its end, without a consumer group, so every instance serves its own clients. Trades go out as soon as their block arrives. Candle buckets and the chain head are coalesced and sent every `live.candle_throttle`, each bucket once at its latest value. A client that falls `live.client_buffer` messages behind is disconnected (close code 1013) rather than silently skipping corrections; it should reconnect and load history again.
+
+**Protocol.** Send JSON requests:
+
+```json
+{"op": "subscribe", "channels": ["candles:1:token:0xc02a...:1m", "trades:1:pool:0x88e6..."]}
+{"op": "unsubscribe", "channels": ["trades:1:pool:0x88e6..."]}
+```
+
+| Channel | Carries |
+| --- | --- |
+| `trades:<chain>:pool:<pool>` | The pool's trades, like `/pools/{pool}/trades`. |
+| `trades:<chain>:token:<token>` | Trades with the token as base, like `/tokens/{token}/trades`. |
+| `candles:<chain>:pool:<pool>:<interval>` | Pool candles. `interval` is one of `market.intervals`. |
+| `candles:<chain>:token:<token>:<interval>` | The token's aggregated candles. |
+
+Addresses are lowercased and token aliases, such as the native pseudo-address, map to the wrapped token. The `subscribed` reply lists the channels as the server spells them, and messages use that spelling. A connection holds at most `live.max_subscriptions` channels; an invalid request gets an `error` message and changes nothing.
+
+| Message | Meaning |
+| --- | --- |
+| `{"type":"trades","channel","height","trades":[...]}` | New trades. Each has the REST trade fields plus `revision_height`, the block that emitted it. A held late trade keeps its own `block_height` but has the later `revision_height`. |
+| `{"type":"candle","channel","candle":{...}}` | The whole current value of one bucket, with `update_height`. Replace the bucket with the same `open_time`. |
+| `{"type":"head","chain_id","height","finalized_height"}` | The chain's newest pushed block. Blocks at or below `finalized_height` are never reverted. |
+| `{"type":"revert","chain_id","rollback_to"}` | A reorg: drop every trade with `revision_height > rollback_to` on that chain. Sent to every connection subscribed to the chain. |
+| `{"type":"candle_reset","channel","candle":{...} or null}` | Follows a revert, one per affected series. The candle is the series' newest bucket as of `rollback_to`: replace it and drop every newer bucket. `null` means the series had no buckets then; drop them all. |
+
+A client that applies messages in order ends with what the store holds: before a revert, the hub sends whatever it had coalesced, so a reset always comes last. To combine history and live data without a gap, subscribe first, then load history over REST, then apply the messages received meanwhile; overwriting buckets by `open_time` and trades by `(block_height, transaction_hash, log_index, operation_index)` makes the overlap harmless. Empty buckets are never sent; draw them flat at the previous close, as the REST candles do.
+
+The reset is exact because a series only gains buckets forward in time, and late trades only build buckets for a series that had none: the bucket current at `rollback_to` is the only older bucket a reverted block can have changed, and market-engine reads it from the same undo history it reverts with.
+
+Browsers on another origin must be listed in `live.allowed_origins`, for example `localhost:5173`. The stream has no authentication.
 
 ## holder-indexer
 

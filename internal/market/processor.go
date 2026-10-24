@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"slices"
 	"time"
 
@@ -222,6 +223,26 @@ func (processor *Processor) Revert(_ context.Context, rollbackTo int64) error {
 		processor.reverted, processor.revertTo = true, rollbackTo
 	}
 	return nil
+}
+
+// RevertedCandles returns the candle series that Revert(rollbackTo) will
+// change, each with its newest bucket as of rollbackTo. Call it before Revert.
+//
+// A series only gains buckets forward in time, and late trades only build
+// buckets for series that had none, so the bucket current at rollbackTo is the
+// only older bucket a reverted block can have changed.
+func (processor *Processor) RevertedCandles(rollbackTo int64) []storage.CandleReset {
+	restored := processor.candles.restored(rollbackTo)
+	resets := make([]storage.CandleReset, 0, len(restored))
+	for _, key := range slices.SortedFunc(maps.Keys(restored), compareCandleKeys) {
+		reset := storage.CandleReset{Subject: key.Subject, Key: key.Key, Interval: key.Interval}
+		if entry := restored[key]; entry.Existed {
+			latest := entry.Prev
+			reset.Latest = &latest
+		}
+		resets = append(resets, reset)
+	}
+	return resets
 }
 
 func (processor *Processor) prune(block *streamv1.BlockEvent) {
@@ -661,4 +682,6 @@ func compareCandleKeys(left, right candleKey) int {
 var (
 	_ engine.Processor = (*Processor)(nil)
 	_ engine.Stateful  = (*Processor)(nil)
+
+	_ engine.CandleReverter = (*Processor)(nil)
 )

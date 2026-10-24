@@ -31,6 +31,7 @@ type processorHandler struct {
 	checkpoints storage.CheckpointStore
 	state       storage.StateStore
 	stateful    Stateful
+	notifier    Notifier
 	logger      *slog.Logger
 	chainID     uint64
 }
@@ -41,7 +42,7 @@ func newProcessorHandler(options Options, logger *slog.Logger) (*processorHandle
 	}
 	handler := &processorHandler{
 		processor: options.Processor, output: options.Output, checkpoints: options.Checkpoints,
-		state: options.State, logger: logger, chainID: options.ChainID,
+		state: options.State, notifier: options.Notifier, logger: logger, chainID: options.ChainID,
 	}
 	if options.State != nil {
 		var ok bool
@@ -75,15 +76,29 @@ func (handler *processorHandler) Apply(ctx context.Context, block *streamv1.Bloc
 	if err := handler.output.WriteBlock(ctx, output); err != nil {
 		return fmt.Errorf("write output: %w", err)
 	}
+	if handler.notifier != nil {
+		if err := handler.notifier.NotifyBlock(ctx, output, block.GetFinalizedHeight()); err != nil {
+			return fmt.Errorf("notify block: %w", err)
+		}
+	}
 	return nil
 }
 
 func (handler *processorHandler) Revert(ctx context.Context, rollbackTo int64) error {
+	revert := storage.Revert{ChainID: handler.chainID, RollbackTo: rollbackTo}
+	if reverter, ok := handler.processor.(CandleReverter); ok && handler.notifier != nil {
+		revert.Candles = reverter.RevertedCandles(rollbackTo)
+	}
 	if err := handler.processor.Revert(ctx, rollbackTo); err != nil {
 		return fmt.Errorf("revert processor: %w", err)
 	}
 	if err := handler.output.Rewind(ctx, handler.chainID, rollbackTo); err != nil {
 		return fmt.Errorf("rewind output: %w", err)
+	}
+	if handler.notifier != nil {
+		if err := handler.notifier.NotifyRevert(ctx, revert); err != nil {
+			return fmt.Errorf("notify revert: %w", err)
+		}
 	}
 	return nil
 }

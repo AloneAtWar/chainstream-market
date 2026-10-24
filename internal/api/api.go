@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/AloneAtWar/chainstream-market/internal/live"
 	"github.com/AloneAtWar/chainstream-market/internal/market"
 	"github.com/AloneAtWar/chainstream-market/internal/storage"
 )
@@ -27,6 +28,7 @@ type Server struct {
 	transfers storage.TransferReader
 	registry  storage.RegistryReader
 	rankings  storage.RankingReader
+	live      http.Handler
 	intervals map[string]time.Duration
 	logger    *slog.Logger
 	now       func() time.Time
@@ -46,16 +48,13 @@ func New(reader storage.Reader, intervals []time.Duration, logger *slog.Logger) 
 
 // IntervalName formats an interval the way the API accepts it.
 func IntervalName(interval time.Duration) string {
-	switch {
-	case interval%(24*time.Hour) == 0:
-		return strconv.FormatInt(int64(interval/(24*time.Hour)), 10) + "d"
-	case interval%time.Hour == 0:
-		return strconv.FormatInt(int64(interval/time.Hour), 10) + "h"
-	case interval%time.Minute == 0:
-		return strconv.FormatInt(int64(interval/time.Minute), 10) + "m"
-	default:
-		return strconv.FormatInt(int64(interval/time.Second), 10) + "s"
-	}
+	return live.IntervalName(interval)
+}
+
+// WithLive serves the live WebSocket stream at /v1/stream.
+func (server *Server) WithLive(stream http.Handler) *Server {
+	server.live = stream
+	return server
 }
 
 func (server *Server) Handler() http.Handler {
@@ -78,6 +77,9 @@ func (server *Server) Handler() http.Handler {
 	}
 	if server.rankings != nil {
 		mux.HandleFunc("GET /v1/chains/{chain}/tokens", server.tokenList)
+	}
+	if server.live != nil {
+		mux.Handle("GET /v1/stream", server.live)
 	}
 	if server.transfers != nil {
 		mux.HandleFunc("GET /v1/chains/{chain}/tokens/{token}/transfers", server.transfersBy("token"))
