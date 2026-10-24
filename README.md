@@ -12,6 +12,7 @@ Market data services built on the [chainstream-evm](https://github.com/AloneAtWa
 | `internal/market` | Per-chain processor: pool state, base/quote orientation, the USD price graph and candles. |
 | `internal/source` | Kafka reader for partition zero of a chain topic. |
 | `internal/storage` | Output models (oriented trades, token prices, candles), store interfaces and the in-memory backend. |
+| `internal/storage/chstore` | ClickHouse output store and schema. |
 | `internal/conf` | YAML configuration. |
 
 ## market-engine
@@ -22,7 +23,20 @@ Each chain runs its own engine, which reads the chain topic in offset order with
 - `BlockEvent` must extend the last applied block. Blocks at or below the applied height are treated as redeliveries from a retried publish and are skipped. A height gap or a parent hash mismatch without a preceding revert stops the engine.
 - Stores must make `WriteBlock` replace a height, because a crash between the write and the checkpoint replays that block.
 
-ClickHouse and Redis stores are not built yet, so `storage.driver` accepts only `memory`.
+## Storage
+
+`storage.driver` is either `memory` or `clickhouse`. The ClickHouse store creates its database and these tables on startup:
+
+| Table | Rows |
+| --- | --- |
+| `blocks` | One per applied block. It is written last, so it marks the height as complete. |
+| `trades` | Oriented trades with USD values. |
+| `token_prices` | Each token price emitted by a block. |
+| `candles` | One version per block that changed a bucket. Read the current bucket with `argMax(col, update_height)` or `LIMIT 1 BY`. |
+
+Rows are keyed by `(chain_id, height)`. A revert deletes every row above `rollback_to`; candles drop the newer versions, so the previous version becomes current again. Writing a height that may already exist deletes it first, which makes a replay idempotent. Deletes use ClickHouse lightweight `DELETE`.
+
+Checkpoints and processor state are still in memory, so a restart replays each topic from offset zero and rewrites the heights already in ClickHouse. Persisting state snapshots is future work, and so is a Redis hot view.
 
 ## Pricing and candles
 
@@ -55,5 +69,7 @@ Requires Go 1.26.10 and Buf.
 make generate   # regenerate proto/stream/v1 and tidy both modules
 make verify     # buf lint, gofmt, golangci-lint, go test -race
 ```
+
+The ClickHouse store tests run only when `CLICKHOUSE_ADDR` is set, for example `CLICKHOUSE_ADDR=127.0.0.1:9000 make test`. CI starts a ClickHouse service for them.
 
 `proto/stream/v1/event.proto` is copied from chainstream-evm's `api/stream/v1`, with only `go_package` changed. chainstream-evm still publishes from its own copy. The two must stay wire-compatible until chainstream-evm imports this module.

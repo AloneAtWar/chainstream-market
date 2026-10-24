@@ -47,10 +47,21 @@ type Kafka struct {
 	FetchMaxWait  time.Duration `yaml:"fetch_max_wait"`
 }
 
-// Storage selects the store implementations.
+// Storage selects where market output goes. Checkpoints stay in memory
+// either way, so a restart replays each topic from offset zero and the
+// ClickHouse store overwrites the heights it already holds.
 type Storage struct {
-	// Driver is "memory" until the ClickHouse and Redis stores land.
-	Driver string `yaml:"driver"`
+	// Driver is "memory" or "clickhouse".
+	Driver     string     `yaml:"driver"`
+	ClickHouse ClickHouse `yaml:"clickhouse"`
+}
+
+type ClickHouse struct {
+	Addr        []string      `yaml:"addr"`
+	Database    string        `yaml:"database"`
+	Username    string        `yaml:"username"`
+	Password    string        `yaml:"password"`
+	DialTimeout time.Duration `yaml:"dial_timeout"`
 }
 
 // Chain is one chainstream-evm topic consumed in order by its own engine.
@@ -72,7 +83,10 @@ type Feed struct {
 }
 
 const (
-	StorageMemory = "memory"
+	StorageMemory     = "memory"
+	StorageClickHouse = "clickhouse"
+
+	defaultClickHouseDatabase = "market"
 
 	defaultFetchMaxBytes = 104857600
 	defaultFetchMaxWait  = 500 * time.Millisecond
@@ -141,6 +155,9 @@ func (config *Config) applyDefaults() {
 	if strings.TrimSpace(config.Storage.Driver) == "" {
 		config.Storage.Driver = StorageMemory
 	}
+	if config.Storage.Driver == StorageClickHouse && config.Storage.ClickHouse.Database == "" {
+		config.Storage.ClickHouse.Database = defaultClickHouseDatabase
+	}
 }
 
 // Validate reports the first invalid setting.
@@ -170,7 +187,13 @@ func (config *Config) Validate() error {
 			return fmt.Errorf("conf: market interval %s must be whole seconds", interval)
 		}
 	}
-	if config.Storage.Driver != StorageMemory {
+	switch config.Storage.Driver {
+	case StorageMemory:
+	case StorageClickHouse:
+		if len(config.Storage.ClickHouse.Addr) == 0 {
+			return errors.New("conf: storage.clickhouse.addr is required")
+		}
+	default:
 		return fmt.Errorf("conf: unsupported storage.driver %q", config.Storage.Driver)
 	}
 	if len(config.Chains) == 0 {
