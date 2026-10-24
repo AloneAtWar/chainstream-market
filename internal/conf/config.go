@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"slices"
 	"strings"
 	"time"
 
@@ -13,12 +14,14 @@ import (
 
 // Config is the market-engine process configuration.
 type Config struct {
-	Kafka   Kafka   `yaml:"kafka"`
-	Storage Storage `yaml:"storage"`
-	State   State   `yaml:"state"`
-	Market  Market  `yaml:"market"`
-	API     API     `yaml:"api"`
-	Holders Holders `yaml:"holders"`
+	Kafka    Kafka    `yaml:"kafka"`
+	Storage  Storage  `yaml:"storage"`
+	State    State    `yaml:"state"`
+	Market   Market   `yaml:"market"`
+	API      API      `yaml:"api"`
+	Holders  Holders  `yaml:"holders"`
+	Registry Registry `yaml:"registry"`
+	Rankings Rankings `yaml:"rankings"`
 	// ChLoader is named after the ch-loader command.
 	ChLoader ChLoader `yaml:"ch_loader"`
 	Chains   []Chain  `yaml:"chains"`
@@ -32,6 +35,27 @@ type ChLoader struct {
 	BatchLag      time.Duration `yaml:"batch_lag"`
 	FlushRows     int           `yaml:"flush_rows"`
 	FlushInterval time.Duration `yaml:"flush_interval"`
+}
+
+// Rankings tunes market-rankings, which rolls market-engine's ClickHouse
+// output, holder counts and registry metadata into the token_rankings table
+// that market-api lists.
+type Rankings struct {
+	RefreshInterval time.Duration `yaml:"refresh_interval"`
+	// CandleInterval is the token candle size summed for the 24h columns;
+	// it must be one of market.intervals.
+	CandleInterval time.Duration `yaml:"candle_interval"`
+	// ReorgWindow is how far behind the last refresh's chain head latest
+	// prices are read again, so a reorg that moved them is picked up.
+	ReorgWindow time.Duration `yaml:"reorg_window"`
+}
+
+// Registry tunes market-registry, which keeps token and pool metadata in
+// the state.postgres database.
+type Registry struct {
+	// HistoryDepth is how many recent blocks stay revertible in addition to
+	// everything above the finalized height.
+	HistoryDepth int64 `yaml:"history_depth"`
 }
 
 // Holders tunes holder-indexer, which keeps ERC-20 balances per holder in
@@ -160,6 +184,10 @@ const (
 	defaultRPCBatchSize          = 100
 	defaultRPCTimeout            = 30 * time.Second
 
+	defaultRankingsRefreshInterval = time.Minute
+	defaultRankingsCandleInterval  = 5 * time.Minute
+	defaultRankingsReorgWindow     = time.Hour
+
 	defaultLoaderBatchLag      = 5 * time.Minute
 	defaultLoaderFlushRows     = 100000
 	defaultLoaderFlushInterval = 2 * time.Second
@@ -225,6 +253,9 @@ func (config *Config) applyDefaults() {
 	if config.Holders.HistoryDepth == 0 {
 		config.Holders.HistoryDepth = defaultHistoryDepth
 	}
+	if config.Registry.HistoryDepth == 0 {
+		config.Registry.HistoryDepth = defaultHistoryDepth
+	}
 	if config.Holders.ReconcileEvery == 0 {
 		config.Holders.ReconcileEvery = defaultHoldersReconcileEvery
 	}
@@ -236,6 +267,18 @@ func (config *Config) applyDefaults() {
 	}
 	if config.Holders.RPCTimeout == 0 {
 		config.Holders.RPCTimeout = defaultRPCTimeout
+	}
+	if config.Rankings.RefreshInterval == 0 {
+		config.Rankings.RefreshInterval = defaultRankingsRefreshInterval
+	}
+	if config.Rankings.CandleInterval == 0 {
+		config.Rankings.CandleInterval = slices.Min(config.Market.Intervals)
+		if slices.Contains(config.Market.Intervals, defaultRankingsCandleInterval) {
+			config.Rankings.CandleInterval = defaultRankingsCandleInterval
+		}
+	}
+	if config.Rankings.ReorgWindow == 0 {
+		config.Rankings.ReorgWindow = defaultRankingsReorgWindow
 	}
 	if config.ChLoader.BatchLag == 0 {
 		config.ChLoader.BatchLag = defaultLoaderBatchLag
@@ -296,6 +339,15 @@ func (config *Config) Validate() error {
 	if config.Holders.HistoryDepth < 0 || config.Holders.ReconcileBatch < 0 ||
 		config.Holders.RPCBatchSize < 0 || config.Holders.RPCTimeout < 0 {
 		return errors.New("conf: holders settings must be positive")
+	}
+	if config.Registry.HistoryDepth < 0 {
+		return errors.New("conf: registry.history_depth must be positive")
+	}
+	if config.Rankings.RefreshInterval < 0 || config.Rankings.ReorgWindow < 0 {
+		return errors.New("conf: rankings durations must be positive")
+	}
+	if !slices.Contains(config.Market.Intervals, config.Rankings.CandleInterval) || config.Rankings.CandleInterval > 24*time.Hour {
+		return fmt.Errorf("conf: rankings.candle_interval %s must be one of market.intervals and at most 24h", config.Rankings.CandleInterval)
 	}
 	if config.ChLoader.BatchLag < 0 || config.ChLoader.FlushRows < 0 || config.ChLoader.FlushInterval < 0 {
 		return errors.New("conf: ch_loader settings must be positive")

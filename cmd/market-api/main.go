@@ -1,6 +1,7 @@
 // Command market-api serves prices, candles and trades from the ClickHouse
-// store that market-engine writes, transfers from the raw tables ch-loader
-// writes, and holders from the PostgreSQL store that holder-indexer writes.
+// store that market-engine writes and the raw tables ch-loader writes, and
+// holders, token and pool metadata and token lists from the PostgreSQL store
+// that holder-indexer, market-registry and market-rankings write.
 package main
 
 import (
@@ -77,7 +78,7 @@ func run(configPath string, logger *slog.Logger) error {
 			return openErr
 		}
 		defer holderStore.Close()
-		handler.WithHolders(holderStore)
+		handler.WithHolders(holderStore).WithRegistry(holderStore).WithRankings(holderStore)
 	}
 	server := &http.Server{
 		Addr:              config.API.Addr,

@@ -54,7 +54,7 @@ var schema = []string{
 }
 
 // Store implements storage.CheckpointStore, storage.StateStore and the
-// holder interfaces.
+// holder, registry and ranking interfaces.
 type Store struct {
 	pool *pgxpool.Pool
 }
@@ -82,6 +82,8 @@ func Open(ctx context.Context, options Options) (*Store, error) {
 	}
 	statements := append([]string{"CREATE SCHEMA IF NOT EXISTS " + name}, schema...)
 	statements = append(statements, holderSchema...)
+	statements = append(statements, registrySchema...)
+	statements = append(statements, rankingSchema...)
 	for _, statement := range statements {
 		if _, err := pool.Exec(ctx, statement); err != nil {
 			pool.Close()

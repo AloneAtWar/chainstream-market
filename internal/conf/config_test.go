@@ -27,12 +27,20 @@ chains:
 		config.Holders.HistoryDepth != defaultHistoryDepth {
 		t.Fatalf("holders defaults = %+v", config.Holders)
 	}
+	if config.Registry.HistoryDepth != defaultHistoryDepth {
+		t.Fatalf("registry defaults = %+v", config.Registry)
+	}
 	if config.ChLoader.BatchLag != defaultLoaderBatchLag || config.ChLoader.FlushRows != defaultLoaderFlushRows ||
 		config.ChLoader.FlushInterval != defaultLoaderFlushInterval {
 		t.Fatalf("ch_loader defaults = %+v", config.ChLoader)
 	}
 	if config.State.Driver != StateMemory {
 		t.Fatalf("state driver = %q", config.State.Driver)
+	}
+	if config.Rankings.RefreshInterval != defaultRankingsRefreshInterval ||
+		config.Rankings.CandleInterval != defaultRankingsCandleInterval ||
+		config.Rankings.ReorgWindow != defaultRankingsReorgWindow {
+		t.Fatalf("rankings defaults = %+v", config.Rankings)
 	}
 	if config.Market.MaxHops != defaultMaxHops || len(config.Market.Intervals) != len(DefaultIntervals()) ||
 		config.Market.MinLiquidityUSD != defaultMinLiquidityUSD || config.Market.HistoryDepth != defaultHistoryDepth {
@@ -58,6 +66,9 @@ func TestParseRejectsInvalidConfig(t *testing.T) {
 		"postgres no dsn":    "kafka: {brokers: [b]}\nstate: {driver: postgres}\nchains: [{name: eth, chain_id: 1, topic: a}]",
 		"unknown state":      "kafka: {brokers: [b]}\nstate: {driver: redis}\nchains: [{name: eth, chain_id: 1, topic: a}]",
 		"negative holders":   "kafka: {brokers: [b]}\nholders: {rpc_batch_size: -1}\nchains: [{name: eth, chain_id: 1, topic: a}]",
+		"negative registry":  "kafka: {brokers: [b]}\nregistry: {history_depth: -1}\nchains: [{name: eth, chain_id: 1, topic: a}]",
+		"negative rankings":  "kafka: {brokers: [b]}\nrankings: {refresh_interval: -1s}\nchains: [{name: eth, chain_id: 1, topic: a}]",
+		"unknown candle":     "kafka: {brokers: [b]}\nrankings: {candle_interval: 2m}\nchains: [{name: eth, chain_id: 1, topic: a}]",
 		"negative ch_loader": "kafka: {brokers: [b]}\nch_loader: {flush_rows: -1}\nchains: [{name: eth, chain_id: 1, topic: a}]",
 	}
 	for name, raw := range tests {
