@@ -7,7 +7,17 @@ kafka:
   fetch_max_wait: 500ms
 
 storage:
+  # memory or clickhouse. Checkpoints are kept in memory either way, so a
+  # restart replays each topic from offset zero and ClickHouse heights are
+  # overwritten in place.
   driver: memory
+  clickhouse:
+    addr:
+      - 127.0.0.1:9000
+    database: market
+    username: default
+    password: ""
+    dial_timeout: 5s
 
 market:
   # A pool prices a token only when its priced counterpart reserve is worth this much.

@@ -18,6 +18,7 @@ import (
 	"github.com/AloneAtWar/chainstream-market/internal/market"
 	"github.com/AloneAtWar/chainstream-market/internal/source"
 	"github.com/AloneAtWar/chainstream-market/internal/storage"
+	"github.com/AloneAtWar/chainstream-market/internal/storage/chstore"
 	"github.com/shopspring/decimal"
 )
 
@@ -43,6 +44,15 @@ func run(configPath string, logger *slog.Logger) error {
 	defer stop()
 
 	memory := storage.NewMemory()
+	output, closeOutput, err := openOutput(ctx, config.Storage, memory)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if closeErr := closeOutput(); closeErr != nil {
+			logger.Error("close storage", "error", closeErr)
+		}
+	}()
 	engines := make([]*engine.Engine, 0, len(config.Chains))
 	for _, chain := range config.Chains {
 		options := source.KafkaOptions{
@@ -71,7 +81,7 @@ func run(configPath string, logger *slog.Logger) error {
 			Open: func(start int64) (source.Source, error) {
 				return source.NewKafka(options, start)
 			},
-			Processor: processor, Output: memory, Checkpoints: memory,
+			Processor: processor, Output: output, Checkpoints: memory,
 			Logger: logger,
 		})
 		if newErr != nil {
@@ -98,4 +108,22 @@ func run(configPath string, logger *slog.Logger) error {
 		return cause
 	}
 	return nil
+}
+
+// openOutput returns the configured output store and its closer.
+func openOutput(ctx context.Context, config conf.Storage, memory *storage.Memory) (storage.Output, func() error, error) {
+	switch config.Driver {
+	case conf.StorageClickHouse:
+		store, err := chstore.Open(ctx, chstore.Options{
+			Addr: config.ClickHouse.Addr, Database: config.ClickHouse.Database,
+			Username: config.ClickHouse.Username, Password: config.ClickHouse.Password,
+			DialTimeout: config.ClickHouse.DialTimeout,
+		})
+		if err != nil {
+			return nil, nil, err
+		}
+		return store, store.Close, nil
+	default:
+		return memory, func() error { return nil }, nil
+	}
 }

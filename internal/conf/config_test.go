@@ -31,18 +31,19 @@ chains:
 
 func TestParseRejectsInvalidConfig(t *testing.T) {
 	tests := map[string]string{
-		"no brokers":      "chains: [{name: eth, chain_id: 1, topic: a}]",
-		"empty broker":    "kafka: {brokers: ['']}\nchains: [{name: eth, chain_id: 1, topic: a}]",
-		"no chains":       "kafka: {brokers: [b]}",
-		"missing topic":   "kafka: {brokers: [b]}\nchains: [{name: eth, chain_id: 1}]",
-		"duplicate id":    "kafka: {brokers: [b]}\nchains: [{name: eth, chain_id: 1, topic: a}, {name: base, chain_id: 1, topic: b}]",
-		"duplicate name":  "kafka: {brokers: [b]}\nchains: [{name: eth, chain_id: 1, topic: a}, {name: eth, chain_id: 2, topic: b}]",
-		"duplicate topic": "kafka: {brokers: [b]}\nchains: [{name: eth, chain_id: 1, topic: a}, {name: base, chain_id: 2, topic: a}]",
-		"bad interval":    "kafka: {brokers: [b]}\nmarket: {intervals: [1500ms]}\nchains: [{name: eth, chain_id: 1, topic: a}]",
-		"negative liq":    "kafka: {brokers: [b]}\nmarket: {min_liquidity_usd: -1}\nchains: [{name: eth, chain_id: 1, topic: a}]",
-		"feed no token":   "kafka: {brokers: [b]}\nchains: [{name: eth, chain_id: 1, topic: a, feeds: [{address: f, decimals: 8}]}]",
-		"duplicate feed":  "kafka: {brokers: [b]}\nchains: [{name: eth, chain_id: 1, topic: a, feeds: [{address: f, token: t}, {address: F, token: u}]}]",
-		"unknown driver":  "kafka: {brokers: [b]}\nstorage: {driver: clickhouse}\nchains: [{name: eth, chain_id: 1, topic: a}]",
+		"no brokers":         "chains: [{name: eth, chain_id: 1, topic: a}]",
+		"empty broker":       "kafka: {brokers: ['']}\nchains: [{name: eth, chain_id: 1, topic: a}]",
+		"no chains":          "kafka: {brokers: [b]}",
+		"missing topic":      "kafka: {brokers: [b]}\nchains: [{name: eth, chain_id: 1}]",
+		"duplicate id":       "kafka: {brokers: [b]}\nchains: [{name: eth, chain_id: 1, topic: a}, {name: base, chain_id: 1, topic: b}]",
+		"duplicate name":     "kafka: {brokers: [b]}\nchains: [{name: eth, chain_id: 1, topic: a}, {name: eth, chain_id: 2, topic: b}]",
+		"duplicate topic":    "kafka: {brokers: [b]}\nchains: [{name: eth, chain_id: 1, topic: a}, {name: base, chain_id: 2, topic: a}]",
+		"bad interval":       "kafka: {brokers: [b]}\nmarket: {intervals: [1500ms]}\nchains: [{name: eth, chain_id: 1, topic: a}]",
+		"negative liq":       "kafka: {brokers: [b]}\nmarket: {min_liquidity_usd: -1}\nchains: [{name: eth, chain_id: 1, topic: a}]",
+		"feed no token":      "kafka: {brokers: [b]}\nchains: [{name: eth, chain_id: 1, topic: a, feeds: [{address: f, decimals: 8}]}]",
+		"duplicate feed":     "kafka: {brokers: [b]}\nchains: [{name: eth, chain_id: 1, topic: a, feeds: [{address: f, token: t}, {address: F, token: u}]}]",
+		"clickhouse no addr": "kafka: {brokers: [b]}\nstorage: {driver: clickhouse}\nchains: [{name: eth, chain_id: 1, topic: a}]",
+		"unknown driver":     "kafka: {brokers: [b]}\nstorage: {driver: postgres}\nchains: [{name: eth, chain_id: 1, topic: a}]",
 	}
 	for name, raw := range tests {
 		t.Run(name, func(t *testing.T) {
@@ -72,6 +73,22 @@ chains:
 	}
 	if config.Market.OracleDeviation != defaultOracleDeviation {
 		t.Fatalf("oracle deviation = %v", config.Market.OracleDeviation)
+	}
+}
+
+func TestParseClickHouseStorage(t *testing.T) {
+	config, err := Parse([]byte(`
+kafka: {brokers: [b]}
+storage:
+  driver: clickhouse
+  clickhouse: {addr: ["127.0.0.1:9000"]}
+chains: [{name: eth, chain_id: 1, topic: a}]
+`))
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	if config.Storage.ClickHouse.Database != defaultClickHouseDatabase {
+		t.Fatalf("database = %q", config.Storage.ClickHouse.Database)
 	}
 }
 
