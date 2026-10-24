@@ -32,6 +32,9 @@ type Market struct {
 	// HistoryDepth is how many recent blocks stay revertible in addition to
 	// everything above the finalized height.
 	HistoryDepth int64 `yaml:"history_depth"`
+	// OracleDeviation is the largest relative gap between a feed-backed
+	// token's graph price and its oracle answer before the answer wins.
+	OracleDeviation float64 `yaml:"oracle_deviation"`
 }
 
 // Kafka configures the per-chain topic consumers.
@@ -55,6 +58,17 @@ type Chain struct {
 	Name    string `yaml:"name"`
 	ChainID uint64 `yaml:"chain_id"`
 	Topic   string `yaml:"topic"`
+	// Feeds are the Chainlink aggregators trusted on this chain. Use the
+	// aggregator behind each proxy, since it is the contract that emits
+	// AnswerUpdated.
+	Feeds []Feed `yaml:"feeds"`
+}
+
+// Feed maps a USD-denominated oracle aggregator to the token it prices.
+type Feed struct {
+	Address  string `yaml:"address"`
+	Token    string `yaml:"token"`
+	Decimals uint8  `yaml:"decimals"`
 }
 
 const (
@@ -67,6 +81,7 @@ const (
 	defaultCandleMinLiquidityUSD = 10000
 	defaultMaxHops               = 3
 	defaultHistoryDepth          = 256
+	defaultOracleDeviation       = 0.02
 )
 
 // DefaultIntervals are the candle sizes used when none are configured.
@@ -120,6 +135,9 @@ func (config *Config) applyDefaults() {
 	if config.Market.HistoryDepth == 0 {
 		config.Market.HistoryDepth = defaultHistoryDepth
 	}
+	if config.Market.OracleDeviation == 0 {
+		config.Market.OracleDeviation = defaultOracleDeviation
+	}
 	if strings.TrimSpace(config.Storage.Driver) == "" {
 		config.Storage.Driver = StorageMemory
 	}
@@ -140,6 +158,9 @@ func (config *Config) Validate() error {
 	}
 	if config.Market.MinLiquidityUSD < 0 || config.Market.CandleMinLiquidityUSD < 0 {
 		return errors.New("conf: market liquidity thresholds must not be negative")
+	}
+	if config.Market.OracleDeviation < 0 {
+		return errors.New("conf: market.oracle_deviation must not be negative")
 	}
 	if config.Market.HistoryDepth < 0 {
 		return errors.New("conf: market.history_depth must be positive")
@@ -172,6 +193,17 @@ func (config *Config) Validate() error {
 			return fmt.Errorf("conf: duplicate topic %q", chain.Topic)
 		}
 		names[chain.Name], ids[chain.ChainID], topics[chain.Topic] = struct{}{}, struct{}{}, struct{}{}
+		feeds := make(map[string]struct{}, len(chain.Feeds))
+		for feedIndex, feed := range chain.Feeds {
+			address := strings.ToLower(strings.TrimSpace(feed.Address))
+			if address == "" || strings.TrimSpace(feed.Token) == "" || feed.Decimals > 36 {
+				return fmt.Errorf("conf: chains[%d].feeds[%d] needs address, token and decimals <= 36", index, feedIndex)
+			}
+			if _, ok := feeds[address]; ok {
+				return fmt.Errorf("conf: chain %s has duplicate feed %s", chain.Name, address)
+			}
+			feeds[address] = struct{}{}
+		}
 	}
 	return nil
 }

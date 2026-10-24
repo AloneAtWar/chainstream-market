@@ -40,6 +40,8 @@ func TestParseRejectsInvalidConfig(t *testing.T) {
 		"duplicate topic": "kafka: {brokers: [b]}\nchains: [{name: eth, chain_id: 1, topic: a}, {name: base, chain_id: 2, topic: a}]",
 		"bad interval":    "kafka: {brokers: [b]}\nmarket: {intervals: [1500ms]}\nchains: [{name: eth, chain_id: 1, topic: a}]",
 		"negative liq":    "kafka: {brokers: [b]}\nmarket: {min_liquidity_usd: -1}\nchains: [{name: eth, chain_id: 1, topic: a}]",
+		"feed no token":   "kafka: {brokers: [b]}\nchains: [{name: eth, chain_id: 1, topic: a, feeds: [{address: f, decimals: 8}]}]",
+		"duplicate feed":  "kafka: {brokers: [b]}\nchains: [{name: eth, chain_id: 1, topic: a, feeds: [{address: f, token: t}, {address: F, token: u}]}]",
 		"unknown driver":  "kafka: {brokers: [b]}\nstorage: {driver: clickhouse}\nchains: [{name: eth, chain_id: 1, topic: a}]",
 	}
 	for name, raw := range tests {
@@ -48,6 +50,28 @@ func TestParseRejectsInvalidConfig(t *testing.T) {
 				t.Fatal("Parse() error = nil")
 			}
 		})
+	}
+}
+
+func TestParseFeeds(t *testing.T) {
+	config, err := Parse([]byte(`
+kafka: {brokers: [b]}
+chains:
+  - name: eth
+    chain_id: 1
+    topic: a
+    feeds:
+      - {address: "0xfeed", token: "0xtoken", decimals: 8}
+`))
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	feeds := config.Chains[0].Feeds
+	if len(feeds) != 1 || feeds[0].Address != "0xfeed" || feeds[0].Token != "0xtoken" || feeds[0].Decimals != 8 {
+		t.Fatalf("feeds = %+v", feeds)
+	}
+	if config.Market.OracleDeviation != defaultOracleDeviation {
+		t.Fatalf("oracle deviation = %v", config.Market.OracleDeviation)
 	}
 }
 
