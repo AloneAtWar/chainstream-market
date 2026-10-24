@@ -51,25 +51,25 @@ type Feed struct {
 
 // tokenPrice is a graph-derived USD price.
 type tokenPrice struct {
-	usd          decimal.Decimal
-	hops         uint8
-	via          string // counterpart token the price came through
-	pool         string
-	liquidityUSD decimal.Decimal
-	height       int64
-	oracle       bool // the price is an oracle answer, not a graph price
+	USD          decimal.Decimal
+	Hops         uint8
+	Via          string // counterpart token the price came through
+	Pool         string
+	LiquidityUSD decimal.Decimal
+	Height       int64
+	FromOracle   bool // the price is an oracle answer, not a graph price
 }
 
 // orientation fixes a pool's quote token once it is known.
 type orientation struct {
-	quote string
-	fixed bool
+	Quote string
+	Fixed bool
 }
 
 type candleKey struct {
-	subject  storage.CandleSubject
-	key      string
-	interval time.Duration
+	Subject  storage.CandleSubject
+	Key      string
+	Interval time.Duration
 }
 
 // Processor is one chain's market state. It is not safe for concurrent use.
@@ -88,6 +88,9 @@ type Processor struct {
 	tokenPools map[string][]string
 	// prunedThrough is the highest height whose undo history was discarded.
 	prunedThrough int64
+	// reverted and revertTo record a revert since the last TakeDelta.
+	reverted bool
+	revertTo int64
 }
 
 func NewProcessor(options Options) (*Processor, error) {
@@ -122,12 +125,12 @@ func NewProcessor(options Options) (*Processor, error) {
 	}
 	return &Processor{
 		options:      options,
-		decimals:     newJournal[string, uint32](),
-		pools:        newJournal[string, pool](),
-		prices:       newJournal[string, tokenPrice](),
-		orientations: newJournal[string, orientation](),
-		candles:      newJournal[candleKey, storage.Candle](),
-		oracle:       newJournal[string, decimal.Decimal](),
+		decimals:     newJournal[string, uint32](stringKeys(kindDecimals)),
+		pools:        newJournal[string, pool](stringKeys(kindPools)),
+		prices:       newJournal[string, tokenPrice](stringKeys(kindPrices)),
+		orientations: newJournal[string, orientation](stringKeys(kindOrientations)),
+		candles:      newJournal[candleKey, storage.Candle](candleKeys),
+		oracle:       newJournal[string, decimal.Decimal](stringKeys(kindOracle)),
 		feeds:        feeds,
 		tokenPools:   make(map[string][]string),
 	}, nil
@@ -174,6 +177,9 @@ func (processor *Processor) Revert(_ context.Context, rollbackTo int64) error {
 	processor.orientations.revert(rollbackTo)
 	processor.candles.revert(rollbackTo)
 	processor.oracle.revert(rollbackTo)
+	if !processor.reverted || rollbackTo < processor.revertTo {
+		processor.reverted, processor.revertTo = true, rollbackTo
+	}
 	return nil
 }
 
@@ -214,7 +220,7 @@ func (processor *Processor) observe(height int64, trade *streamv1.Trade, touched
 		return
 	}
 	processor.pools.set(height, id, next)
-	for _, member := range next.tokens {
+	for _, member := range next.Tokens {
 		token := processor.options.Catalog.Canonical(member)
 		touched[token] = struct{}{}
 		if !existed && !slices.Contains(processor.tokenPools[token], id) {
@@ -256,7 +262,7 @@ func (processor *Processor) anchorPrice(token string) (decimal.Decimal, bool) {
 // priceOf returns token's current USD price, anchors included.
 func (processor *Processor) priceOf(token string) (tokenPrice, bool) {
 	if usd, ok := processor.anchorPrice(token); ok {
-		return tokenPrice{usd: usd, oracle: true}, true
+		return tokenPrice{USD: usd, FromOracle: true}, true
 	}
 	return processor.prices.get(processor.options.Catalog.Canonical(token))
 }
@@ -269,12 +275,12 @@ func (processor *Processor) guard(height int64, token string, candidate tokenPri
 		return candidate, found
 	}
 	if found {
-		deviation := candidate.usd.Sub(answer).Abs().DivRound(answer, precision)
+		deviation := candidate.USD.Sub(answer).Abs().DivRound(answer, precision)
 		if !deviation.GreaterThan(processor.options.OracleDeviation) {
 			return candidate, true
 		}
 	}
-	return tokenPrice{usd: answer, height: height, oracle: true}, true
+	return tokenPrice{USD: answer, Height: height, FromOracle: true}, true
 }
 
 // reprice recomputes every touched token from its most liquid priced
@@ -297,8 +303,8 @@ func (processor *Processor) reprice(height int64, output storage.BlockOutput, to
 				continue
 			}
 			current, exists := processor.prices.get(token)
-			if exists && current.height == height && current.via == candidate.via &&
-				current.oracle == candidate.oracle && current.usd.Equal(candidate.usd) {
+			if exists && current.Height == height && current.Via == candidate.Via &&
+				current.FromOracle == candidate.FromOracle && current.USD.Equal(candidate.USD) {
 				continue
 			}
 			processor.prices.set(height, token, candidate)
@@ -316,10 +322,10 @@ func (processor *Processor) reprice(height int64, output storage.BlockOutput, to
 		}
 		if usd, anchor := processor.anchorPrice(token); anchor {
 			value.PriceUSD, value.Source = usd, storage.PriceSourceAnchor
-		} else if price, ok := processor.prices.get(token); ok && price.height == height {
-			value.PriceUSD, value.Source = price.usd, storage.PriceSourceGraph
-			value.Hops, value.LiquidityUSD = price.hops, price.liquidityUSD
-			if price.oracle {
+		} else if price, ok := processor.prices.get(token); ok && price.Height == height {
+			value.PriceUSD, value.Source = price.USD, storage.PriceSourceGraph
+			value.Hops, value.LiquidityUSD = price.Hops, price.LiquidityUSD
+			if price.FromOracle {
 				value.Source = storage.PriceSourceAnchor
 			}
 		} else {
@@ -337,22 +343,22 @@ func (processor *Processor) bestQuote(height int64, token string) (tokenPrice, b
 	found := false
 	for _, id := range processor.tokenPools[token] {
 		state, ok := processor.pools.get(id)
-		if !ok || !state.hasReserves {
+		if !ok || !state.HasReserves {
 			continue
 		}
 		position, ok := state.index(processor.options.Catalog, token)
 		if !ok {
 			continue
 		}
-		other := processor.options.Catalog.Canonical(state.tokens[1-position])
+		other := processor.options.Catalog.Canonical(state.Tokens[1-position])
 		if other == token {
 			continue
 		}
 		counterpart, ok := processor.priceOf(other)
-		if !ok || counterpart.via == token || counterpart.hops >= processor.options.MaxHops {
+		if !ok || counterpart.Via == token || counterpart.Hops >= processor.options.MaxHops {
 			continue
 		}
-		liquidity := state.reserves[1-position].Mul(counterpart.usd).Round(precision)
+		liquidity := state.Reserves[1-position].Mul(counterpart.USD).Round(precision)
 		if liquidity.LessThan(processor.options.MinLiquidityUSD) {
 			continue
 		}
@@ -360,12 +366,12 @@ func (processor *Processor) bestQuote(height int64, token string) (tokenPrice, b
 		if !ok {
 			continue
 		}
-		if found && (liquidity.LessThan(best.liquidityUSD) || (liquidity.Equal(best.liquidityUSD) && id > best.pool)) {
+		if found && (liquidity.LessThan(best.LiquidityUSD) || (liquidity.Equal(best.LiquidityUSD) && id > best.Pool)) {
 			continue
 		}
 		best = tokenPrice{
-			usd: relative.Mul(counterpart.usd).Round(precision), hops: counterpart.hops + 1,
-			via: other, pool: id, liquidityUSD: liquidity, height: height,
+			USD: relative.Mul(counterpart.USD).Round(precision), Hops: counterpart.Hops + 1,
+			Via: other, Pool: id, LiquidityUSD: liquidity, Height: height,
 		}
 		found = true
 	}
@@ -393,8 +399,8 @@ func (processor *Processor) chooseQuote(left, right string) (string, bool) {
 	rightPrice, rightPriced := processor.priceOf(right)
 	switch {
 	case leftPriced && rightPriced:
-		if leftPrice.hops < rightPrice.hops ||
-			(leftPrice.hops == rightPrice.hops && leftPrice.liquidityUSD.GreaterThan(rightPrice.liquidityUSD)) {
+		if leftPrice.Hops < rightPrice.Hops ||
+			(leftPrice.Hops == rightPrice.Hops && leftPrice.LiquidityUSD.GreaterThan(rightPrice.LiquidityUSD)) {
 			return left, true
 		}
 		return right, true
@@ -420,15 +426,15 @@ func (processor *Processor) orient(height int64, output storage.BlockOutput, sou
 	poolID := normalize(source.GetPoolId())
 	left, right := normalize(legs[0].GetAsset()), normalize(legs[1].GetAsset())
 	quote, decided := processor.orientations.get(poolID)
-	if !decided || !quote.fixed {
+	if !decided || !quote.Fixed {
 		token, fixed := processor.chooseQuote(left, right)
-		if !decided || quote.quote != token || fixed {
-			quote = orientation{quote: token, fixed: fixed}
+		if !decided || quote.Quote != token || fixed {
+			quote = orientation{Quote: token, Fixed: fixed}
 			processor.orientations.set(height, poolID, quote)
 		}
 	}
 	baseLeg, quoteLeg := legs[0], legs[1]
-	switch quote.quote {
+	switch quote.Quote {
 	case left:
 		baseLeg, quoteLeg = legs[1], legs[0]
 	case right:
@@ -475,8 +481,8 @@ func (processor *Processor) orient(height int64, output storage.BlockOutput, sou
 	}
 	trade.PriceQuote = trade.QuoteAmount.DivRound(trade.BaseAmount, precision)
 	if quotePrice, ok := processor.priceOf(trade.QuoteToken); ok {
-		trade.PriceUSD = trade.PriceQuote.Mul(quotePrice.usd).Round(precision)
-		trade.ValueUSD = trade.QuoteAmount.Mul(quotePrice.usd).Round(precision)
+		trade.PriceUSD = trade.PriceQuote.Mul(quotePrice.USD).Round(precision)
+		trade.ValueUSD = trade.QuoteAmount.Mul(quotePrice.USD).Round(precision)
 	}
 	return trade, true
 }
@@ -485,7 +491,7 @@ func (processor *Processor) orient(height int64, output storage.BlockOutput, sou
 // pool, or zero when unknown.
 func (processor *Processor) quoteLiquidityUSD(trade storage.Trade) decimal.Decimal {
 	state, ok := processor.pools.get(trade.PoolID)
-	if !ok || !state.hasReserves {
+	if !ok || !state.HasReserves {
 		return decimal.Zero
 	}
 	quote := processor.options.Catalog.Canonical(trade.QuoteToken)
@@ -497,7 +503,7 @@ func (processor *Processor) quoteLiquidityUSD(trade storage.Trade) decimal.Decim
 	if !ok {
 		return decimal.Zero
 	}
-	return state.reserves[position].Mul(price.usd)
+	return state.Reserves[position].Mul(price.USD)
 }
 
 // aggregate adds a priced swap to its pool candles and, when the pool is
@@ -509,19 +515,15 @@ func (processor *Processor) aggregate(height int64, trade storage.Trade, touched
 	if !trade.PriceUSD.IsPositive() {
 		return
 	}
-	subjects := []struct {
-		subject storage.CandleSubject
-		key     string
-	}{{storage.CandleSubjectPool, trade.PoolID}}
+	subjects := []candleKey{{Subject: storage.CandleSubjectPool, Key: trade.PoolID}}
 	if !processor.quoteLiquidityUSD(trade).LessThan(processor.options.CandleMinLiquidityUSD) {
-		subjects = append(subjects, struct {
-			subject storage.CandleSubject
-			key     string
-		}{storage.CandleSubjectToken, processor.options.Catalog.Canonical(trade.BaseToken)})
+		subjects = append(subjects, candleKey{
+			Subject: storage.CandleSubjectToken, Key: processor.options.Catalog.Canonical(trade.BaseToken),
+		})
 	}
 	for _, subject := range subjects {
 		for _, interval := range processor.options.Intervals {
-			key := candleKey{subject: subject.subject, key: subject.key, interval: interval}
+			key := candleKey{Subject: subject.Subject, Key: subject.Key, Interval: interval}
 			current, exists := processor.candles.get(key)
 			processor.candles.set(height, key, updateCandle(current, exists, trade, key, height))
 			touched[key] = struct{}{}
@@ -533,14 +535,14 @@ func (processor *Processor) aggregate(height int64, trade storage.Trade, touched
 // previous bucket's close, so consecutive candles never gap.
 func updateCandle(current storage.Candle, exists bool, trade storage.Trade, key candleKey, height int64) storage.Candle {
 	price := trade.PriceUSD
-	bucket := trade.BlockTime.Truncate(key.interval)
+	bucket := trade.BlockTime.Truncate(key.Interval)
 	if !exists || bucket.After(current.OpenTime) {
 		open := price
 		if exists {
 			open = current.Close
 		}
 		current = storage.Candle{
-			ChainID: trade.ChainID, Subject: key.subject, Key: key.key, Interval: key.interval,
+			ChainID: trade.ChainID, Subject: key.Subject, Key: key.Key, Interval: key.Interval,
 			OpenTime: bucket, Open: open, High: decimal.Max(open, price), Low: decimal.Min(open, price),
 		}
 	}
@@ -577,4 +579,7 @@ func (processor *Processor) collectCandles(touched map[candleKey]struct{}) []sto
 	return candles
 }
 
-var _ engine.Processor = (*Processor)(nil)
+var (
+	_ engine.Processor = (*Processor)(nil)
+	_ engine.Stateful  = (*Processor)(nil)
+)

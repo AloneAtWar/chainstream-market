@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"testing"
 
@@ -217,5 +218,90 @@ func TestEngineAcceptsParentAfterRevert(t *testing.T) {
 func TestNewRequiresDependencies(t *testing.T) {
 	if _, err := New(Options{ChainID: testChainID}); err == nil {
 		t.Fatal("New() error = nil")
+	}
+}
+
+// countingProcessor persists how many blocks it applied.
+type countingProcessor struct {
+	HeaderProcessor
+	applied  int
+	restored bool
+}
+
+func (counter *countingProcessor) Apply(ctx context.Context, block *streamv1.BlockEvent) (storage.BlockOutput, error) {
+	counter.applied++
+	return counter.HeaderProcessor.Apply(ctx, block)
+}
+
+func (counter *countingProcessor) Restore(state storage.State) error {
+	counter.restored = true
+	for _, entry := range state.Entries {
+		if entry.Kind == "count" {
+			return json.Unmarshal(entry.Value, &counter.applied)
+		}
+	}
+	return nil
+}
+
+func (counter *countingProcessor) TakeDelta() (storage.StateDelta, error) {
+	raw, err := json.Marshal(counter.applied)
+	return storage.StateDelta{Entries: []storage.StateEntry{{Kind: "count", Key: "applied", Value: raw}}}, err
+}
+
+func runStateful(t *testing.T, memory *storage.Memory, processor *countingProcessor, messages []source.Message) int64 {
+	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	start := int64(-1)
+	engine, err := New(Options{
+		ChainID: testChainID, Chain: "eth", Processor: processor, Output: memory, State: memory,
+		Open: func(offset int64) (source.Source, error) {
+			start = offset
+			return &fakeSource{messages: messages[offset:], cancel: cancel}, nil
+		},
+	})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	if err := engine.Run(ctx); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	return start
+}
+
+func TestEngineRestoresPersistedState(t *testing.T) {
+	memory := storage.NewMemory()
+	messages := encode(t, 0,
+		block(100, "a100", "a99"), block(101, "a101", "a100"), block(102, "a102", "a101"),
+		block(103, "a103", "a102"), block(104, "a104", "a103"),
+	)
+	first := &countingProcessor{}
+	if start := runStateful(t, memory, first, messages[:3]); start != 0 || first.restored {
+		t.Fatalf("first run start = %d, restored = %v", start, first.restored)
+	}
+	second := &countingProcessor{}
+	if start := runStateful(t, memory, second, messages); start != 3 || !second.restored {
+		t.Fatalf("second run start = %d, restored = %v", start, second.restored)
+	}
+	if second.applied != 5 {
+		t.Fatalf("applied = %d, want 5", second.applied)
+	}
+	state, ok, err := memory.LoadState(context.Background(), testChainID)
+	if err != nil || !ok || state.Checkpoint.Offset != 4 || state.Checkpoint.Hash != "a104" {
+		t.Fatalf("LoadState() = %+v, %v, %v", state.Checkpoint, ok, err)
+	}
+	if len(state.Entries) != 1 || string(state.Entries[0].Value) != "5" {
+		t.Fatalf("entries = %+v", state.Entries)
+	}
+}
+
+func TestNewRequiresStatefulProcessorForState(t *testing.T) {
+	memory := storage.NewMemory()
+	_, err := New(Options{
+		ChainID: testChainID, Processor: HeaderProcessor{}, Output: memory, State: memory,
+		Open: func(int64) (source.Source, error) { return nil, errors.New("unused") },
+	})
+	if err == nil {
+		t.Fatal("New() with a stateless processor and a state store error = nil")
 	}
 }

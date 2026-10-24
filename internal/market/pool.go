@@ -15,14 +15,14 @@ var q96 = decimal.NewFromBigInt(new(big.Int).Lsh(big.NewInt(1), 96), 0)
 
 // pool is a two-token pool's latest observed state in human units.
 type pool struct {
-	tokens [2]string // pool token order, normalized
+	Tokens [2]string // pool token order, normalized
 	// reserves are actual reserves for constant-product pools and virtual
 	// reserves at the current price for concentrated-liquidity pools.
-	reserves    [2]decimal.Decimal
-	hasReserves bool
+	Reserves    [2]decimal.Decimal
+	HasReserves bool
 	// price is tokens[1] per tokens[0].
-	price    decimal.Decimal
-	hasPrice bool
+	Price    decimal.Decimal
+	HasPrice bool
 }
 
 // observePool returns the pool state after trade. decimals reports known
@@ -33,12 +33,12 @@ func observePool(prev pool, trade *streamv1.Trade, decimals func(string) (uint32
 		return prev, false
 	}
 	next := prev
-	next.tokens = [2]string{normalize(amounts[0].GetAsset()), normalize(amounts[1].GetAsset())}
-	if next.tokens[0] == next.tokens[1] {
+	next.Tokens = [2]string{normalize(amounts[0].GetAsset()), normalize(amounts[1].GetAsset())}
+	if next.Tokens[0] == next.Tokens[1] {
 		return prev, false
 	}
-	d0, ok0 := decimals(next.tokens[0])
-	d1, ok1 := decimals(next.tokens[1])
+	d0, ok0 := decimals(next.Tokens[0])
+	d1, ok1 := decimals(next.Tokens[1])
 	if !ok0 || !ok1 {
 		return prev, false
 	}
@@ -50,27 +50,27 @@ func observePool(prev pool, trade *streamv1.Trade, decimals func(string) (uint32
 		if err0 != nil || err1 != nil || r0.IsNegative() || r1.IsNegative() {
 			return prev, false
 		}
-		next.reserves = [2]decimal.Decimal{r0.Shift(-int32(d0)), r1.Shift(-int32(d1))}
-		next.hasReserves = true
-		next.hasPrice = !next.reserves[0].IsZero()
-		if next.hasPrice {
-			next.price = next.reserves[1].DivRound(next.reserves[0], precision)
+		next.Reserves = [2]decimal.Decimal{r0.Shift(-int32(d0)), r1.Shift(-int32(d1))}
+		next.HasReserves = true
+		next.HasPrice = !next.Reserves[0].IsZero()
+		if next.HasPrice {
+			next.Price = next.Reserves[1].DivRound(next.Reserves[0], precision)
 		}
 	case state.GetSqrtPriceX96() != "" && state.GetLiquidity() != "":
 		reserves, price, ok := concentratedState(state.GetSqrtPriceX96(), state.GetLiquidity(), d0, d1)
 		if !ok {
 			return prev, false
 		}
-		next.reserves, next.price = reserves, price
-		next.hasReserves, next.hasPrice = true, true
+		next.Reserves, next.Price = reserves, price
+		next.HasReserves, next.HasPrice = true, true
 	case trade.GetAction() == streamv1.TradeAction_TRADE_ACTION_SWAP:
 		a0, okA := amountValue(amounts[0])
 		a1, okB := amountValue(amounts[1])
 		if !okA || !okB || a0.IsZero() || a1.IsZero() {
 			return prev, false
 		}
-		next.price = a1.Abs().DivRound(a0.Abs(), precision)
-		next.hasPrice = true
+		next.Price = a1.Abs().DivRound(a0.Abs(), precision)
+		next.HasPrice = true
 	default:
 		return prev, false
 	}
@@ -98,7 +98,7 @@ func concentratedState(sqrtPriceX96, liquidity string, d0, d1 uint32) ([2]decima
 
 // index returns token's position in the pool after canonicalization.
 func (p pool) index(catalog Catalog, token string) (int, bool) {
-	for position, member := range p.tokens {
+	for position, member := range p.Tokens {
 		if catalog.Canonical(member) == token {
 			return position, true
 		}
@@ -108,13 +108,13 @@ func (p pool) index(catalog Catalog, token string) (int, bool) {
 
 // priceOf returns the price of tokens[position] in units of the other token.
 func (p pool) priceOf(position int) (decimal.Decimal, bool) {
-	if !p.hasPrice || !p.price.IsPositive() {
+	if !p.HasPrice || !p.Price.IsPositive() {
 		return decimal.Decimal{}, false
 	}
 	if position == 0 {
-		return p.price, true
+		return p.Price, true
 	}
-	return decimal.NewFromInt(1).DivRound(p.price, precision), true
+	return decimal.NewFromInt(1).DivRound(p.Price, precision), true
 }
 
 func amountValue(amount *streamv1.Amount) (decimal.Decimal, bool) {

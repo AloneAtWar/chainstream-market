@@ -7,18 +7,20 @@ import (
 	"sync"
 )
 
-// Memory keeps checkpoints and outputs in process memory. It is the local and
-// test backend; everything is lost on restart.
+// Memory keeps checkpoints, processor state and outputs in process memory.
+// It is the local and test backend; everything is lost on restart.
 type Memory struct {
 	mu          sync.RWMutex
 	checkpoints map[uint64]Checkpoint
 	blocks      map[uint64]map[int64]BlockOutput
+	states      map[uint64]*memoryState
 }
 
 func NewMemory() *Memory {
 	return &Memory{
 		checkpoints: make(map[uint64]Checkpoint),
 		blocks:      make(map[uint64]map[int64]BlockOutput),
+		states:      make(map[uint64]*memoryState),
 	}
 }
 
@@ -80,4 +82,5 @@ func (memory *Memory) Blocks(chainID uint64) []BlockOutput {
 var (
 	_ CheckpointStore = (*Memory)(nil)
 	_ Output          = (*Memory)(nil)
+	_ StateStore      = (*Memory)(nil)
 )

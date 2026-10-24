@@ -214,7 +214,7 @@ func TestProcessorCandlesOpenAtPreviousCloseAndRevert(t *testing.T) {
 		t.Fatalf("Revert() error = %v", err)
 	}
 	price, _ := processor.priceOf(meme)
-	assertDecimal(t, "MEME price after revert", price.usd, "0.03")
+	assertDecimal(t, "MEME price after revert", price.USD, "0.03")
 	candle, _ := processor.candles.get(candleKey{storage.CandleSubjectToken, meme, 5 * time.Minute})
 	if candle.Trades != 1 {
 		t.Fatalf("5m trades after revert = %d, want 1", candle.Trades)
@@ -250,14 +250,14 @@ func TestOrientationFixesOnceAQuoteIsKnown(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Apply(100) error = %v", err)
 	}
-	if got, _ := processor.orientations.get(pair); got.fixed || output.Trades[0].QuoteToken != dust {
+	if got, _ := processor.orientations.get(pair); got.Fixed || output.Trades[0].QuoteToken != dust {
 		t.Fatalf("unpriced pair orientation = %+v, trade quote %s", got, output.Trades[0].QuoteToken)
 	}
 	// MEME becomes priced, so it becomes the quote and stays fixed.
 	if _, err := processor.Apply(ctx, testBlock(101, 12, wethSwap(), memeSell(), trade())); err != nil {
 		t.Fatalf("Apply(101) error = %v", err)
 	}
-	if got, _ := processor.orientations.get(pair); !got.fixed || got.quote != meme {
+	if got, _ := processor.orientations.get(pair); !got.Fixed || got.Quote != meme {
 		t.Fatalf("orientation = %+v, want fixed MEME quote", got)
 	}
 }
@@ -275,9 +275,9 @@ func TestNativeAliasSharesWrappedPrice(t *testing.T) {
 	if !ok {
 		t.Fatal("native coin not priced")
 	}
-	assertDecimal(t, "native price", price.usd, "3000")
-	if wrapped, _ := processor.priceOf(weth); !wrapped.usd.Equal(price.usd) {
-		t.Fatalf("WETH price %s differs from native %s", wrapped.usd, price.usd)
+	assertDecimal(t, "native price", price.USD, "3000")
+	if wrapped, _ := processor.priceOf(weth); !wrapped.USD.Equal(price.USD) {
+		t.Fatalf("WETH price %s differs from native %s", wrapped.USD, price.USD)
 	}
 }
 

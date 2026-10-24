@@ -15,6 +15,7 @@ import (
 type Config struct {
 	Kafka   Kafka   `yaml:"kafka"`
 	Storage Storage `yaml:"storage"`
+	State   State   `yaml:"state"`
 	Market  Market  `yaml:"market"`
 	API     API     `yaml:"api"`
 	Chains  []Chain `yaml:"chains"`
@@ -53,13 +54,28 @@ type Kafka struct {
 	FetchMaxWait  time.Duration `yaml:"fetch_max_wait"`
 }
 
-// Storage selects where market output goes. Checkpoints stay in memory
-// either way, so a restart replays each topic from offset zero and the
-// ClickHouse store overwrites the heights it already holds.
+// Storage selects where market output goes.
 type Storage struct {
 	// Driver is "memory" or "clickhouse".
 	Driver     string     `yaml:"driver"`
 	ClickHouse ClickHouse `yaml:"clickhouse"`
+}
+
+// State selects where checkpoints and processor state are kept. In memory, a
+// restart replays each topic from offset zero and the output store
+// overwrites the heights it already holds. In PostgreSQL, every record's
+// state changes are committed with its checkpoint and a restart resumes at
+// the next record.
+type State struct {
+	// Driver is "memory" or "postgres".
+	Driver   string   `yaml:"driver"`
+	Postgres Postgres `yaml:"postgres"`
+}
+
+type Postgres struct {
+	DSN string `yaml:"dsn"`
+	// Schema holds the tables; empty uses public.
+	Schema string `yaml:"schema"`
 }
 
 type ClickHouse struct {
@@ -91,6 +107,9 @@ type Feed struct {
 const (
 	StorageMemory     = "memory"
 	StorageClickHouse = "clickhouse"
+
+	StateMemory   = "memory"
+	StatePostgres = "postgres"
 
 	defaultClickHouseDatabase = "market"
 	defaultAPIAddr            = ":8080"
@@ -162,6 +181,9 @@ func (config *Config) applyDefaults() {
 	if strings.TrimSpace(config.Storage.Driver) == "" {
 		config.Storage.Driver = StorageMemory
 	}
+	if strings.TrimSpace(config.State.Driver) == "" {
+		config.State.Driver = StateMemory
+	}
 	if strings.TrimSpace(config.API.Addr) == "" {
 		config.API.Addr = defaultAPIAddr
 	}
@@ -205,6 +227,15 @@ func (config *Config) Validate() error {
 		}
 	default:
 		return fmt.Errorf("conf: unsupported storage.driver %q", config.Storage.Driver)
+	}
+	switch config.State.Driver {
+	case StateMemory:
+	case StatePostgres:
+		if strings.TrimSpace(config.State.Postgres.DSN) == "" {
+			return errors.New("conf: state.postgres.dsn is required")
+		}
+	default:
+		return fmt.Errorf("conf: unsupported state.driver %q", config.State.Driver)
 	}
 	if len(config.Chains) == 0 {
 		return errors.New("conf: at least one chain is required")

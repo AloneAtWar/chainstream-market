@@ -7,9 +7,7 @@ kafka:
   fetch_max_wait: 500ms
 
 storage:
-  # memory or clickhouse. Checkpoints are kept in memory either way, so a
-  # restart replays each topic from offset zero and ClickHouse heights are
-  # overwritten in place.
+  # Where trades, prices and candles go: memory or clickhouse.
   driver: memory
   clickhouse:
     addr:
@@ -18,6 +16,17 @@ storage:
     username: default
     password: ""
     dial_timeout: 5s
+
+# Where checkpoints and market state are kept: memory or postgres.
+# memory: a restart replays each topic from offset zero, and the output store
+#   overwrites the heights it already holds.
+# postgres: each record's state changes are committed with its checkpoint, so
+#   a restart resumes at the next record.
+state:
+  driver: memory
+  postgres:
+    dsn: postgres://market:market@127.0.0.1:5432/market
+    schema: public
 
 market:
   # A pool prices a token only when its priced counterpart reserve is worth this much.

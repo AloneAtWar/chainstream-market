@@ -3,7 +3,7 @@ package market
 import "testing"
 
 func TestJournalRevertRestoresPreviousValues(t *testing.T) {
-	values := newJournal[string, int]()
+	values := newJournal[string, int](stringKeys("test"))
 	values.set(10, "a", 1)
 	values.set(11, "a", 2)
 	values.set(11, "b", 3)
@@ -23,7 +23,7 @@ func TestJournalRevertRestoresPreviousValues(t *testing.T) {
 }
 
 func TestJournalPruneMakesWritesPermanent(t *testing.T) {
-	values := newJournal[string, int]()
+	values := newJournal[string, int](stringKeys("test"))
 	values.set(10, "a", 1)
 	values.set(11, "a", 2)
 	values.set(12, "a", 3)
