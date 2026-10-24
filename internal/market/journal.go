@@ -65,6 +65,19 @@ func (j *journal[K, V]) set(height int64, key K, value V) {
 	j.dirty[key] = struct{}{}
 }
 
+// remove deletes key at height, recording its value so a revert restores it.
+func (j *journal[K, V]) remove(height int64, key K) {
+	prev, existed := j.values[key]
+	if !existed {
+		return
+	}
+	entry := undoEntry[K, V]{Height: height, Key: key, Prev: prev, Existed: true}
+	j.undo = append(j.undo, entry)
+	j.pending = append(j.pending, entry)
+	delete(j.values, key)
+	j.dirty[key] = struct{}{}
+}
+
 // revert undoes every write made above height.
 func (j *journal[K, V]) revert(height int64) {
 	index := len(j.undo) - 1

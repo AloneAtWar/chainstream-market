@@ -78,6 +78,8 @@ func run(configPath string, logger *slog.Logger) error {
 			HistoryDepth:          config.Market.HistoryDepth,
 			Feeds:                 feeds,
 			OracleDeviation:       decimal.NewFromFloat(config.Market.OracleDeviation),
+			LateTradeBlocks:       max(config.Market.LateTradeBlocks, 0),
+			LateTradesPerToken:    config.Market.LateTradesPerToken,
 		})
 		if processorErr != nil {
 			return fmt.Errorf("chain %s: %w", chain.Name, processorErr)

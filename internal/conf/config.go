@@ -94,6 +94,11 @@ type Market struct {
 	// OracleDeviation is the largest relative gap between a feed-backed
 	// token's graph price and its oracle answer before the answer wins.
 	OracleDeviation float64 `yaml:"oracle_deviation"`
+	// LateTradeBlocks is how many blocks a trade whose token decimals are
+	// unknown waits for them before it is dropped; -1 drops it at once.
+	LateTradeBlocks int64 `yaml:"late_trade_blocks"`
+	// LateTradesPerToken caps the trades held while waiting on one token.
+	LateTradesPerToken int `yaml:"late_trades_per_token"`
 }
 
 // Kafka configures the per-chain topic consumers.
@@ -178,6 +183,8 @@ const (
 	defaultMaxHops               = 3
 	defaultHistoryDepth          = 256
 	defaultOracleDeviation       = 0.02
+	defaultLateTradeBlocks       = 7200
+	defaultLateTradesPerToken    = 1000
 
 	defaultHoldersReconcileEvery = 100
 	defaultHoldersReconcileBatch = 200
@@ -246,6 +253,12 @@ func (config *Config) applyDefaults() {
 	}
 	if config.Market.OracleDeviation == 0 {
 		config.Market.OracleDeviation = defaultOracleDeviation
+	}
+	if config.Market.LateTradeBlocks == 0 {
+		config.Market.LateTradeBlocks = defaultLateTradeBlocks
+	}
+	if config.Market.LateTradesPerToken == 0 {
+		config.Market.LateTradesPerToken = defaultLateTradesPerToken
 	}
 	if strings.TrimSpace(config.Storage.Driver) == "" {
 		config.Storage.Driver = StorageMemory
@@ -321,6 +334,9 @@ func (config *Config) Validate() error {
 	}
 	if config.Market.HistoryDepth < 0 {
 		return errors.New("conf: market.history_depth must be positive")
+	}
+	if config.Market.LateTradeBlocks < -1 || config.Market.LateTradesPerToken < 0 {
+		return errors.New("conf: market.late_trade_blocks must be positive or -1, and late_trades_per_token positive")
 	}
 	for _, interval := range config.Market.Intervals {
 		if interval < time.Second || interval%time.Second != 0 {

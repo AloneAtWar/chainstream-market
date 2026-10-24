@@ -213,6 +213,17 @@ Each block goes through `internal/market` in three steps:
 
 Oracle answers come from `oracle_updates` (Chainlink `AnswerUpdated` logs) whose feed address is listed under `chains[].feeds`. A feed can also cover a non-anchor token, such as native ETH or WBTC. That token keeps its per-block graph price while the price stays within `oracle_deviation` of the latest answer; beyond that, or when the graph has no price, the oracle answer is used instead. The default config lists no feeds. Add each aggregator address, which `proxy.aggregator()` returns, to turn this on.
 
+### Late token metadata
+
+chainstream-evm publishes a trade's amounts without decimals when it has not read the token's metadata yet. Such a trade cannot be oriented or valued, so market-engine holds it instead of dropping it:
+
+- **Learning decimals.** Decimals come from trade amounts and from the metadata of `recognized` assets in the block's `assets`, which often arrives a few blocks after a new token's first trades. A trade whose amount lacks decimals the engine already learned is valued at once.
+- **Holding.** A trade still missing decimals is kept, with its block's closing USD prices for its other tokens, for up to `late_trade_blocks` blocks (default 7200; -1 drops such trades). At most `late_trades_per_token` trades are held per missing token, so spam tokens that never get metadata stay bounded.
+- **Replay.** The block that brings the decimals replays the held trades first, in chain order. Each keeps its own block height and time and is valued at the quote price of its own block. Pools seen only through held trades take their state from the latest one, so the token is priced in that same block. The replayed trades then build their pool and token candles, older buckets included, before the block's own trades join the latest bucket.
+- **Reorgs.** Held trades are journaled like all other state. ClickHouse `trades` carries `revision_height`, the block that wrote the row, and rewinds delete by it, so reverting the block that replayed a trade removes it and holds it again. Candle versions carry the replaying block as `update_height` and rewind the usual way.
+
+A candle key that already has buckets is left alone: once a token's decimals are known its later trades are never held, so a replayed trade could only land before those buckets. Token price rows for the held blocks are not backfilled; the price series starts at the block that brought the decimals.
+
 All state is journaled by height. A revert undoes it exactly, as long as the reorg stays above the finalized height and within `history_depth` blocks. A deeper reorg stops the engine. State is computed in memory and persisted per block when `state.driver` is `postgres`; see [State](#state).
 
 ```sh
@@ -228,6 +239,6 @@ make generate   # regenerate proto/stream/v1 and tidy both modules
 make verify     # buf lint, gofmt, golangci-lint, go test -race
 ```
 
-The ClickHouse tests, including ch-loader's end-to-end run over an in-process kfake broker, run only when `CLICKHOUSE_ADDR` is set, for example `CLICKHOUSE_ADDR=127.0.0.1:9000 make test`. The PostgreSQL tests run only when `POSTGRES_DSN` is set, for example `POSTGRES_DSN=postgres://market:market@127.0.0.1:5432/market make test`. CI starts both services.
+The ClickHouse tests, including ch-loader's end-to-end run over an in-process kfake broker, run only when `CLICKHOUSE_ADDR` is set, for example `CLICKHOUSE_ADDR=127.0.0.1:9000 make test`. The PostgreSQL tests run only when `POSTGRES_DSN` is set, for example `POSTGRES_DSN=postgres://market:market@127.0.0.1:5432/market make test`. market-engine's late-trade run over kfake needs both. CI starts both services.
 
 `proto/stream/v1/event.proto` is copied from chainstream-evm's `api/stream/v1`, with only `go_package` changed. chainstream-evm still publishes from its own copy. The two must stay wire-compatible until chainstream-evm imports this module.

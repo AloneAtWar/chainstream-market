@@ -3,6 +3,7 @@
 package market
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -40,6 +41,11 @@ type Options struct {
 	// feed-backed token's graph price and its oracle price before the oracle
 	// price is used instead.
 	OracleDeviation decimal.Decimal
+	// LateTradeBlocks is how many blocks a trade whose token decimals are
+	// unknown is held for replay once they arrive. Zero turns holding off.
+	LateTradeBlocks int64
+	// LateTradesPerToken caps the trades held while waiting on one token.
+	LateTradesPerToken int
 }
 
 // Feed is a trusted Chainlink-style aggregator answering in USD.
@@ -86,6 +92,12 @@ type Processor struct {
 	// tokenPools indexes pools by canonical token. It only grows; pools that
 	// a revert removed are skipped on lookup.
 	tokenPools map[string][]string
+	// late holds trades waiting on token decimals, by lateKey.
+	late *journal[string, lateTrade]
+	// lateByToken indexes held trades by each token they wait on, and
+	// lateOrder lists them oldest first; keys no longer in late are skipped.
+	lateByToken map[string]map[string]struct{}
+	lateOrder   []string
 	// prunedThrough is the highest height whose undo history was discarded.
 	prunedThrough int64
 	// reverted and revertTo record a revert since the last TakeDelta.
@@ -111,6 +123,9 @@ func NewProcessor(options Options) (*Processor, error) {
 	if options.OracleDeviation.IsNegative() {
 		return nil, errors.New("market: oracle deviation must not be negative")
 	}
+	if options.LateTradeBlocks < 0 || (options.LateTradeBlocks > 0 && options.LateTradesPerToken <= 0) {
+		return nil, errors.New("market: holding late trades needs positive blocks and a positive per-token cap")
+	}
 	feeds := make(map[string]Feed, len(options.Feeds))
 	for _, feed := range options.Feeds {
 		address := normalize(feed.Address)
@@ -131,13 +146,20 @@ func NewProcessor(options Options) (*Processor, error) {
 		orientations: newJournal[string, orientation](stringKeys(kindOrientations)),
 		candles:      newJournal[candleKey, storage.Candle](candleKeys),
 		oracle:       newJournal[string, decimal.Decimal](stringKeys(kindOracle)),
+		late:         newJournal[string, lateTrade](stringKeys(kindLate)),
 		feeds:        feeds,
 		tokenPools:   make(map[string][]string),
+		lateByToken:  make(map[string]map[string]struct{}),
 	}, nil
 }
 
 // Apply updates pool states, reprices the tokens they touch, then orients and
 // values the block's trades at the block's closing prices.
+//
+// Trades whose token decimals are unknown are held. When a block brings
+// those decimals, from an asset's metadata or another trade, the held trades
+// are replayed first: valued at their own block's prices and added to their
+// candles, ahead of the block's own trades.
 func (processor *Processor) Apply(ctx context.Context, block *streamv1.BlockEvent) (storage.BlockOutput, error) {
 	if err := ctx.Err(); err != nil {
 		return storage.BlockOutput{}, err
@@ -146,23 +168,40 @@ func (processor *Processor) Apply(ctx context.Context, block *streamv1.BlockEven
 	height := block.GetBlockHeight()
 
 	touched := make(map[string]struct{})
+	learned := make(map[string]struct{})
 	processor.applyOracle(height, block, touched)
+	processor.learnAssets(height, block, learned)
 	for _, trade := range block.GetTrades() {
-		processor.learnDecimals(height, trade)
+		processor.learnDecimals(height, trade, learned)
+	}
+	ready := processor.ready(learned)
+	processor.seedPools(height, ready, touched)
+	for _, trade := range block.GetTrades() {
 		processor.observe(height, trade, touched)
 	}
 	output.Prices = processor.reprice(height, output, touched)
 
 	touchedCandles := make(map[candleKey]struct{})
+	replayed := processor.replay(height, &output, ready, touchedCandles)
 	for _, source := range block.GetTrades() {
-		trade, ok := processor.orient(height, output, source)
-		if !ok {
+		trade, status := processor.orient(height, source)
+		switch status {
+		case orientLate:
+			processor.hold(height, block.GetBlockTime(), source)
 			continue
+		case orientSkip:
+			continue
+		case orientOK:
+		}
+		trade.ChainID, trade.BlockHeight, trade.BlockTime = output.ChainID, height, output.BlockTime
+		if quotePrice, ok := processor.priceOf(trade.QuoteToken); ok {
+			valueTrade(&trade, quotePrice.USD)
 		}
 		output.Trades = append(output.Trades, trade)
 		processor.aggregate(height, trade, touchedCandles)
 	}
-	output.Candles = processor.collectCandles(touchedCandles)
+	output.Candles = processor.collectCandles(touchedCandles, replayed)
+	processor.expireLate(height)
 	processor.prune(block)
 	return output, nil
 }
@@ -177,6 +216,8 @@ func (processor *Processor) Revert(_ context.Context, rollbackTo int64) error {
 	processor.orientations.revert(rollbackTo)
 	processor.candles.revert(rollbackTo)
 	processor.oracle.revert(rollbackTo)
+	processor.late.revert(rollbackTo)
+	processor.rebuildLate()
 	if !processor.reverted || rollbackTo < processor.revertTo {
 		processor.reverted, processor.revertTo = true, rollbackTo
 	}
@@ -197,17 +238,14 @@ func (processor *Processor) prune(block *streamv1.BlockEvent) {
 	processor.orientations.prune(through)
 	processor.candles.prune(through)
 	processor.oracle.prune(through)
+	processor.late.prune(through)
 	processor.prunedThrough = through
 }
 
-func (processor *Processor) learnDecimals(height int64, trade *streamv1.Trade) {
+func (processor *Processor) learnDecimals(height int64, trade *streamv1.Trade, learned map[string]struct{}) {
 	for _, amount := range trade.GetAmounts() {
-		if !amount.GetDecimalsKnown() {
-			continue
-		}
-		token := normalize(amount.GetAsset())
-		if known, ok := processor.decimals.get(token); !ok || known != amount.GetDecimals() {
-			processor.decimals.set(height, token, amount.GetDecimals())
+		if amount.GetDecimalsKnown() {
+			processor.learn(height, normalize(amount.GetAsset()), amount.GetDecimals(), learned)
 		}
 	}
 }
@@ -219,6 +257,10 @@ func (processor *Processor) observe(height int64, trade *streamv1.Trade, touched
 	if !ok {
 		return
 	}
+	processor.setPool(height, id, next, existed, touched)
+}
+
+func (processor *Processor) setPool(height int64, id string, next pool, existed bool, touched map[string]struct{}) {
 	processor.pools.set(height, id, next)
 	for _, member := range next.Tokens {
 		token := processor.options.Catalog.Canonical(member)
@@ -413,7 +455,18 @@ func (processor *Processor) chooseQuote(left, right string) (string, bool) {
 	}
 }
 
-func (processor *Processor) orient(height int64, output storage.BlockOutput, source *streamv1.Trade) (storage.Trade, bool) {
+type orientStatus uint8
+
+const (
+	orientSkip orientStatus = iota
+	orientOK
+	// orientLate means a token's decimals are not known yet.
+	orientLate
+)
+
+// orient fixes a trade's base and quote. The caller sets the chain, block
+// and USD fields.
+func (processor *Processor) orient(height int64, source *streamv1.Trade) (storage.Trade, orientStatus) {
 	var legs []*streamv1.Amount
 	for _, amount := range source.GetAmounts() {
 		if rawSign(amount) != 0 {
@@ -421,7 +474,7 @@ func (processor *Processor) orient(height int64, output storage.BlockOutput, sou
 		}
 	}
 	if len(legs) != 2 || normalize(legs[0].GetAsset()) == normalize(legs[1].GetAsset()) {
-		return storage.Trade{}, false
+		return storage.Trade{}, orientSkip
 	}
 	poolID := normalize(source.GetPoolId())
 	left, right := normalize(legs[0].GetAsset()), normalize(legs[1].GetAsset())
@@ -440,7 +493,7 @@ func (processor *Processor) orient(height int64, output storage.BlockOutput, sou
 	case right:
 	default:
 		// The fixed quote token is not among this operation's legs.
-		return storage.Trade{}, false
+		return storage.Trade{}, orientSkip
 	}
 
 	var side storage.Side
@@ -448,7 +501,7 @@ func (processor *Processor) orient(height int64, output storage.BlockOutput, sou
 	case streamv1.TradeAction_TRADE_ACTION_SWAP:
 		baseSign, quoteSign := rawSign(baseLeg), rawSign(quoteLeg)
 		if baseSign == quoteSign {
-			return storage.Trade{}, false
+			return storage.Trade{}, orientSkip
 		}
 		side = storage.SideSell
 		if baseSign < 0 {
@@ -459,17 +512,16 @@ func (processor *Processor) orient(height int64, output storage.BlockOutput, sou
 	case streamv1.TradeAction_TRADE_ACTION_LIQUIDITY_REMOVED:
 		side = storage.SideLiquidityRemoved
 	case streamv1.TradeAction_TRADE_ACTION_UNSPECIFIED:
-		return storage.Trade{}, false
+		return storage.Trade{}, orientSkip
 	default:
-		return storage.Trade{}, false
+		return storage.Trade{}, orientSkip
 	}
-	baseAmount, okBase := amountValue(baseLeg)
-	quoteAmount, okQuote := amountValue(quoteLeg)
+	baseAmount, okBase := processor.amountOf(baseLeg)
+	quoteAmount, okQuote := processor.amountOf(quoteLeg)
 	if !okBase || !okQuote {
-		return storage.Trade{}, false
+		return storage.Trade{}, orientLate
 	}
 	trade := storage.Trade{
-		ChainID: output.ChainID, BlockHeight: height, BlockTime: output.BlockTime,
 		TransactionHash: source.GetTransactionHash(), TransactionIndex: source.GetTransactionIndex(),
 		LogIndex: source.GetLogIndex(), OperationIndex: source.GetOperationIndex(),
 		Protocol: source.GetProtocol(), PoolID: poolID, Trader: normalize(source.GetTrader()),
@@ -477,51 +529,65 @@ func (processor *Processor) orient(height int64, output storage.BlockOutput, sou
 		BaseAmount: baseAmount.Abs(), QuoteAmount: quoteAmount.Abs(),
 	}
 	if trade.BaseAmount.IsZero() {
-		return storage.Trade{}, false
+		return storage.Trade{}, orientSkip
 	}
 	trade.PriceQuote = trade.QuoteAmount.DivRound(trade.BaseAmount, precision)
-	if quotePrice, ok := processor.priceOf(trade.QuoteToken); ok {
-		trade.PriceUSD = trade.PriceQuote.Mul(quotePrice.USD).Round(precision)
-		trade.ValueUSD = trade.QuoteAmount.Mul(quotePrice.USD).Round(precision)
-	}
-	return trade, true
+	return trade, orientOK
+}
+
+// valueTrade prices a trade from its quote token's USD price.
+func valueTrade(trade *storage.Trade, quoteUSD decimal.Decimal) {
+	trade.PriceUSD = trade.PriceQuote.Mul(quoteUSD).Round(precision)
+	trade.ValueUSD = trade.QuoteAmount.Mul(quoteUSD).Round(precision)
 }
 
 // quoteLiquidityUSD is the USD value of the quote-side reserve of a trade's
 // pool, or zero when unknown.
 func (processor *Processor) quoteLiquidityUSD(trade storage.Trade) decimal.Decimal {
 	state, ok := processor.pools.get(trade.PoolID)
-	if !ok || !state.HasReserves {
-		return decimal.Zero
-	}
-	quote := processor.options.Catalog.Canonical(trade.QuoteToken)
-	position, ok := state.index(processor.options.Catalog, quote)
 	if !ok {
 		return decimal.Zero
 	}
-	price, ok := processor.priceOf(quote)
+	price, ok := processor.priceOf(trade.QuoteToken)
 	if !ok {
 		return decimal.Zero
 	}
-	return state.Reserves[position].Mul(price.USD)
+	return reserveUSD(processor.options.Catalog, state, trade.QuoteToken, price.USD)
 }
 
-// aggregate adds a priced swap to its pool candles and, when the pool is
-// liquid enough, to its base token's aggregated candles.
-func (processor *Processor) aggregate(height int64, trade storage.Trade, touched map[candleKey]struct{}) {
+// reserveUSD values token's reserve in state at usd, or zero when unknown.
+func reserveUSD(catalog Catalog, state pool, token string, usd decimal.Decimal) decimal.Decimal {
+	if !state.HasReserves {
+		return decimal.Zero
+	}
+	position, ok := state.index(catalog, catalog.Canonical(token))
+	if !ok {
+		return decimal.Zero
+	}
+	return state.Reserves[position].Mul(usd)
+}
+
+// candleSubjects returns the candles a priced swap joins: its pool's, and its
+// base token's when the quote reserve reaches CandleMinLiquidityUSD.
+func (processor *Processor) candleSubjects(trade storage.Trade, quoteLiquidity decimal.Decimal) []candleKey {
 	if trade.Side != storage.SideBuy && trade.Side != storage.SideSell {
-		return
+		return nil
 	}
 	if !trade.PriceUSD.IsPositive() {
-		return
+		return nil
 	}
 	subjects := []candleKey{{Subject: storage.CandleSubjectPool, Key: trade.PoolID}}
-	if !processor.quoteLiquidityUSD(trade).LessThan(processor.options.CandleMinLiquidityUSD) {
+	if !quoteLiquidity.LessThan(processor.options.CandleMinLiquidityUSD) {
 		subjects = append(subjects, candleKey{
 			Subject: storage.CandleSubjectToken, Key: processor.options.Catalog.Canonical(trade.BaseToken),
 		})
 	}
-	for _, subject := range subjects {
+	return subjects
+}
+
+// aggregate adds a priced swap to its candles.
+func (processor *Processor) aggregate(height int64, trade storage.Trade, touched map[candleKey]struct{}) {
+	for _, subject := range processor.candleSubjects(trade, processor.quoteLiquidityUSD(trade)) {
 		for _, interval := range processor.options.Intervals {
 			key := candleKey{Subject: subject.Subject, Key: subject.Key, Interval: interval}
 			current, exists := processor.candles.get(key)
@@ -556,27 +622,40 @@ func updateCandle(current storage.Candle, exists bool, trade storage.Trade, key 
 	return current
 }
 
-func (processor *Processor) collectCandles(touched map[candleKey]struct{}) []storage.Candle {
+// collectCandles returns the current bucket of every touched key, and the
+// older buckets that replayed trades built.
+func (processor *Processor) collectCandles(touched map[candleKey]struct{}, replayed map[candleKey][]storage.Candle) []storage.Candle {
 	candles := make([]storage.Candle, 0, len(touched))
 	for key := range touched {
-		if candle, ok := processor.candles.get(key); ok {
-			candles = append(candles, candle)
+		current, ok := processor.candles.get(key)
+		if !ok {
+			continue
+		}
+		candles = append(candles, current)
+		for _, bucket := range replayed[key] {
+			if !bucket.OpenTime.Equal(current.OpenTime) {
+				candles = append(candles, bucket)
+			}
 		}
 	}
 	slices.SortFunc(candles, func(left, right storage.Candle) int {
-		switch {
-		case left.Subject != right.Subject:
-			return int(left.Subject) - int(right.Subject)
-		case left.Key != right.Key:
-			if left.Key < right.Key {
-				return -1
-			}
-			return 1
-		default:
-			return int(left.Interval - right.Interval)
-		}
+		return cmp.Or(
+			compareCandleKeys(
+				candleKey{Subject: left.Subject, Key: left.Key, Interval: left.Interval},
+				candleKey{Subject: right.Subject, Key: right.Key, Interval: right.Interval},
+			),
+			left.OpenTime.Compare(right.OpenTime),
+		)
 	})
 	return candles
+}
+
+func compareCandleKeys(left, right candleKey) int {
+	return cmp.Or(
+		cmp.Compare(left.Subject, right.Subject),
+		cmp.Compare(left.Key, right.Key),
+		cmp.Compare(left.Interval, right.Interval),
+	)
 }
 
 var (

@@ -23,10 +23,12 @@ type Options struct {
 	DialTimeout time.Duration
 }
 
-// tables lists every output table with the column Rewind deletes by.
+// tables lists every output table with the column Rewind deletes by. A trade
+// replayed after its token's decimals arrived keeps its own block_height and
+// is deleted by the block that replayed it.
 var tables = []struct{ name, height string }{
 	{"blocks", "block_height"},
-	{"trades", "block_height"},
+	{"trades", "revision_height"},
 	{"token_prices", "block_height"},
 	{"candles", "update_height"},
 }
@@ -192,7 +194,7 @@ func (store *Store) insertTrades(ctx context.Context, block storage.BlockOutput)
 				trade.ChainID, trade.BlockHeight, trade.BlockTime, trade.TransactionHash, trade.TransactionIndex,
 				trade.LogIndex, trade.OperationIndex, trade.Protocol, trade.PoolID, trade.Trader,
 				trade.Side.String(), trade.BaseToken, trade.QuoteToken, trade.BaseAmount, trade.QuoteAmount,
-				trade.PriceQuote, trade.PriceUSD, trade.ValueUSD, block.Finalized,
+				trade.PriceQuote, trade.PriceUSD, trade.ValueUSD, block.Finalized, block.Height,
 			); err != nil {
 				return err
 			}

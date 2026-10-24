@@ -51,9 +51,12 @@ type BlockOutput struct {
 	// Finalized reports whether the block was at or below the chain's
 	// finalized height when it was published.
 	Finalized bool
-	Trades    []Trade
-	Prices    []TokenPrice
-	Candles   []Candle
+	// Trades can include trades from earlier blocks that were held until
+	// this block brought their token's decimals. They keep their own
+	// BlockHeight; Rewind removes them with this block.
+	Trades  []Trade
+	Prices  []TokenPrice
+	Candles []Candle
 }
 
 // Side is the trade direction from the base token's point of view.
