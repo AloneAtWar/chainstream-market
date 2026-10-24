@@ -14,7 +14,7 @@ import (
 )
 
 // rankingSchema creates the token rankings, a rollup that market-rankings
-// rewrites from the ClickHouse output, holder_balances and registry_tokens.
+// rewrites from the ClickHouse output, holder_counts and registry_tokens.
 // Each sort column has an index led by chain_id, so a page reads only the
 // rows it returns.
 var rankingSchema = []string{
@@ -100,13 +100,14 @@ func (store *Store) CommitRankings(ctx context.Context, refresh storage.RankingR
 	queueQuotes(batch, chainID, refresh)
 	queueActivity(batch, chainID, refresh.Activity)
 	batch.Queue(`DELETE FROM token_rankings WHERE chain_id = $1 AND price_height IS NULL AND trades_24h = 0`, chainID)
-	// Holders are counted through holder_balances_top, one index range per
-	// ranked token.
+	// holder-indexer keeps holder_counts current, so this is one lookup per
+	// ranked token. A token missing there has no holders.
 	batch.Queue(`UPDATE token_rankings AS r SET holders = c.holders
 		FROM (
-			SELECT k.token, (SELECT count(*) FROM holder_balances AS b
-				WHERE b.chain_id = $1 AND b.token = k.token AND b.balance > 0) AS holders
-			FROM token_rankings AS k WHERE k.chain_id = $1
+			SELECT k.token, COALESCE(h.holders, 0) AS holders
+			FROM token_rankings AS k
+			LEFT JOIN holder_counts AS h ON h.chain_id = k.chain_id AND h.token = k.token
+			WHERE k.chain_id = $1
 		) AS c
 		WHERE r.chain_id = $1 AND r.token = c.token AND r.holders <> c.holders`, chainID)
 	batch.Queue(`UPDATE token_rankings AS r SET created_height = d.height, created_time = d.created_at

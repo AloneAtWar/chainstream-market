@@ -118,6 +118,7 @@ holder-indexer reads each chain topic on its own checkpoint and keeps every ERC-
 | `holder_checkpoints` | One row per chain: Kafka offset, height, hash and the pruned height. |
 | `holder_balances` | `(chain_id, token, holder) -> balance NUMERIC(78,0)` and the height `balanceOf` last confirmed it. |
 | `holder_undo` | Per block and holding, the delta added or whether the row was created, with the previous verified height. Pruned like `engine_state_undo`. |
+| `holder_counts` | `(chain_id, token) -> holders`, the number of positive balances. Each commit adds one when a balance turns positive and removes one when it stops being positive, in the same transaction as the balances, so a revert moves it back too. A schema whose `holder_balances` predate the table is counted once when the table is created. |
 
 Balances live only in PostgreSQL, so memory does not grow with the number of holders.
 
@@ -152,10 +153,10 @@ market-rankings keeps `token_rankings` in PostgreSQL, a rollup that market-api's
 
 - **24h activity.** Volume, trade count and price change come from the token's aggregated candles of `rankings.candle_interval`, summed over the 24h before the chain head (the newest block in ClickHouse, not the wall clock). The window starts at a bucket boundary, so it can be up to one interval longer than 24h. Each bucket opens at the previous close, so the first bucket's open is the price before the window, and `price_change_24h` is the ratio `close / open - 1` (`-0.25` means down 25%). Tokens that did not trade drop to zero.
 - **Price and liquidity.** The latest `token_prices` row. Only tokens priced since the last refresh's head, less `rankings.reorg_window`, are read again; the first refresh reads every token. A token whose recent prices a reorg removed falls back to its older price, or loses it. Liquidity is that of the pool the price came through.
-- **Holders.** The count of positive `holder_balances`, recounted for every ranked token through the `holder_balances_top` index.
+- **Holders.** Read from `holder_counts`, which holder-indexer keeps current, so a refresh never counts `holder_balances`.
 - **Created.** The deployment height and time market-registry recorded, when known.
 
-A token is ranked once it has a price or traded in the window. Activity, holders and recent prices are recomputed on every refresh, so the rankings follow a reorg within one refresh. Recounting holders reads every positive holding of every ranked token; if that grows too slow, holder-indexer should keep the counts itself.
+A token is ranked once it has a price or traded in the window. Activity, holders and recent prices are recomputed on every refresh, so the rankings follow a reorg within one refresh.
 
 | Table | Contents |
 | --- | --- |

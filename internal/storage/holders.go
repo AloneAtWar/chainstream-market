@@ -63,6 +63,7 @@ type HolderStore interface {
 type HolderReader interface {
 	// TopHolders returns the largest positive holdings of token.
 	TopHolders(ctx context.Context, chainID uint64, token string, limit int) ([]Holding, error)
-	// HolderCount counts holders of token with a positive balance.
+	// HolderCount returns the number of holders of token with a positive
+	// balance, kept by CommitHolders rather than counted on each call.
 	HolderCount(ctx context.Context, chainID uint64, token string) (int64, error)
 }

@@ -47,7 +47,34 @@ var holderSchema = []string{
 		prev_verified BIGINT,
 		PRIMARY KEY (chain_id, block_height, token, holder)
 	)`,
+	// holder_counts keeps the number of positive holdings per token, moved
+	// by CommitHolders whenever a balance crosses zero. A schema that had
+	// holder_balances before this table existed is backfilled once.
+	`DO $$
+	BEGIN
+		IF to_regclass('holder_counts') IS NULL THEN
+			CREATE TABLE holder_counts (
+				chain_id BIGINT NOT NULL,
+				token    TEXT NOT NULL,
+				holders  BIGINT NOT NULL,
+				PRIMARY KEY (chain_id, token)
+			);
+			INSERT INTO holder_counts (chain_id, token, holders)
+			SELECT chain_id, token, count(*) FROM holder_balances WHERE balance > 0 GROUP BY chain_id, token;
+		END IF;
+	END $$`,
 }
+
+// addHolderCounts ends a statement whose CTE "changed" returns the token and
+// the old and new balance of each holding it touched. It adds one holder per
+// balance that became positive and removes one per balance that stopped
+// being positive. A holding that does not exist has a NULL balance.
+const addHolderCounts = `
+	INSERT INTO holder_counts AS c (chain_id, token, holders)
+	SELECT $1, token, sum((COALESCE(new_balance, 0) > 0)::int - (COALESCE(old_balance, 0) > 0)::int)
+	FROM changed GROUP BY token
+	HAVING sum((COALESCE(new_balance, 0) > 0)::int - (COALESCE(old_balance, 0) > 0)::int) <> 0
+	ON CONFLICT (chain_id, token) DO UPDATE SET holders = c.holders + EXCLUDED.holders`
 
 func (store *Store) LoadHolderCheckpoint(ctx context.Context, chainID uint64) (storage.Checkpoint, int64, bool, error) {
 	checkpoint := storage.Checkpoint{ChainID: chainID}
@@ -106,8 +133,11 @@ func (store *Store) TopHolders(ctx context.Context, chainID uint64, token string
 func (store *Store) HolderCount(ctx context.Context, chainID uint64, token string) (int64, error) {
 	var count int64
 	err := store.pool.QueryRow(ctx,
-		`SELECT count(*) FROM holder_balances WHERE chain_id = $1 AND token = $2 AND balance > 0`,
+		`SELECT holders FROM holder_counts WHERE chain_id = $1 AND token = $2`,
 		int64(chainID), token).Scan(&count)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return 0, nil
+	}
 	if err != nil {
 		return 0, fmt.Errorf("postgres store: holder count: %w", err)
 	}
@@ -134,20 +164,24 @@ func (store *Store) CommitHolders(ctx context.Context, checkpoint storage.Checkp
 	if change.Reverted {
 		// Created rows go first, so the update below only sees holdings
 		// that existed before the reverted blocks.
-		batch.Queue(`DELETE FROM holder_balances AS b USING holder_undo AS u
-			WHERE u.chain_id = $1 AND u.block_height > $2 AND u.created
-			  AND b.chain_id = u.chain_id AND b.token = u.token AND b.holder = u.holder`,
-			chainID, change.RevertTo)
-		batch.Queue(`UPDATE holder_balances AS b
-			SET balance = b.balance - u.delta, verified_height = u.prev_verified
-			FROM (
-				SELECT token, holder, sum(delta) AS delta,
-				       (array_agg(prev_verified ORDER BY block_height))[1] AS prev_verified
-				FROM holder_undo WHERE chain_id = $1 AND block_height > $2 AND NOT created
-				GROUP BY token, holder
-			) AS u
-			WHERE b.chain_id = $1 AND b.token = u.token AND b.holder = u.holder`,
-			chainID, change.RevertTo)
+		batch.Queue(`WITH changed AS (
+				DELETE FROM holder_balances AS b USING holder_undo AS u
+				WHERE u.chain_id = $1 AND u.block_height > $2 AND u.created
+				  AND b.chain_id = u.chain_id AND b.token = u.token AND b.holder = u.holder
+				RETURNING b.token, b.balance AS old_balance, NULL::numeric AS new_balance
+			)`+addHolderCounts, chainID, change.RevertTo)
+		batch.Queue(`WITH changed AS (
+				UPDATE holder_balances AS b
+				SET balance = b.balance - u.delta, verified_height = u.prev_verified
+				FROM (
+					SELECT token, holder, sum(delta) AS delta,
+					       (array_agg(prev_verified ORDER BY block_height))[1] AS prev_verified
+					FROM holder_undo WHERE chain_id = $1 AND block_height > $2 AND NOT created
+					GROUP BY token, holder
+				) AS u
+				WHERE b.chain_id = $1 AND b.token = u.token AND b.holder = u.holder
+				RETURNING b.token, b.balance + u.delta AS old_balance, b.balance AS new_balance
+			)`+addHolderCounts, chainID, change.RevertTo)
 		batch.Queue(`DELETE FROM holder_undo WHERE chain_id = $1 AND block_height > $2`, chainID, change.RevertTo)
 	}
 	if len(change.Created) > 0 {
@@ -161,10 +195,12 @@ func (store *Store) CommitHolders(ctx context.Context, checkpoint storage.Checkp
 				verified[index] = &change.Height
 			}
 		}
-		batch.Queue(`INSERT INTO holder_balances (chain_id, token, holder, balance, verified_height)
-			SELECT $1, token, holder, balance::numeric, verified
-			FROM unnest($2::text[], $3::text[], $4::text[], $5::bigint[]) AS s(token, holder, balance, verified)`,
-			chainID, tokens, holders, balances, verified)
+		batch.Queue(`WITH changed AS (
+				INSERT INTO holder_balances (chain_id, token, holder, balance, verified_height)
+				SELECT $1, token, holder, balance::numeric, verified
+				FROM unnest($2::text[], $3::text[], $4::text[], $5::bigint[]) AS s(token, holder, balance, verified)
+				RETURNING token, NULL::numeric AS old_balance, balance AS new_balance
+			)`+addHolderCounts, chainID, tokens, holders, balances, verified)
 		batch.Queue(`INSERT INTO holder_undo (chain_id, block_height, token, holder, delta, created)
 			SELECT $1, $2, token, holder, 0, true FROM unnest($3::text[], $4::text[]) AS s(token, holder)`,
 			chainID, change.Height, tokens, holders)
@@ -184,12 +220,14 @@ func (store *Store) CommitHolders(ctx context.Context, checkpoint storage.Checkp
 			FROM unnest($3::text[], $4::text[], $5::text[]) AS d(token, holder, delta)
 			JOIN holder_balances b ON b.chain_id = $1 AND b.token = d.token AND b.holder = d.holder`,
 			chainID, change.Height, tokens, holders, deltas)
-		batch.Queue(`UPDATE holder_balances AS b
-			SET balance = b.balance + d.delta::numeric,
-			    verified_height = CASE WHEN d.verified THEN $2 ELSE b.verified_height END
-			FROM unnest($3::text[], $4::text[], $5::text[], $6::bool[]) AS d(token, holder, delta, verified)
-			WHERE b.chain_id = $1 AND b.token = d.token AND b.holder = d.holder`,
-			chainID, change.Height, tokens, holders, deltas, verified)
+		batch.Queue(`WITH changed AS (
+				UPDATE holder_balances AS b
+				SET balance = b.balance + d.delta::numeric,
+				    verified_height = CASE WHEN d.verified THEN $2 ELSE b.verified_height END
+				FROM unnest($3::text[], $4::text[], $5::text[], $6::bool[]) AS d(token, holder, delta, verified)
+				WHERE b.chain_id = $1 AND b.token = d.token AND b.holder = d.holder
+				RETURNING b.token, b.balance - d.delta::numeric AS old_balance, b.balance AS new_balance
+			)`+addHolderCounts, chainID, change.Height, tokens, holders, deltas, verified)
 	}
 	batch.Queue(`DELETE FROM holder_undo WHERE chain_id = $1 AND block_height <= $2`, chainID, change.PrunedThrough)
 	updatedAt := checkpoint.UpdatedAt
