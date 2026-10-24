@@ -1,0 +1,20 @@
+module github.com/AloneAtWar/chainstream-market
+
+go 1.26.10
+
+replace github.com/AloneAtWar/chainstream-market/proto => ./proto
+
+require (
+	github.com/AloneAtWar/chainstream-market/proto v0.0.0-00010101000000-000000000000
+	github.com/shopspring/decimal v1.4.0
+	github.com/twmb/franz-go v1.22.1
+	github.com/twmb/franz-go/pkg/kfake v0.0.0-20261022190701-123ec885bc97
+	google.golang.org/protobuf v1.36.11
+	gopkg.in/yaml.v3 v3.0.1
+)
+
+require (
+	github.com/klauspost/compress v1.20.3 // indirect
+	github.com/pierrec/lz4/v4 v4.1.33 // indirect
+	github.com/twmb/franz-go/pkg/kmsg v1.15.0 // indirect
+)

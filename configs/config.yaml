@@ -1,0 +1,22 @@
+kafka:
+  brokers:
+    - 127.0.0.1:9092
+  client_id: market-engine
+  # Must be >= chainstream-evm's max_message_bytes.
+  fetch_max_bytes: 104857600
+  fetch_max_wait: 500ms
+
+storage:
+  driver: memory
+
+# One chainstream-evm topic per chain, each consumed in order by its own engine.
+chains:
+  - name: eth
+    chain_id: 1
+    topic: chainstream-eth
+  - name: bsc
+    chain_id: 56
+    topic: chainstream-bsc
+  - name: base
+    chain_id: 8453
+    topic: chainstream-base

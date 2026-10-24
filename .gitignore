@@ -1,0 +1,8 @@
+/bin/
+/dist/
+/coverage.out
+/*.exe
+/.idea/
+/.vscode/
+*.local.yaml
+*.log
