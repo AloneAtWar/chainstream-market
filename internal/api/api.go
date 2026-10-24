@@ -24,6 +24,7 @@ const (
 type Server struct {
 	reader    storage.Reader
 	holders   storage.HolderReader
+	transfers storage.TransferReader
 	registry  storage.RegistryReader
 	rankings  storage.RankingReader
 	intervals map[string]time.Duration
@@ -77,6 +78,10 @@ func (server *Server) Handler() http.Handler {
 	}
 	if server.rankings != nil {
 		mux.HandleFunc("GET /v1/chains/{chain}/tokens", server.tokenList)
+	}
+	if server.transfers != nil {
+		mux.HandleFunc("GET /v1/chains/{chain}/tokens/{token}/transfers", server.transfersBy("token"))
+		mux.HandleFunc("GET /v1/chains/{chain}/holders/{holder}/transfers", server.transfersBy("holder"))
 	}
 	return mux
 }

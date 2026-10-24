@@ -47,6 +47,23 @@ type Store struct {
 // Open connects, creates the database and tables if needed, and loads the
 // highest stored height per chain.
 func Open(ctx context.Context, options Options) (*Store, error) {
+	conn, err := Connect(ctx, options)
+	if err != nil {
+		return nil, err
+	}
+	store := &Store{conn: conn, written: make(map[uint64]int64)}
+	if err := store.migrate(ctx); err != nil {
+		return nil, errors.Join(err, conn.Close())
+	}
+	if err := store.loadWritten(ctx); err != nil {
+		return nil, errors.Join(err, conn.Close())
+	}
+	return store, nil
+}
+
+// Connect creates options.Database if needed and connects to it. Deletes
+// are synchronous on the returned connection.
+func Connect(ctx context.Context, options Options) (driver.Conn, error) {
 	if len(options.Addr) == 0 {
 		return nil, errors.New("clickhouse store: at least one address is required")
 	}
@@ -62,18 +79,7 @@ func Open(ctx context.Context, options Options) (*Store, error) {
 	if joined := errors.Join(createErr, closeErr); joined != nil {
 		return nil, fmt.Errorf("clickhouse store: create database: %w", joined)
 	}
-	conn, err := connect(options, options.Database)
-	if err != nil {
-		return nil, err
-	}
-	store := &Store{conn: conn, written: make(map[uint64]int64)}
-	if err := store.migrate(ctx); err != nil {
-		return nil, errors.Join(err, conn.Close())
-	}
-	if err := store.loadWritten(ctx); err != nil {
-		return nil, errors.Join(err, conn.Close())
-	}
-	return store, nil
+	return connect(options, options.Database)
 }
 
 func connect(options Options, database string) (driver.Conn, error) {

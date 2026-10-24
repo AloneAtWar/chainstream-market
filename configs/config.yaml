@@ -52,6 +52,15 @@ holders:
   rpc_batch_size: 100
   rpc_timeout: 30s
 
+# ch-loader copies raw facts (every ERC-20 transfer, unoriented trades, oracle
+# updates, asset and pool facts) into the storage.clickhouse database; it
+# needs storage.driver: clickhouse. Blocks older than batch_lag are written in
+# batches of up to flush_rows facts or flush_interval; newer blocks one by one.
+ch_loader:
+  batch_lag: 5m
+  flush_rows: 100000
+  flush_interval: 2s
+
 # market-registry keeps token and pool metadata in the state.postgres
 # database; it needs state.driver: postgres.
 registry:
@@ -68,10 +77,10 @@ rankings:
   # read again, so a reorg that moved them is picked up.
   reorg_window: 1h
 
-# market-api serves what market-engine stored; it needs storage.driver: clickhouse.
-# With state.driver: postgres it also serves holders from holder-indexer,
-# token and pool metadata from market-registry and token lists from
-# market-rankings.
+# market-api serves what market-engine stored and transfers from ch-loader's
+# tables; it needs storage.driver: clickhouse. With state.driver: postgres it
+# also serves holders from holder-indexer, token and pool metadata from
+# market-registry and token lists from market-rankings.
 api:
   addr: ":8080"
 

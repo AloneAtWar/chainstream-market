@@ -22,7 +22,19 @@ type Config struct {
 	Holders  Holders  `yaml:"holders"`
 	Registry Registry `yaml:"registry"`
 	Rankings Rankings `yaml:"rankings"`
+	// ChLoader is named after the ch-loader command.
+	ChLoader ChLoader `yaml:"ch_loader"`
 	Chains   []Chain  `yaml:"chains"`
+}
+
+// ChLoader tunes ch-loader, which copies raw chain facts into the
+// storage.clickhouse database. Blocks older than BatchLag are written in
+// batches of up to FlushRows facts or FlushInterval; newer blocks are written
+// one by one.
+type ChLoader struct {
+	BatchLag      time.Duration `yaml:"batch_lag"`
+	FlushRows     int           `yaml:"flush_rows"`
+	FlushInterval time.Duration `yaml:"flush_interval"`
 }
 
 // Rankings tunes market-rankings, which rolls market-engine's ClickHouse
@@ -175,6 +187,10 @@ const (
 	defaultRankingsRefreshInterval = time.Minute
 	defaultRankingsCandleInterval  = 5 * time.Minute
 	defaultRankingsReorgWindow     = time.Hour
+
+	defaultLoaderBatchLag      = 5 * time.Minute
+	defaultLoaderFlushRows     = 100000
+	defaultLoaderFlushInterval = 2 * time.Second
 )
 
 // DefaultIntervals are the candle sizes used when none are configured.
@@ -264,6 +280,15 @@ func (config *Config) applyDefaults() {
 	if config.Rankings.ReorgWindow == 0 {
 		config.Rankings.ReorgWindow = defaultRankingsReorgWindow
 	}
+	if config.ChLoader.BatchLag == 0 {
+		config.ChLoader.BatchLag = defaultLoaderBatchLag
+	}
+	if config.ChLoader.FlushRows == 0 {
+		config.ChLoader.FlushRows = defaultLoaderFlushRows
+	}
+	if config.ChLoader.FlushInterval == 0 {
+		config.ChLoader.FlushInterval = defaultLoaderFlushInterval
+	}
 	if strings.TrimSpace(config.State.Driver) == "" {
 		config.State.Driver = StateMemory
 	}
@@ -323,6 +348,9 @@ func (config *Config) Validate() error {
 	}
 	if !slices.Contains(config.Market.Intervals, config.Rankings.CandleInterval) || config.Rankings.CandleInterval > 24*time.Hour {
 		return fmt.Errorf("conf: rankings.candle_interval %s must be one of market.intervals and at most 24h", config.Rankings.CandleInterval)
+	}
+	if config.ChLoader.BatchLag < 0 || config.ChLoader.FlushRows < 0 || config.ChLoader.FlushInterval < 0 {
+		return errors.New("conf: ch_loader settings must be positive")
 	}
 	switch config.State.Driver {
 	case StateMemory:
