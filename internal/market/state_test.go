@@ -133,6 +133,9 @@ func (h *harness) values() map[string]string {
 	for key, value := range processor.oracle.values {
 		add(kindOracle, key, value)
 	}
+	for key, value := range processor.late.values {
+		add(kindLate, key, value)
+	}
 	return out
 }
 
@@ -156,7 +159,11 @@ func (h *harness) restart() {
 	if err != nil || !ok {
 		h.t.Fatalf("LoadState() = %v, %v", ok, err)
 	}
-	h.processor = newTestProcessor(h.t)
+	processor, err := NewProcessor(h.processor.options)
+	if err != nil {
+		h.t.Fatalf("NewProcessor() error = %v", err)
+	}
+	h.processor = processor
 	if err := h.processor.Restore(state); err != nil {
 		h.t.Fatalf("Restore() error = %v", err)
 	}

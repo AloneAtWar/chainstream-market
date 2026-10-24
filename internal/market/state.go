@@ -19,6 +19,7 @@ const (
 	kindOrientations = "orientations"
 	kindCandles      = "candles"
 	kindOracle       = "oracle"
+	kindLate         = "late"
 )
 
 // candleKeys encodes a candle key as "subject|interval seconds|key".
@@ -54,7 +55,7 @@ func (processor *Processor) TakeDelta() (storage.StateDelta, error) {
 	}
 	for _, take := range []func(*storage.StateDelta) error{
 		processor.decimals.take, processor.pools.take, processor.prices.take,
-		processor.orientations.take, processor.candles.take, processor.oracle.take,
+		processor.orientations.take, processor.candles.take, processor.oracle.take, processor.late.take,
 	} {
 		if err := take(&delta); err != nil {
 			return storage.StateDelta{}, err
@@ -80,6 +81,7 @@ func (processor *Processor) Restore(state storage.State) error {
 		kindOrientations: {processor.orientations.load, processor.orientations.loadUndo},
 		kindCandles:      {processor.candles.load, processor.candles.loadUndo},
 		kindOracle:       {processor.oracle.load, processor.oracle.loadUndo},
+		kindLate:         {processor.late.load, processor.late.loadUndo},
 	}
 	for _, entry := range state.Entries {
 		loader, ok := loaders[entry.Kind]
@@ -100,6 +102,7 @@ func (processor *Processor) Restore(state storage.State) error {
 		}
 	}
 	processor.prunedThrough = state.PrunedThrough
+	processor.rebuildLate()
 
 	ids := make([]string, 0, len(processor.pools.values))
 	for id := range processor.pools.values {

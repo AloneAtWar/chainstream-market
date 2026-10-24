@@ -162,3 +162,67 @@ func assertDecimalEqual(t *testing.T, got decimal.Decimal, want string) {
 		t.Fatalf("value = %s, want %s", got, want)
 	}
 }
+
+// A trade replayed by a later block keeps its own height but belongs to the
+// block that replayed it.
+func TestReplayedTradesFollowTheirRevision(t *testing.T) {
+	ctx := context.Background()
+	store, _ := openTestStore(t)
+	replaying := testOutput(101, "0.06")
+	late := testOutput(100, "0.03").Trades[0]
+	late.LogIndex = 2
+	replaying.Trades = append(replaying.Trades, late)
+	for _, block := range []storage.BlockOutput{testOutput(100, "0.03"), replaying, replaying} {
+		if err := store.WriteBlock(ctx, block); err != nil {
+			t.Fatalf("WriteBlock(%d) error = %v", block.Height, err)
+		}
+	}
+	atHeight := func() uint64 {
+		var rows uint64
+		if err := store.conn.QueryRow(ctx, "SELECT count() FROM trades WHERE block_height = 100").Scan(&rows); err != nil {
+			t.Fatalf("count trades: %v", err)
+		}
+		return rows
+	}
+	if got := atHeight(); got != 2 {
+		t.Fatalf("trades at 100 after replay = %d, want 2", got)
+	}
+	if err := store.Rewind(ctx, 1, 100); err != nil {
+		t.Fatalf("Rewind() error = %v", err)
+	}
+	if got := atHeight(); got != 1 {
+		t.Fatalf("trades at 100 after rewind = %d, want 1", got)
+	}
+}
+
+// Tables created before revision_height gain it, defaulting to block_height.
+func TestMigrateAddsRevisionHeight(t *testing.T) {
+	ctx := context.Background()
+	store, options := openTestStore(t)
+	if err := store.conn.Exec(ctx, "ALTER TABLE trades DROP COLUMN revision_height"); err != nil {
+		t.Fatalf("drop column: %v", err)
+	}
+	if err := store.conn.Exec(ctx, `INSERT INTO trades (chain_id, block_height, block_time, side)
+		VALUES (1, 100, now(), 'buy'), (1, 101, now(), 'buy')`); err != nil {
+		t.Fatalf("insert old rows: %v", err)
+	}
+	reopened, err := Open(ctx, options)
+	if err != nil {
+		t.Fatalf("reopen error = %v", err)
+	}
+	defer func() {
+		if err := reopened.Close(); err != nil {
+			t.Errorf("Close() error = %v", err)
+		}
+	}()
+	if err := reopened.Rewind(ctx, 1, 100); err != nil {
+		t.Fatalf("Rewind() error = %v", err)
+	}
+	var revision int64
+	if err := store.conn.QueryRow(ctx, "SELECT max(revision_height) FROM trades").Scan(&revision); err != nil {
+		t.Fatalf("read revision: %v", err)
+	}
+	if got := count(t, store, "trades"); got != 1 || revision != 100 {
+		t.Fatalf("trades = %d, revision = %d; want 1 row at 100", got, revision)
+	}
+}

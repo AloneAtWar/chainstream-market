@@ -311,7 +311,7 @@ func TestParseMetadata(t *testing.T) {
 	}
 	for name, test := range tests {
 		t.Run(name, func(t *testing.T) {
-			gotName, gotSymbol, gotDecimals := parseMetadata([]byte(test.raw))
+			gotName, gotSymbol, gotDecimals := ParseMetadata([]byte(test.raw))
 			if (gotName != nil) != test.hasName || (gotName != nil && *gotName != test.name) {
 				t.Fatalf("name = %v", gotName)
 			}

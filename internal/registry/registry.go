@@ -143,7 +143,7 @@ func (registry *Registry) token(fact *streamv1.AssetFact, height int64) (storage
 		}
 	}
 	token.Metadata = registry.cleanJSON(fact.GetMetadataJson(), "asset", address)
-	token.Name, token.Symbol, token.Decimals = parseMetadata(token.Metadata)
+	token.Name, token.Symbol, token.Decimals = ParseMetadata(token.Metadata)
 	return token, true
 }
 
@@ -206,10 +206,10 @@ func stripNUL(value any) any {
 	return value
 }
 
-// parseMetadata reads name, symbol and decimals from chainstream-evm's
+// ParseMetadata reads name, symbol and decimals from chainstream-evm's
 // asset.Info JSON. ERC-20 and ERC-721 fields are {"Value": v, "Known": b}
 // and only known values count; native assets use plain values.
-func parseMetadata(raw []byte) (name, symbol *string, decimals *uint8) {
+func ParseMetadata(raw []byte) (name, symbol *string, decimals *uint8) {
 	var fields map[string]json.RawMessage
 	if len(raw) == 0 || json.Unmarshal(raw, &fields) != nil {
 		return nil, nil, nil

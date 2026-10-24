@@ -40,6 +40,11 @@ market:
   # A feed-backed token falls back to its oracle answer when the graph price
   # deviates by more than this fraction.
   oracle_deviation: 0.02
+  # A trade whose token decimals are unknown is held this many blocks and
+  # replayed, with its candles, once the decimals arrive; -1 drops it.
+  late_trade_blocks: 7200
+  # At most this many trades are held while waiting on one token.
+  late_trades_per_token: 1000
 
 # holder-indexer keeps ERC-20 balances per holder in the state.postgres
 # database; it needs state.driver: postgres and an rpc_url on every chain.

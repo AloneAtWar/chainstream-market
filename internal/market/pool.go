@@ -64,8 +64,8 @@ func observePool(prev pool, trade *streamv1.Trade, decimals func(string) (uint32
 		next.Reserves, next.Price = reserves, price
 		next.HasReserves, next.HasPrice = true, true
 	case trade.GetAction() == streamv1.TradeAction_TRADE_ACTION_SWAP:
-		a0, okA := amountValue(amounts[0])
-		a1, okB := amountValue(amounts[1])
+		a0, okA := rawValue(amounts[0].GetRaw(), d0)
+		a1, okB := rawValue(amounts[1].GetRaw(), d1)
 		if !okA || !okB || a0.IsZero() || a1.IsZero() {
 			return prev, false
 		}
@@ -117,15 +117,13 @@ func (p pool) priceOf(position int) (decimal.Decimal, bool) {
 	return decimal.NewFromInt(1).DivRound(p.Price, precision), true
 }
 
-func amountValue(amount *streamv1.Amount) (decimal.Decimal, bool) {
-	if !amount.GetDecimalsKnown() {
-		return decimal.Decimal{}, false
-	}
-	raw, ok := new(big.Int).SetString(amount.GetRaw(), 10)
+// rawValue converts a raw integer amount to human units.
+func rawValue(raw string, decimals uint32) (decimal.Decimal, bool) {
+	value, ok := new(big.Int).SetString(raw, 10)
 	if !ok {
 		return decimal.Decimal{}, false
 	}
-	return decimal.NewFromBigInt(raw, -int32(amount.GetDecimals())), true
+	return decimal.NewFromBigInt(value, -int32(decimals)), true
 }
 
 func rawSign(amount *streamv1.Amount) int {
