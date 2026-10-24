@@ -8,6 +8,8 @@ Market data services built on the [chainstream-evm](https://github.com/AloneAtWa
 | --- | --- |
 | `proto/` | Separate Go module `github.com/AloneAtWar/chainstream-market/proto` holding the `stream.v1` wire format. It depends only on protobuf so producers can import it cheaply. |
 | `cmd/market-engine` | Consumes one chainstream-evm topic per chain and writes derived market data. |
+| `cmd/market-api` | HTTP API over the ClickHouse store. |
+| `internal/api` | market-api handlers. |
 | `internal/engine` | Per-chain ordered apply loop: reverts, continuity checks and checkpoints. |
 | `internal/market` | Per-chain processor: pool state, base/quote orientation, the USD price graph and candles. |
 | `internal/source` | Kafka reader for partition zero of a chain topic. |
@@ -36,7 +38,29 @@ Each chain runs its own engine, which reads the chain topic in offset order with
 
 Rows are keyed by `(chain_id, height)`. A revert deletes every row above `rollback_to`; candles drop the newer versions, so the previous version becomes current again. Writing a height that may already exist deletes it first, which makes a replay idempotent. Deletes use ClickHouse lightweight `DELETE`.
 
-Checkpoints and processor state are still in memory, so a restart replays each topic from offset zero and rewrites the heights already in ClickHouse. Persisting state snapshots is future work, and so is a Redis hot view.
+Checkpoints and processor state are still in memory, so a restart replays each topic from offset zero and rewrites the heights already in ClickHouse. Persisting state snapshots is future work.
+
+## market-api
+
+```sh
+go run ./cmd/market-api -conf configs/config.yaml   # needs storage.driver: clickhouse
+```
+
+| Endpoint | Returns |
+| --- | --- |
+| `GET /v1/chains/{chain}/tokens/{token}/price` | The latest USD price, its source, hops and liquidity. |
+| `GET /v1/chains/{chain}/tokens/{token}/candles?interval=1m` | The token's aggregated, liquidity-filtered candles. |
+| `GET /v1/chains/{chain}/pools/{pool}/candles?interval=1m` | Pool candles. |
+| `GET /v1/chains/{chain}/tokens/{token}/trades` | Recent trades with the token as base, newest first. |
+| `GET /v1/chains/{chain}/pools/{pool}/trades` | Recent trades in the pool. |
+| `GET /healthz` | 204 when the process is up. |
+
+- `{chain}` is the numeric chain ID. The native pseudo-address is an alias for the wrapped token.
+- Candles accept `from` and `to` (unix seconds, `from <= open_time < to`) and `limit`. `interval` must be one of `market.intervals`. Buckets with no trades are omitted, and each returned bucket opens at the previous close.
+- Trades accept `limit` and `before_height` for paging backwards.
+- Decimal values are returned as strings.
+
+Queries go straight to ClickHouse, which is fast enough at local scale. Add a Redis hot view only if latency calls for it.
 
 ## Pricing and candles
 

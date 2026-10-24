@@ -40,6 +40,11 @@ var schema = []string{
 	PARTITION BY toYYYYMM(block_time)
 	ORDER BY (chain_id, block_height, log_index, operation_index)`,
 
+	// The API reads trades by base token or pool; skip indexes let it avoid
+	// scanning every granule of a height-ordered table.
+	`ALTER TABLE trades ADD INDEX IF NOT EXISTS trades_base_token base_token TYPE bloom_filter GRANULARITY 4`,
+	`ALTER TABLE trades ADD INDEX IF NOT EXISTS trades_pool_id pool_id TYPE bloom_filter GRANULARITY 4`,
+
 	`CREATE TABLE IF NOT EXISTS token_prices (
 		chain_id      UInt64,
 		token         String,

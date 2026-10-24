@@ -32,6 +32,10 @@ market:
   # deviates by more than this fraction.
   oracle_deviation: 0.02
 
+# market-api serves what market-engine stored; it needs storage.driver: clickhouse.
+api:
+  addr: ":8080"
+
 # One chainstream-evm topic per chain, each consumed in order by its own engine.
 # feeds lists trusted Chainlink USD aggregators (the contract behind each proxy,
 # found with proxy.aggregator()); any other AnswerUpdated log is ignored.

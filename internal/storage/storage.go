@@ -142,3 +142,35 @@ type Candle struct {
 	Trades       uint32
 	UpdateHeight int64
 }
+
+// Reader serves stored market output to the API.
+type Reader interface {
+	// LatestPrice returns token's most recent USD price.
+	LatestPrice(ctx context.Context, chainID uint64, token string) (TokenPrice, bool, error)
+	// Candles returns the current version of each bucket in range, oldest
+	// first.
+	Candles(ctx context.Context, query CandleQuery) ([]Candle, error)
+	// Trades returns the most recent trades, newest first.
+	Trades(ctx context.Context, query TradeQuery) ([]Trade, error)
+}
+
+// CandleQuery selects buckets with From <= open time < To.
+type CandleQuery struct {
+	ChainID  uint64
+	Subject  CandleSubject
+	Key      string
+	Interval time.Duration
+	From     time.Time
+	To       time.Time
+	Limit    int
+}
+
+// TradeQuery selects trades by base token or pool. BeforeHeight, when
+// positive, pages backwards from that height.
+type TradeQuery struct {
+	ChainID      uint64
+	BaseToken    string
+	PoolID       string
+	BeforeHeight int64
+	Limit        int
+}
