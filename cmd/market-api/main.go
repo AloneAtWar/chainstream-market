@@ -1,6 +1,6 @@
 // Command market-api serves prices, candles and trades from the ClickHouse
-// store that market-engine writes, and holders from the PostgreSQL store
-// that holder-indexer writes.
+// store that market-engine writes, transfers from the raw tables ch-loader
+// writes, and holders from the PostgreSQL store that holder-indexer writes.
 package main
 
 import (
@@ -17,6 +17,7 @@ import (
 
 	"github.com/AloneAtWar/chainstream-market/internal/api"
 	"github.com/AloneAtWar/chainstream-market/internal/conf"
+	"github.com/AloneAtWar/chainstream-market/internal/storage/chraw"
 	"github.com/AloneAtWar/chainstream-market/internal/storage/chstore"
 	"github.com/AloneAtWar/chainstream-market/internal/storage/pgstore"
 )
@@ -45,11 +46,12 @@ func run(configPath string, logger *slog.Logger) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	store, err := chstore.Open(ctx, chstore.Options{
+	clickhouse := chstore.Options{
 		Addr: config.Storage.ClickHouse.Addr, Database: config.Storage.ClickHouse.Database,
 		Username: config.Storage.ClickHouse.Username, Password: config.Storage.ClickHouse.Password,
 		DialTimeout: config.Storage.ClickHouse.DialTimeout,
-	})
+	}
+	store, err := chstore.Open(ctx, clickhouse)
 	if err != nil {
 		return err
 	}
@@ -58,8 +60,17 @@ func run(configPath string, logger *slog.Logger) error {
 			logger.Error("close storage", "error", closeErr)
 		}
 	}()
+	rawStore, err := chraw.Open(ctx, clickhouse)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if closeErr := rawStore.Close(); closeErr != nil {
+			logger.Error("close raw storage", "error", closeErr)
+		}
+	}()
 
-	handler := api.New(store, config.Market.Intervals, logger)
+	handler := api.New(store, config.Market.Intervals, logger).WithTransfers(rawStore)
 	if config.State.Driver == conf.StatePostgres {
 		holderStore, openErr := pgstore.Open(ctx, pgstore.Options{DSN: config.State.Postgres.DSN, Schema: config.State.Postgres.Schema})
 		if openErr != nil {

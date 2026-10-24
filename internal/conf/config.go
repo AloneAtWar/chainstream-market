@@ -19,7 +19,19 @@ type Config struct {
 	Market  Market  `yaml:"market"`
 	API     API     `yaml:"api"`
 	Holders Holders `yaml:"holders"`
-	Chains  []Chain `yaml:"chains"`
+	// ChLoader is named after the ch-loader command.
+	ChLoader ChLoader `yaml:"ch_loader"`
+	Chains   []Chain  `yaml:"chains"`
+}
+
+// ChLoader tunes ch-loader, which copies raw chain facts into the
+// storage.clickhouse database. Blocks older than BatchLag are written in
+// batches of up to FlushRows facts or FlushInterval; newer blocks are written
+// one by one.
+type ChLoader struct {
+	BatchLag      time.Duration `yaml:"batch_lag"`
+	FlushRows     int           `yaml:"flush_rows"`
+	FlushInterval time.Duration `yaml:"flush_interval"`
 }
 
 // Holders tunes holder-indexer, which keeps ERC-20 balances per holder in
@@ -147,6 +159,10 @@ const (
 	defaultHoldersReconcileBatch = 200
 	defaultRPCBatchSize          = 100
 	defaultRPCTimeout            = 30 * time.Second
+
+	defaultLoaderBatchLag      = 5 * time.Minute
+	defaultLoaderFlushRows     = 100000
+	defaultLoaderFlushInterval = 2 * time.Second
 )
 
 // DefaultIntervals are the candle sizes used when none are configured.
@@ -221,6 +237,15 @@ func (config *Config) applyDefaults() {
 	if config.Holders.RPCTimeout == 0 {
 		config.Holders.RPCTimeout = defaultRPCTimeout
 	}
+	if config.ChLoader.BatchLag == 0 {
+		config.ChLoader.BatchLag = defaultLoaderBatchLag
+	}
+	if config.ChLoader.FlushRows == 0 {
+		config.ChLoader.FlushRows = defaultLoaderFlushRows
+	}
+	if config.ChLoader.FlushInterval == 0 {
+		config.ChLoader.FlushInterval = defaultLoaderFlushInterval
+	}
 	if strings.TrimSpace(config.State.Driver) == "" {
 		config.State.Driver = StateMemory
 	}
@@ -271,6 +296,9 @@ func (config *Config) Validate() error {
 	if config.Holders.HistoryDepth < 0 || config.Holders.ReconcileBatch < 0 ||
 		config.Holders.RPCBatchSize < 0 || config.Holders.RPCTimeout < 0 {
 		return errors.New("conf: holders settings must be positive")
+	}
+	if config.ChLoader.BatchLag < 0 || config.ChLoader.FlushRows < 0 || config.ChLoader.FlushInterval < 0 {
+		return errors.New("conf: ch_loader settings must be positive")
 	}
 	switch config.State.Driver {
 	case StateMemory:

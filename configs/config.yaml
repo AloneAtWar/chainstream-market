@@ -52,8 +52,18 @@ holders:
   rpc_batch_size: 100
   rpc_timeout: 30s
 
+# ch-loader copies raw facts (every ERC-20 transfer, unoriented trades, oracle
+# updates, asset and pool facts) into the storage.clickhouse database; it
+# needs storage.driver: clickhouse. Blocks older than batch_lag are written in
+# batches of up to flush_rows facts or flush_interval; newer blocks one by one.
+ch_loader:
+  batch_lag: 5m
+  flush_rows: 100000
+  flush_interval: 2s
+
 # market-api serves what market-engine stored; it needs storage.driver: clickhouse.
-# With state.driver: postgres it also serves holders from holder-indexer.
+# It also serves transfers from ch-loader's tables, and with
+# state.driver: postgres holders from holder-indexer.
 api:
   addr: ":8080"
 
