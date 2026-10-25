@@ -53,6 +53,9 @@ var schema = []string{
 	// scanning every granule of a height-ordered table.
 	`ALTER TABLE trades ADD INDEX IF NOT EXISTS trades_base_token base_token TYPE bloom_filter GRANULARITY 4`,
 	`ALTER TABLE trades ADD INDEX IF NOT EXISTS trades_pool_id pool_id TYPE bloom_filter GRANULARITY 4`,
+	// A retention TTL drops a month's parts whole once all their rows have
+	// expired, instead of rewriting parts that are partly expired.
+	`ALTER TABLE trades MODIFY SETTING ttl_only_drop_parts = 1`,
 
 	`CREATE TABLE IF NOT EXISTS token_prices (
 		chain_id      UInt64,

@@ -168,6 +168,26 @@ type ClickHouse struct {
 	Username    string        `yaml:"username"`
 	Password    string        `yaml:"password"`
 	DialTimeout time.Duration `yaml:"dial_timeout"`
+	Retention   Retention     `yaml:"retention"`
+}
+
+// Retention ages rows out of ClickHouse by block time, in whole days; zero
+// keeps them. market-engine applies it to trades, token_prices and candles
+// at startup, and ch-loader to its raw tables. Its fields match
+// chstore.Retention, which documents them.
+type Retention struct {
+	// StoragePolicy names a ClickHouse storage policy with a "default"
+	// volume for hot parts and ColdVolume.
+	StoragePolicy        string                `yaml:"storage_policy"`
+	ColdVolume           string                `yaml:"cold_volume"`
+	ColdAfterDays        int                   `yaml:"cold_after_days"`
+	TradesDays           int                   `yaml:"trades_days"`
+	TokenPriceRollupDays int                   `yaml:"token_price_rollup_days"`
+	CandleCompactDays    int                   `yaml:"candle_compact_days"`
+	CandleDays           map[time.Duration]int `yaml:"candle_days"`
+	RawTransfersDays     int                   `yaml:"raw_transfers_days"`
+	RawTradesDays        int                   `yaml:"raw_trades_days"`
+	OracleUpdatesDays    int                   `yaml:"oracle_updates_days"`
 }
 
 // Chain is one chainstream-evm topic consumed in order by its own engine.
@@ -215,6 +235,7 @@ const (
 
 	defaultClickHouseDatabase = "market"
 	defaultAPIAddr            = ":8080"
+	defaultColdVolume         = "cold"
 
 	defaultFetchMaxBytes = 104857600
 	defaultFetchMaxWait  = 500 * time.Millisecond
@@ -236,6 +257,8 @@ const (
 	defaultRankingsRefreshInterval = time.Minute
 	defaultRankingsCandleInterval  = 5 * time.Minute
 	defaultRankingsReorgWindow     = time.Hour
+	// minRankingCandleDays keeps the candles market-rankings sums over 24h.
+	minRankingCandleDays = 2
 
 	defaultLoaderBatchLag      = 5 * time.Minute
 	defaultLoaderFlushRows     = 100000
@@ -379,6 +402,9 @@ func (config *Config) applyDefaults() {
 	if config.Storage.Driver == StorageClickHouse && config.Storage.ClickHouse.Database == "" {
 		config.Storage.ClickHouse.Database = defaultClickHouseDatabase
 	}
+	if config.Storage.ClickHouse.Retention.ColdVolume == "" {
+		config.Storage.ClickHouse.Retention.ColdVolume = defaultColdVolume
+	}
 }
 
 // Validate reports the first invalid setting.
@@ -419,6 +445,9 @@ func (config *Config) Validate() error {
 	case StorageClickHouse:
 		if len(config.Storage.ClickHouse.Addr) == 0 {
 			return errors.New("conf: storage.clickhouse.addr is required")
+		}
+		if err := config.validateRetention(); err != nil {
+			return err
 		}
 	default:
 		return fmt.Errorf("conf: unsupported storage.driver %q", config.Storage.Driver)
@@ -476,6 +505,34 @@ func (config *Config) Validate() error {
 		}
 	}
 	return config.validateLiveTopics()
+}
+
+// validateRetention checks that ages are not negative, that the cold tier
+// is configured whole, and that candle ages name market intervals and keep
+// what market-rankings reads.
+func (config *Config) validateRetention() error {
+	retention := config.Storage.ClickHouse.Retention
+	ages := []int{
+		retention.ColdAfterDays, retention.TradesDays, retention.TokenPriceRollupDays, retention.CandleCompactDays,
+		retention.RawTransfersDays, retention.RawTradesDays, retention.OracleUpdatesDays,
+	}
+	for interval, age := range retention.CandleDays {
+		if !slices.Contains(config.Market.Intervals, interval) {
+			return fmt.Errorf("conf: storage.clickhouse.retention.candle_days %s is not one of market.intervals", interval)
+		}
+		if interval == config.Rankings.CandleInterval && age > 0 && age < minRankingCandleDays {
+			return fmt.Errorf("conf: storage.clickhouse.retention.candle_days %s must be at least %d, since rankings sum it over 24h",
+				interval, minRankingCandleDays)
+		}
+		ages = append(ages, age)
+	}
+	if slices.Min(ages) < 0 {
+		return errors.New("conf: storage.clickhouse.retention days must not be negative")
+	}
+	if (strings.TrimSpace(retention.StoragePolicy) == "") != (retention.ColdAfterDays == 0) {
+		return errors.New("conf: storage.clickhouse.retention.storage_policy and cold_after_days must be set together")
+	}
+	return nil
 }
 
 // validateFeeds checks that each feed names one proxy or aggregator and a

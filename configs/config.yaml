@@ -16,6 +16,34 @@ storage:
     username: default
     password: ""
     dial_timeout: 5s
+    # Ages rows out by block time, in whole days; 0 keeps them. market-engine
+    # applies this to its tables at startup and ch-loader to the raw ones.
+    # Fact tables are partitioned by month; trades and raw tables drop a
+    # month whole once its newest row expires, so rows can stay up to a
+    # month longer than their age. Changing a value rewrites the affected
+    # tables' parts in the background.
+    retention:
+      # Cold tier: parts older than cold_after_days move to cold_volume of
+      # storage_policy, a policy defined in the ClickHouse server config with
+      # a "default" volume for hot parts (tables created without a policy
+      # live there) and the cold volume. Set both or neither; a table cannot
+      # go back to its old policy.
+      storage_policy: ""
+      cold_volume: cold
+      cold_after_days: 0
+      # market-engine output. Older token_prices rows are rolled up to the
+      # latest per token and month, so every token keeps its last price;
+      # older candle buckets keep only their final version, which needs
+      # more than the deepest reorg. Candles of intervals left out of
+      # candle_days are kept; rankings.candle_interval needs 2 days or more.
+      trades_days: 180
+      token_price_rollup_days: 30
+      candle_compact_days: 3
+      candle_days: {1m: 30, 5m: 180}
+      # ch-loader raw facts. Asset and pool facts are always kept.
+      raw_transfers_days: 90
+      raw_trades_days: 90
+      oracle_updates_days: 0
 
 # Where checkpoints and market state are kept: memory or postgres.
 # memory: a restart replays each topic from offset zero, and the output store
