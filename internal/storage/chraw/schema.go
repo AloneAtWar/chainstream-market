@@ -107,6 +107,12 @@ var schema = []string{
 	PARTITION BY toYYYYMM(block_time)
 	ORDER BY (chain_id, block_height, pool_id)`,
 
+	// A retention TTL drops a month's parts whole once all their rows have
+	// expired, instead of rewriting parts that are partly expired.
+	`ALTER TABLE raw_transfers MODIFY SETTING ttl_only_drop_parts = 1`,
+	`ALTER TABLE raw_trades MODIFY SETTING ttl_only_drop_parts = 1`,
+	`ALTER TABLE oracle_updates MODIFY SETTING ttl_only_drop_parts = 1`,
+
 	// One row per flush. The newest offset is the checkpoint; older rows
 	// merge away.
 	`CREATE TABLE IF NOT EXISTS raw_checkpoints (

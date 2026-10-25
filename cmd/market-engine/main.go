@@ -209,6 +209,9 @@ func openOutput(ctx context.Context, config conf.Storage, memory *storage.Memory
 		if err != nil {
 			return nil, nil, err
 		}
+		if err := store.ApplyRetention(ctx, chstore.Retention(config.ClickHouse.Retention)); err != nil {
+			return nil, nil, errors.Join(err, store.Close())
+		}
 		return store, store.Close, nil
 	default:
 		return memory, func() error { return nil }, nil

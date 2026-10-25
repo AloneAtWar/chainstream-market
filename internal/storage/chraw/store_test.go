@@ -224,3 +224,30 @@ func TestHolderFilterUsesPartyIndex(t *testing.T) {
 		t.Fatalf("plan does not use raw_transfers_party:\n%s", plan.String())
 	}
 }
+
+// Old transfers and trades are dropped a month at a time; asset and pool
+// facts stay.
+func TestRetentionDropsOldFacts(t *testing.T) {
+	ctx := context.Background()
+	store := openTestStore(t)
+	retention := chstore.Retention{RawTransfersDays: 30, RawTradesDays: 30}
+	if err := store.ApplyRetention(ctx, retention); err != nil {
+		t.Fatalf("ApplyRetention() error = %v", err)
+	}
+	recent := testBlock(200)
+	recent.BlockTime = time.Now().UTC()
+	if err := store.WriteRaw(ctx, []storage.RawBlock{testBlock(100), recent}); err != nil {
+		t.Fatalf("WriteRaw() error = %v", err)
+	}
+	for _, table := range tables {
+		if err := store.conn.Exec(ctx, "OPTIMIZE TABLE "+table+" FINAL"); err != nil {
+			t.Fatalf("optimize %s: %v", table, err)
+		}
+	}
+	want := map[string]uint64{"raw_transfers": 2, "raw_trades": 1, "oracle_updates": 2, "asset_facts": 2, "pool_facts": 2}
+	for table, rows := range want {
+		if got := count(t, store, table); got != rows {
+			t.Errorf("%s rows = %d, want %d", table, got, rows)
+		}
+	}
+}

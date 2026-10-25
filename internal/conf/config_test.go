@@ -76,6 +76,11 @@ func TestParseRejectsInvalidConfig(t *testing.T) {
 		"negative live":          "kafka: {brokers: [b]}\nlive: {client_buffer: -1}\nchains: [{name: eth, chain_id: 1, topic: a}]",
 		"live topic reused":      "kafka: {brokers: [b]}\nlive: {enabled: true}\nchains: [{name: eth, chain_id: 1, topic: a, live_topic: b}, {name: base, chain_id: 2, topic: b}]",
 		"live topic twice":       "kafka: {brokers: [b]}\nlive: {enabled: true}\nchains: [{name: eth, chain_id: 1, topic: a, live_topic: l}, {name: base, chain_id: 2, topic: b, live_topic: l}]",
+		"negative retention":     "kafka: {brokers: [b]}\nstorage: {driver: clickhouse, clickhouse: {addr: [c], retention: {trades_days: -1}}}\nchains: [{name: eth, chain_id: 1, topic: a}]",
+		"policy without cold":    "kafka: {brokers: [b]}\nstorage: {driver: clickhouse, clickhouse: {addr: [c], retention: {storage_policy: hot_cold}}}\nchains: [{name: eth, chain_id: 1, topic: a}]",
+		"cold without policy":    "kafka: {brokers: [b]}\nstorage: {driver: clickhouse, clickhouse: {addr: [c], retention: {cold_after_days: 7}}}\nchains: [{name: eth, chain_id: 1, topic: a}]",
+		"retention interval":     "kafka: {brokers: [b]}\nstorage: {driver: clickhouse, clickhouse: {addr: [c], retention: {candle_days: {2m: 30}}}}\nchains: [{name: eth, chain_id: 1, topic: a}]",
+		"rankings candles short": "kafka: {brokers: [b]}\nstorage: {driver: clickhouse, clickhouse: {addr: [c], retention: {candle_days: {5m: 1}}}}\nchains: [{name: eth, chain_id: 1, topic: a}]",
 	}
 	for name, raw := range tests {
 		t.Run(name, func(t *testing.T) {
@@ -187,6 +192,35 @@ func TestLoadRepositoryConfig(t *testing.T) {
 	}
 	if config.Kafka.FetchMaxWait != time.Second/2 {
 		t.Fatalf("fetch_max_wait = %s", config.Kafka.FetchMaxWait)
+	}
+	if days := config.Storage.ClickHouse.Retention.CandleDays; days[time.Minute] != 30 || days[5*time.Minute] != 180 {
+		t.Fatalf("candle_days = %v", days)
+	}
+}
+
+func TestParseRetention(t *testing.T) {
+	config, err := Parse([]byte(`
+kafka: {brokers: [b]}
+storage:
+  driver: clickhouse
+  clickhouse:
+    addr: [c]
+    retention:
+      storage_policy: hot_cold
+      cold_after_days: 30
+      trades_days: 180
+      candle_days: {1m: 7, 1h: 0}
+chains: [{name: eth, chain_id: 1, topic: a}]
+`))
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	retention := config.Storage.ClickHouse.Retention
+	if retention.ColdVolume != defaultColdVolume || retention.ColdAfterDays != 30 || retention.TradesDays != 180 {
+		t.Fatalf("retention = %+v", retention)
+	}
+	if len(retention.CandleDays) != 2 || retention.CandleDays[time.Minute] != 7 {
+		t.Fatalf("candle_days = %v", retention.CandleDays)
 	}
 }
 

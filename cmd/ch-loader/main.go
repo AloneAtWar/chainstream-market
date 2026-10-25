@@ -59,6 +59,9 @@ func run(configPath string, logger *slog.Logger) error {
 			logger.Error("close storage", "error", closeErr)
 		}
 	}()
+	if err := store.ApplyRetention(ctx, chstore.Retention(config.Storage.ClickHouse.Retention)); err != nil {
+		return err
+	}
 
 	loaders := make([]*chloader.Loader, 0, len(config.Chains))
 	engines := make([]*engine.Engine, 0, len(config.Chains))

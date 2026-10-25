@@ -275,3 +275,10 @@ var (
 	_ storage.RawStore       = (*Store)(nil)
 	_ storage.TransferReader = (*Store)(nil)
 )
+
+// ApplyRetention sets the TTL of ch-loader's tables. Only ch-loader calls
+// it, so market-api, which opens the store to read transfers, leaves the TTL
+// alone.
+func (store *Store) ApplyRetention(ctx context.Context, retention chstore.Retention) error {
+	return chstore.ApplyTTL(ctx, store.conn, retention, retention.RawTTL())
+}

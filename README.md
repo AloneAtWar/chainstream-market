@@ -52,6 +52,33 @@ The engine only orders records; a `Handler` does the work. market-engine's handl
 
 Rows are keyed by `(chain_id, height)`. A revert deletes every row above `rollback_to`; candles drop the newer versions, so the previous version becomes current again. Writing a height that may already exist deletes it first, which makes a replay idempotent. Deletes use ClickHouse lightweight `DELETE`.
 
+### Retention and cold storage
+
+Every fact table except `blocks` is partitioned by month (`candles` by interval and month). `storage.clickhouse.retention` turns that into TTLs, in whole days of block time (a candle's open time); zero keeps rows. market-engine sets the TTLs of `trades`, `token_prices` and `candles` at startup, and ch-loader those of its raw tables. market-api and market-rankings open the same tables without touching them.
+
+| Setting | Effect |
+| --- | --- |
+| `trades_days` | Deletes trades. |
+| `token_price_rollup_days` | Rolls older `token_prices` rows up to the latest row per token (about one per token and month after merges), so a token that stopped trading keeps its last price. |
+| `candle_compact_days` | Keeps only the final version of older candle buckets. It has to reach past the deepest reorg, since a rewind can only restore versions that are still stored. |
+| `candle_days` | Deletes candles per interval, e.g. `{1m: 30, 5m: 180}`. Intervals not listed are kept; `rankings.candle_interval` needs at least 2 days. |
+| `raw_transfers_days`, `raw_trades_days`, `oracle_updates_days` | Delete ch-loader's raw facts. `asset_facts` and `pool_facts` are kept. |
+| `storage_policy`, `cold_volume`, `cold_after_days` | Move parts older than `cold_after_days` to `cold_volume`. The policy is defined in the ClickHouse server config and must contain a volume named `default` (where tables created without a policy live) and the cold volume; ClickHouse cannot switch a table back to its old policy. |
+
+`trades` and the raw tables set `ttl_only_drop_parts`, so ClickHouse drops a month's parts whole once their newest row expires instead of rewriting them; rows can outlive their age by up to a month. A TTL is changed only when the configured one differs, because changing it rewrites the table's parts in the background. Removing a setting removes its rule.
+
+A policy for a second disk looks like this in the server config:
+
+```xml
+<storage_configuration>
+  <disks><cold><path>/mnt/cold/clickhouse/</path></cold></disks>
+  <policies><hot_cold><volumes>
+    <default><disk>default</disk></default>
+    <cold><disk>cold</disk></cold>
+  </volumes></hot_cold></policies>
+</storage_configuration>
+```
+
 ## State
 
 `state.driver` decides where checkpoints and market state (pools, prices, orientations, open candles, oracle answers and their undo history) are kept.
