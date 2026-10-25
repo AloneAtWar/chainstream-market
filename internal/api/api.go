@@ -283,6 +283,9 @@ type tradeResponse struct {
 	PriceQuote      string `json:"price_quote"`
 	PriceUSD        string `json:"price_usd"`
 	ValueUSD        string `json:"value_usd"`
+	// Outlier marks a swap left out of the token's candles because its
+	// price strayed too far from the token's reference price.
+	Outlier bool `json:"outlier"`
 }
 
 func (server *Server) trades(keyName string) http.HandlerFunc {
@@ -330,6 +333,7 @@ func (server *Server) trades(keyName string) http.HandlerFunc {
 				BaseToken: trade.BaseToken, QuoteToken: trade.QuoteToken,
 				BaseAmount: trade.BaseAmount.String(), QuoteAmount: trade.QuoteAmount.String(),
 				PriceQuote: trade.PriceQuote.String(), PriceUSD: trade.PriceUSD.String(), ValueUSD: trade.ValueUSD.String(),
+				Outlier: trade.Outlier,
 			}
 		}
 		writeJSON(writer, http.StatusOK, map[string]any{"trades": body})

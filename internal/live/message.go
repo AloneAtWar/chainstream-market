@@ -57,6 +57,8 @@ type Trade struct {
 	PriceQuote      string `json:"price_quote"`
 	PriceUSD        string `json:"price_usd"`
 	ValueUSD        string `json:"value_usd"`
+	// Outlier marks a swap left out of the token's candles.
+	Outlier bool `json:"outlier"`
 }
 
 // Candle is the whole current value of one bucket. UpdateHeight is the block
@@ -108,6 +110,7 @@ func tradeOf(trade storage.Trade, revision int64) Trade {
 		BaseToken: trade.BaseToken, QuoteToken: trade.QuoteToken,
 		BaseAmount: trade.BaseAmount.String(), QuoteAmount: trade.QuoteAmount.String(),
 		PriceQuote: trade.PriceQuote.String(), PriceUSD: trade.PriceUSD.String(), ValueUSD: trade.ValueUSD.String(),
+		Outlier: trade.Outlier,
 	}
 }
 

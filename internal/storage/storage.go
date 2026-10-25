@@ -92,6 +92,9 @@ type Trade struct {
 	PriceQuote decimal.Decimal
 	PriceUSD   decimal.Decimal
 	ValueUSD   decimal.Decimal
+	// Outlier marks a swap priced too far from its base token's reference
+	// price; it is left out of the token's candles.
+	Outlier bool
 }
 
 // PriceSource says how a token's USD price was obtained.

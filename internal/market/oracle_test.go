@@ -129,14 +129,41 @@ func TestOracleAnswersRevert(t *testing.T) {
 func TestNewProcessorRejectsBadFeeds(t *testing.T) {
 	base := Options{MaxHops: 3, Intervals: []time.Duration{time.Minute}, HistoryDepth: 1}
 	duplicate := base
-	duplicate.Feeds = []Feed{{Address: ethFeed, Token: weth}, {Address: ethFeed, Token: wbtc}}
+	duplicate.Catalog = DefaultCatalog(1)
+	// The native pseudo-address is an alias of WETH.
+	duplicate.Feeds = []Feed{{Address: ethFeed, Token: weth}, {Address: ethFeed, Token: NativeAddress}}
 	missing := base
 	missing.Feeds = []Feed{{Address: ethFeed}}
 	negative := base
 	negative.OracleDeviation = decimal.NewFromInt(-1)
-	for name, options := range map[string]Options{"duplicate": duplicate, "missing token": missing, "negative": negative} {
+	negativeOutlier := base
+	negativeOutlier.OutlierDeviation = decimal.NewFromInt(-1)
+	for name, options := range map[string]Options{
+		"duplicate": duplicate, "missing token": missing, "negative": negative, "negative outlier": negativeOutlier,
+	} {
 		if _, err := NewProcessor(options); err == nil {
 			t.Fatalf("%s feeds accepted", name)
 		}
 	}
+}
+
+func TestOneFeedPricesSeveralTokens(t *testing.T) {
+	const bridgedUSDC = "0x3333333333333333333333333333333333333333"
+	processor, err := NewProcessor(Options{
+		Catalog: NewCatalog(CatalogSpec{Anchors: []string{usdc, bridgedUSDC}}), MaxHops: 3,
+		Intervals: []time.Duration{time.Minute}, HistoryDepth: 16,
+		Feeds: []Feed{{Address: usdcFeed, Token: usdc, Decimals: 8}, {Address: usdcFeed, Token: bridgedUSDC, Decimals: 8}},
+	})
+	if err != nil {
+		t.Fatalf("NewProcessor() error = %v", err)
+	}
+	block := testBlock(100, 0)
+	block.OracleUpdates = []*streamv1.OracleUpdate{oracleUpdate(usdcFeed, "99700000")}
+	output, err := processor.Apply(context.Background(), block)
+	if err != nil {
+		t.Fatalf("Apply() error = %v", err)
+	}
+	prices := priceMap(output.Prices)
+	assertDecimal(t, "USDC", prices[usdc].PriceUSD, "0.997")
+	assertDecimal(t, "bridged USDC", prices[bridgedUSDC].PriceUSD, "0.997")
 }

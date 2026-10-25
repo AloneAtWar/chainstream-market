@@ -42,6 +42,11 @@ type Options struct {
 	// feed-backed token's graph price and its oracle price before the oracle
 	// price is used instead.
 	OracleDeviation decimal.Decimal
+	// OutlierDeviation is how far, as a ratio, a swap's USD price may stray
+	// from its base token's reference price before the swap is marked an
+	// outlier and left out of the token's candles. The reference must come
+	// from another pool, an anchor or an oracle answer. Zero turns it off.
+	OutlierDeviation decimal.Decimal
 	// LateTradeBlocks is how many blocks a trade whose token decimals are
 	// unknown is held for replay once they arrive. Zero turns holding off.
 	LateTradeBlocks int64
@@ -49,7 +54,8 @@ type Options struct {
 	LateTradesPerToken int
 }
 
-// Feed is a trusted Chainlink-style aggregator answering in USD.
+// Feed is a trusted Chainlink-style aggregator answering in USD. One
+// aggregator may price several tokens, each in its own Feed.
 type Feed struct {
 	Address  string
 	Token    string
@@ -89,7 +95,8 @@ type Processor struct {
 	candles      *journal[candleKey, storage.Candle]
 	// oracle holds the latest trusted oracle answer per canonical token.
 	oracle *journal[string, decimal.Decimal]
-	feeds  map[string]Feed
+	// feeds lists the tokens each trusted aggregator prices.
+	feeds map[string][]Feed
 	// tokenPools indexes pools by canonical token. It only grows; pools that
 	// a revert removed are skipped on lookup.
 	tokenPools map[string][]string
@@ -121,23 +128,25 @@ func NewProcessor(options Options) (*Processor, error) {
 	if options.HistoryDepth <= 0 {
 		return nil, errors.New("market: history depth must be positive")
 	}
-	if options.OracleDeviation.IsNegative() {
-		return nil, errors.New("market: oracle deviation must not be negative")
+	if options.OracleDeviation.IsNegative() || options.OutlierDeviation.IsNegative() {
+		return nil, errors.New("market: oracle and outlier deviations must not be negative")
 	}
 	if options.LateTradeBlocks < 0 || (options.LateTradeBlocks > 0 && options.LateTradesPerToken <= 0) {
 		return nil, errors.New("market: holding late trades needs positive blocks and a positive per-token cap")
 	}
-	feeds := make(map[string]Feed, len(options.Feeds))
+	feeds := make(map[string][]Feed, len(options.Feeds))
 	for _, feed := range options.Feeds {
 		address := normalize(feed.Address)
 		if address == "" || normalize(feed.Token) == "" {
 			return nil, errors.New("market: feeds need an address and a token")
 		}
-		if _, duplicate := feeds[address]; duplicate {
-			return nil, fmt.Errorf("market: duplicate feed %s", address)
-		}
 		feed.Token = options.Catalog.Canonical(feed.Token)
-		feeds[address] = feed
+		for _, existing := range feeds[address] {
+			if existing.Token == feed.Token {
+				return nil, fmt.Errorf("market: duplicate feed %s for %s", address, feed.Token)
+			}
+		}
+		feeds[address] = append(feeds[address], feed)
 	}
 	return &Processor{
 		options:      options,
@@ -197,6 +206,7 @@ func (processor *Processor) Apply(ctx context.Context, block *streamv1.BlockEven
 		trade.ChainID, trade.BlockHeight, trade.BlockTime = output.ChainID, height, output.BlockTime
 		if quotePrice, ok := processor.priceOf(trade.QuoteToken); ok {
 			valueTrade(&trade, quotePrice.USD)
+			trade.Outlier = processor.outlier(trade)
 		}
 		output.Trades = append(output.Trades, trade)
 		processor.aggregate(height, trade, touchedCandles)
@@ -296,16 +306,18 @@ func (processor *Processor) setPool(height int64, id string, next pool, existed 
 // repricing.
 func (processor *Processor) applyOracle(height int64, block *streamv1.BlockEvent, touched map[string]struct{}) {
 	for _, update := range block.GetOracleUpdates() {
-		feed, ok := processor.feeds[normalize(update.GetFeed())]
-		if !ok {
+		feeds := processor.feeds[normalize(update.GetFeed())]
+		if len(feeds) == 0 {
 			continue
 		}
 		answer, err := decimal.NewFromString(update.GetAnswer())
 		if err != nil || !answer.IsPositive() {
 			continue
 		}
-		processor.oracle.set(height, feed.Token, answer.Shift(-int32(feed.Decimals)))
-		touched[feed.Token] = struct{}{}
+		for _, feed := range feeds {
+			processor.oracle.set(height, feed.Token, answer.Shift(-int32(feed.Decimals)))
+			touched[feed.Token] = struct{}{}
+		}
 	}
 }
 
@@ -562,6 +574,28 @@ func valueTrade(trade *storage.Trade, quoteUSD decimal.Decimal) {
 	trade.ValueUSD = trade.QuoteAmount.Mul(quoteUSD).Round(precision)
 }
 
+// outlier reports whether a priced swap's USD price strays further than
+// OutlierDeviation from its base token's reference price: the anchor or
+// oracle price, or the graph price set by the token's most liquid priced
+// pool. A swap in that pool is never an outlier, since its own reserves set
+// the reference; a thin pool trading far from it is, such as a manipulated
+// or mispriced pool.
+func (processor *Processor) outlier(trade storage.Trade) bool {
+	limit := processor.options.OutlierDeviation
+	if !limit.IsPositive() || (trade.Side != storage.SideBuy && trade.Side != storage.SideSell) || !trade.PriceUSD.IsPositive() {
+		return false
+	}
+	reference, ok := processor.priceOf(trade.BaseToken)
+	if !ok || !reference.USD.IsPositive() || (!reference.FromOracle && reference.Pool == trade.PoolID) {
+		return false
+	}
+	ratio := trade.PriceUSD.DivRound(reference.USD, precision)
+	if ratio.LessThan(decimal.NewFromInt(1)) {
+		ratio = decimal.NewFromInt(1).DivRound(ratio, precision)
+	}
+	return ratio.Sub(decimal.NewFromInt(1)).GreaterThan(limit)
+}
+
 // quoteLiquidityUSD is the USD value of the quote-side reserve of a trade's
 // pool, or zero when unknown.
 func (processor *Processor) quoteLiquidityUSD(trade storage.Trade) decimal.Decimal {
@@ -589,7 +623,9 @@ func reserveUSD(catalog Catalog, state pool, token string, usd decimal.Decimal) 
 }
 
 // candleSubjects returns the candles a priced swap joins: its pool's, and its
-// base token's when the quote reserve reaches CandleMinLiquidityUSD.
+// base token's when the quote reserve reaches CandleMinLiquidityUSD and the
+// swap is not an outlier. An outlier still joins its pool's candles, which
+// show that pool's own prices.
 func (processor *Processor) candleSubjects(trade storage.Trade, quoteLiquidity decimal.Decimal) []candleKey {
 	if trade.Side != storage.SideBuy && trade.Side != storage.SideSell {
 		return nil
@@ -598,7 +634,7 @@ func (processor *Processor) candleSubjects(trade storage.Trade, quoteLiquidity d
 		return nil
 	}
 	subjects := []candleKey{{Subject: storage.CandleSubjectPool, Key: trade.PoolID}}
-	if !quoteLiquidity.LessThan(processor.options.CandleMinLiquidityUSD) {
+	if !trade.Outlier && !quoteLiquidity.LessThan(processor.options.CandleMinLiquidityUSD) {
 		subjects = append(subjects, candleKey{
 			Subject: storage.CandleSubjectToken, Key: processor.options.Catalog.Canonical(trade.BaseToken),
 		})

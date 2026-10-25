@@ -93,7 +93,7 @@ func (store *Store) Trades(ctx context.Context, query storage.TradeQuery) ([]sto
 	statement := strings.Replace(`
 		SELECT block_height, block_time, transaction_hash, transaction_index, log_index, operation_index,
 			protocol, pool_id, trader, toString(side), base_token, quote_token,
-			base_amount, quote_amount, price_quote, price_usd, value_usd
+			base_amount, quote_amount, price_quote, price_usd, value_usd, outlier
 		FROM trades
 		WHERE chain_id = ? AND FILTER
 		ORDER BY block_height DESC, log_index DESC, operation_index DESC
@@ -110,7 +110,7 @@ func (store *Store) Trades(ctx context.Context, query storage.TradeQuery) ([]sto
 		var amounts [5]decimal.Decimal
 		if err := rows.Scan(&trade.BlockHeight, &trade.BlockTime, &trade.TransactionHash, &trade.TransactionIndex,
 			&trade.LogIndex, &trade.OperationIndex, &trade.Protocol, &trade.PoolID, &trade.Trader, &side,
-			&trade.BaseToken, &trade.QuoteToken, &amounts[0], &amounts[1], &amounts[2], &amounts[3], &amounts[4]); err != nil {
+			&trade.BaseToken, &trade.QuoteToken, &amounts[0], &amounts[1], &amounts[2], &amounts[3], &amounts[4], &trade.Outlier); err != nil {
 			return nil, fmt.Errorf("clickhouse store: scan trade: %w", err)
 		}
 		trade.BlockTime = trade.BlockTime.UTC()

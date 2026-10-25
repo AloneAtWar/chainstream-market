@@ -117,6 +117,10 @@ type Market struct {
 	// OracleDeviation is the largest relative gap between a feed-backed
 	// token's graph price and its oracle answer before the answer wins.
 	OracleDeviation float64 `yaml:"oracle_deviation"`
+	// OutlierDeviation is how far, as a ratio, a swap's USD price may stray
+	// from its base token's reference price, set by another pool, before
+	// the swap is left out of the token's candles; -1 turns filtering off.
+	OutlierDeviation float64 `yaml:"outlier_deviation"`
 	// LateTradeBlocks is how many blocks a trade whose token decimals are
 	// unknown waits for them before it is dropped; -1 drops it at once.
 	LateTradeBlocks int64 `yaml:"late_trade_blocks"`
@@ -178,17 +182,28 @@ type Chain struct {
 	// LiveTopic carries this chain's live updates when live.enabled is set;
 	// it defaults to the topic name with a "-live" suffix.
 	LiveTopic string `yaml:"live_topic"`
-	// Feeds are the Chainlink aggregators trusted on this chain. Use the
-	// aggregator behind each proxy, since it is the contract that emits
-	// AnswerUpdated.
+	// Feeds are the Chainlink USD feeds trusted on this chain.
 	Feeds []Feed `yaml:"feeds"`
 }
 
-// Feed maps a USD-denominated oracle aggregator to the token it prices.
+// Feed maps a USD-denominated Chainlink feed to a token it prices. Give
+// either Proxy or Address. A token priced by the same feed as another, such
+// as a second USDC, gets its own entry with the same proxy.
 type Feed struct {
-	Address  string `yaml:"address"`
-	Token    string `yaml:"token"`
-	Decimals uint8  `yaml:"decimals"`
+	// Proxy is the feed's proxy, the stable address Chainlink publishes.
+	// market-engine reads it over the chain's rpc_url at startup to trust
+	// the aggregator of every phase, since those emit AnswerUpdated.
+	Proxy string `yaml:"proxy"`
+	// Address is one aggregator, for setups without an rpc_url. It must be
+	// updated by hand when Chainlink moves the proxy to a new aggregator.
+	Address string `yaml:"address"`
+	Token   string `yaml:"token"`
+	// Decimals scale the answer. With Proxy it may be left out; when set it
+	// must match the proxy's decimals().
+	Decimals uint8 `yaml:"decimals"`
+	// Description, when set, must match the proxy's description(), such as
+	// "ETH / USD", so a mistyped proxy fails at startup.
+	Description string `yaml:"description"`
 }
 
 const (
@@ -209,6 +224,7 @@ const (
 	defaultMaxHops               = 3
 	defaultHistoryDepth          = 256
 	defaultOracleDeviation       = 0.02
+	defaultOutlierDeviation      = 0.5
 	defaultLateTradeBlocks       = 7200
 	defaultLateTradesPerToken    = 1000
 
@@ -285,6 +301,9 @@ func (config *Config) applyDefaults() {
 	}
 	if config.Market.OracleDeviation == 0 {
 		config.Market.OracleDeviation = defaultOracleDeviation
+	}
+	if config.Market.OutlierDeviation == 0 {
+		config.Market.OutlierDeviation = defaultOutlierDeviation
 	}
 	if config.Market.LateTradeBlocks == 0 {
 		config.Market.LateTradeBlocks = defaultLateTradeBlocks
@@ -381,6 +400,9 @@ func (config *Config) Validate() error {
 	if config.Market.OracleDeviation < 0 {
 		return errors.New("conf: market.oracle_deviation must not be negative")
 	}
+	if config.Market.OutlierDeviation < 0 && config.Market.OutlierDeviation != -1 {
+		return errors.New("conf: market.outlier_deviation must be positive or -1")
+	}
 	if config.Market.HistoryDepth < 0 {
 		return errors.New("conf: market.history_depth must be positive")
 	}
@@ -449,19 +471,38 @@ func (config *Config) Validate() error {
 			return fmt.Errorf("conf: duplicate topic %q", chain.Topic)
 		}
 		names[chain.Name], ids[chain.ChainID], topics[chain.Topic] = struct{}{}, struct{}{}, struct{}{}
-		feeds := make(map[string]struct{}, len(chain.Feeds))
-		for feedIndex, feed := range chain.Feeds {
-			address := strings.ToLower(strings.TrimSpace(feed.Address))
-			if address == "" || strings.TrimSpace(feed.Token) == "" || feed.Decimals > 36 {
-				return fmt.Errorf("conf: chains[%d].feeds[%d] needs address, token and decimals <= 36", index, feedIndex)
-			}
-			if _, ok := feeds[address]; ok {
-				return fmt.Errorf("conf: chain %s has duplicate feed %s", chain.Name, address)
-			}
-			feeds[address] = struct{}{}
+		if err := validateFeeds(index, chain); err != nil {
+			return err
 		}
 	}
 	return config.validateLiveTopics()
+}
+
+// validateFeeds checks that each feed names one proxy or aggregator and a
+// token, and that no feed prices the same token twice.
+func validateFeeds(index int, chain Chain) error {
+	type pair struct{ feed, token string }
+	seen := make(map[pair]struct{}, len(chain.Feeds))
+	for feedIndex, feed := range chain.Feeds {
+		proxy := strings.ToLower(strings.TrimSpace(feed.Proxy))
+		address := strings.ToLower(strings.TrimSpace(feed.Address))
+		token := strings.ToLower(strings.TrimSpace(feed.Token))
+		if (proxy == "") == (address == "") {
+			return fmt.Errorf("conf: chains[%d].feeds[%d] needs exactly one of proxy and address", index, feedIndex)
+		}
+		if token == "" || feed.Decimals > 36 {
+			return fmt.Errorf("conf: chains[%d].feeds[%d] needs a token and decimals <= 36", index, feedIndex)
+		}
+		if proxy != "" && strings.TrimSpace(chain.RPCURL) == "" {
+			return fmt.Errorf("conf: chain %s needs an rpc_url to read feed proxy %s", chain.Name, proxy)
+		}
+		key := pair{feed: proxy + address, token: token}
+		if _, ok := seen[key]; ok {
+			return fmt.Errorf("conf: chain %s has duplicate feed %s for %s", chain.Name, key.feed, token)
+		}
+		seen[key] = struct{}{}
+	}
+	return nil
 }
 
 // validateLiveTopics checks that no live topic collides with another chain's

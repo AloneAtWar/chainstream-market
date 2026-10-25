@@ -11,7 +11,9 @@ import (
 func TestStoreReadsLatestValues(t *testing.T) {
 	ctx := context.Background()
 	store, _ := openTestStore(t)
-	for _, block := range []storage.BlockOutput{testOutput(100, "0.03"), testOutput(101, "0.06")} {
+	outlier := testOutput(101, "0.06")
+	outlier.Trades[0].Outlier = true
+	for _, block := range []storage.BlockOutput{testOutput(100, "0.03"), outlier} {
 		if err := store.WriteBlock(ctx, block); err != nil {
 			t.Fatalf("WriteBlock(%d) error = %v", block.Height, err)
 		}
@@ -46,7 +48,7 @@ func TestStoreReadsLatestValues(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Trades() error = %v", err)
 	}
-	if len(trades) != 2 || trades[0].BlockHeight != 101 || trades[0].Side != storage.SideBuy {
+	if len(trades) != 2 || trades[0].BlockHeight != 101 || trades[0].Side != storage.SideBuy || !trades[0].Outlier || trades[1].Outlier {
 		t.Fatalf("trades = %+v", trades)
 	}
 	paged, err := store.Trades(ctx, storage.TradeQuery{ChainID: 1, PoolID: "0xpool", BeforeHeight: 101, Limit: 10})

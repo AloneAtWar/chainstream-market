@@ -46,7 +46,7 @@ The engine only orders records; a `Handler` does the work. market-engine's handl
 | Table | Rows |
 | --- | --- |
 | `blocks` | One per applied block. It is written last, so it marks the height as complete. |
-| `trades` | Oriented trades with USD values. |
+| `trades` | Oriented trades with USD values, and `outlier` for swaps left out of token candles. |
 | `token_prices` | Each token price emitted by a block. |
 | `candles` | One version per block that changed a bucket. Read the current bucket with `argMax(col, update_height)` or `LIMIT 1 BY`. |
 
@@ -252,10 +252,33 @@ Each block goes through `internal/market` in three steps:
 3. **Trades and candles.**
    - Each pool's quote token comes from catalog rank first, then from the priced token with fewer hops. Once a pair has a known quote, its orientation stays fixed. Pairs with no known quote stay provisional.
    - Trades are valued at the block's closing quote price.
-   - Swaps feed pool candles. They also feed the base token's aggregated candles when the pool's quote reserve reaches `candle_min_liquidity_usd`.
+   - Swaps feed pool candles. They also feed the base token's aggregated candles when the pool's quote reserve reaches `candle_min_liquidity_usd` and the swap is not an outlier (see [Outlier swaps](#outlier-swaps)).
    - A new candle opens at the previous candle's close.
 
-Oracle answers come from `oracle_updates` (Chainlink `AnswerUpdated` logs) whose feed address is listed under `chains[].feeds`. A feed can also cover a non-anchor token, such as native ETH or WBTC. That token keeps its per-block graph price while the price stays within `oracle_deviation` of the latest answer; beyond that, or when the graph has no price, the oracle answer is used instead. The default config lists no feeds. Add each aggregator address, which `proxy.aggregator()` returns, to turn this on.
+### Chainlink feeds
+
+Oracle answers come from `oracle_updates` (Chainlink `AnswerUpdated` logs) emitted by an aggregator of a feed listed under `chains[].feeds`. A feed can also cover a non-anchor token, such as native ETH or WBTC. That token keeps its per-block graph price while the price stays within `oracle_deviation` of the latest answer; beyond that, or when the graph has no price, the oracle answer is used instead.
+
+The default config lists the USD feeds for every catalog anchor and reference asset on ETH, BSC and Base: the stablecoins, the wrapped native coin, BTC and ETH. Each entry names the feed's **proxy**, the address Chainlink publishes and never changes. `AnswerUpdated` comes from the aggregator behind the proxy, which Chainlink replaces from time to time, so at startup market-engine reads every proxy over the chain's `rpc_url`:
+
+- `decimals()` scales the answers; a `decimals` set in the config must match it.
+- `description()`, such as `ETH / USD`, must match the entry's `description` when one is set, so a mistyped proxy stops the engine instead of trusting the wrong feed.
+- `phaseAggregators(1..phaseId())` and `aggregator()` list the aggregator of every phase. All of them are trusted, so replaying old blocks still picks up the answers of the aggregator that was current then.
+
+The engine needs a restart to pick up an aggregator Chainlink switches to while it runs. Without an `rpc_url`, list an aggregator directly as `{address, token, decimals}` and keep it current by hand. One feed may price several tokens, with one entry each: Base's USDC/USD feed prices both USDC and bridged USDbC.
+
+### Outlier swaps
+
+A thin or manipulated pool can print a swap far from a token's real price. Such a swap is still stored and served, but it would distort the token's aggregated candles and 24h volume, so market-engine marks it `outlier` and leaves it out of them. A priced buy or sell is an outlier when its USD price is more than `outlier_deviation` (default 0.5) away from its base token's reference price, as a ratio either way: with 0.5, prices between 1/1.5 and 1.5 times the reference pass.
+
+- The reference is the token's price at the block's close: the anchor's oracle answer or peg, an oracle answer that overrode the graph, or the graph price from the token's most liquid priced pool.
+- A swap in the pool that sets the reference is never an outlier, since that pool's reserves are the reference. A token with no price yet has no reference, so its swaps all pass.
+- Outliers still join their own pool's candles, which show that pool's prices.
+- `trades.outlier`, the REST trade field `outlier` and live trades carry the mark.
+- The mark only depends on journaled state at the swap's block, so a reorg that replaces the block recomputes it against the new fork's prices.
+- Held late trades are replayed unmarked: they usually wait on their base token's decimals, so the token had no reference price at their block.
+
+Set `outlier_deviation: -1` to turn the filter off.
 
 ### Late token metadata
 
