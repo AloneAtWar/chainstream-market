@@ -40,6 +40,11 @@ market:
   # A feed-backed token falls back to its oracle answer when the graph price
   # deviates by more than this fraction.
   oracle_deviation: 0.02
+  # A swap whose USD price strays from its base token's reference price (set
+  # by an anchor, an oracle answer or the token's most liquid pool) by more
+  # than this ratio is marked outlier and left out of the token's candles;
+  # 0.5 keeps swaps between 1/1.5x and 1.5x of the reference. -1 disables.
+  outlier_deviation: 0.5
   # A trade whose token decimals are unknown is held this many blocks and
   # replayed, with its candles, once the decimals arrive; -1 drops it.
   late_trade_blocks: 7200
@@ -107,21 +112,52 @@ live:
   allowed_origins: []
 
 # One chainstream-evm topic per chain, each consumed in order by its own engine.
-# feeds lists trusted Chainlink USD aggregators (the contract behind each proxy,
-# found with proxy.aggregator()); any other AnswerUpdated log is ignored.
-# Example:
-#   feeds:
-#     - {address: "0x<ETH/USD aggregator>", token: "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee", decimals: 8}
+#
+# feeds are the Chainlink USD feeds trusted on each chain. Each names the
+# feed's proxy; at startup market-engine reads it over the chain's rpc_url
+# (so rpc_url must answer eth_call) for its decimals and the aggregator of
+# every phase, which are the contracts that emit AnswerUpdated, and fails if
+# description does not match. Restart after Chainlink moves a feed to a new
+# aggregator. Without an rpc_url, list an aggregator as {address, token,
+# decimals} instead and keep it current by hand. A feed may price several
+# tokens, one entry each, such as USDC and bridged USDbC on Base.
+# The proxies were taken from the Venus, Compound and Moonwell deployment
+# configs where they list them; the description check catches a wrong one.
 chains:
   - name: eth
     chain_id: 1
     topic: chainstream-eth
-    rpc_url: http://127.0.0.1:8545  # eth node for holder-indexer
+    rpc_url: http://127.0.0.1:8545  # eth node for holder-indexer and feed proxies
+    feeds:
+      - {proxy: "0x3E7d1eAB13ad0104d2750B8863b489D65364e32D", token: "0xdac17f958d2ee523a2206206994597c13d831ec7", description: "USDT / USD"}  # USDT
+      - {proxy: "0x8fFfFfd4AfB6115b954Bd326cbe7B4BA576818f6", token: "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48", description: "USDC / USD"}  # USDC
+      - {proxy: "0xfF30586cD0F29eD462364C7e81375FC0C71219b1", token: "0xdc035d45d973e3ec169d2276ddab16f1e407384f", description: "USDS / USD"}  # USDS
+      - {proxy: "0xa569d910839Ae8865Da8F8e70FfFb0cBA869F961", token: "0x4c9edd5852cd905f086c759e8383e09bff1e68b3", description: "USDe / USD"}  # USDe
+      - {proxy: "0xAed0c38402a5d19df6E4c03F4E2DceD6e29c1ee9", token: "0x6b175474e89094c44da98b954eedeac495271d0f", description: "DAI / USD"}   # DAI
+      - {proxy: "0x5f4eC3Df9cbd43714FE2740f5E3616155c5b8419", token: "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2", description: "ETH / USD"}   # WETH
+      - {proxy: "0xF4030086522a5bEEa4988F8cA5B36dbC97BeE88c", token: "0x2260fac5e5542a773aa44fbcfedf7c193bc2c599", description: "BTC / USD"}   # WBTC
   - name: bsc
     chain_id: 56
     topic: chainstream-bsc
-    rpc_url: http://127.0.0.1:8545  # bsc node for holder-indexer
+    rpc_url: http://127.0.0.1:8545  # bsc node for holder-indexer and feed proxies
+    feeds:
+      - {proxy: "0xB97Ad0E74fa7d920791E90258A6E2085088b4320", token: "0x55d398326f99059ff775485246999027b3197955", description: "USDT / USD"}  # USDT
+      - {proxy: "0x51597f405303C4377E36123cBc172b13269EA163", token: "0x8ac76a51cc950d9822d68b83fe1ad97b32cd580d", description: "USDC / USD"}  # USDC
+      - {proxy: "0xaD8b4e59A7f25B68945fAf0f3a3EAF027832FFB0", token: "0x8d0d000ee44948fc98c9b98a4fa4921476f08b0d"}                            # USD1
+      - {proxy: "0xcBb98864Ef56E9042e7d2efef76141f15731B82f", token: "0xe9e7cea3dedca5984780bafc599bd69add087d56", description: "BUSD / USD"}  # BUSD
+      - {proxy: "0x132d3C0B1D2cEa0BC552588063bdBb210FDeecfA", token: "0x1af3f329e8be154074d8769d1ffa4ee058b1dbc3", description: "DAI / USD"}   # DAI
+      - {proxy: "0x390180e80058A8499930F0c13963AD3E0d86Bfc9", token: "0xc5f0f7b66764f6ec8c8dff7ba683102295e16409"}                            # FDUSD
+      - {proxy: "0x0567F2323251f0Aab15c8dFb1967E4e8A7D42aeE", token: "0xbb4cdb9cbd36b01bd1cbaebf2de08d9173bc095c", description: "BNB / USD"}   # WBNB
+      - {proxy: "0x264990fbd0A4796A3E3d8E37C4d5F87a3aCa5Ebf", token: "0x7130d2a12b9bcbfae4f2634d864a1ee1ce3ead9c", description: "BTC / USD"}   # BTCB
+      - {proxy: "0x9ef1B8c0E4F7dc8bF5719Ea496883DC6401d5b2e", token: "0x2170ed0880ac9a755fd29b2688956bd959f933f8", description: "ETH / USD"}   # ETH
   - name: base
     chain_id: 8453
     topic: chainstream-base
-    rpc_url: http://127.0.0.1:8545  # base node for holder-indexer
+    rpc_url: http://127.0.0.1:8545  # base node for holder-indexer and feed proxies
+    feeds:
+      - {proxy: "0x7e860098F58bBFC8648a4311b374B1D669a2bc6B", token: "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913", description: "USDC / USD"}  # USDC
+      - {proxy: "0x7e860098F58bBFC8648a4311b374B1D669a2bc6B", token: "0xd9aaec86b65d86f6a7b5b1b0c42ffa531710b6ca", description: "USDC / USD"}  # USDbC
+      - {proxy: "0xf19d560eB8d2ADf07BD6D13ed03e1D11215721F9", token: "0xfde4c96c8593536e31f229ea8f37b2ada2699bb2", description: "USDT / USD"}  # USDT
+      - {proxy: "0x591e79239a7d679378eC8c847e5038150364C78F", token: "0x50c5725949a6f0c72e6c4a641f24049a917db0cb", description: "DAI / USD"}   # DAI
+      - {proxy: "0x71041dddad3595F9CEd3DcCFBe3D1F4b0a16Bb70", token: "0x4200000000000000000000000000000000000006", description: "ETH / USD"}   # WETH
+      - {proxy: "0x07DA0E54543a844a80ABE69c8A12F22B3aA59f9D", token: "0xcbb7c0000ab88b473b1f5afd9ef808440eed33bf"}                            # cbBTC

@@ -36,7 +36,8 @@ var schema = []string{
 		price_usd         Decimal256(36),
 		value_usd         Decimal256(36),
 		finalized         Bool,
-		revision_height   Int64
+		revision_height   Int64,
+		outlier           Bool
 	) ENGINE = MergeTree
 	PARTITION BY toYYYYMM(block_time)
 	ORDER BY (chain_id, block_height, log_index, operation_index)`,
@@ -44,6 +45,9 @@ var schema = []string{
 	// revision_height is the block that wrote the row: block_height, or the
 	// later block that replayed a trade held for its token's decimals.
 	`ALTER TABLE trades ADD COLUMN IF NOT EXISTS revision_height Int64 DEFAULT block_height`,
+	// outlier marks a swap priced too far from its base token's reference
+	// price, which market-engine left out of the token's candles.
+	`ALTER TABLE trades ADD COLUMN IF NOT EXISTS outlier Bool DEFAULT false`,
 
 	// The API reads trades by base token or pool; skip indexes let it avoid
 	// scanning every granule of a height-ordered table.

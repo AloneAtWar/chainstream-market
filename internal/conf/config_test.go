@@ -50,29 +50,32 @@ chains:
 
 func TestParseRejectsInvalidConfig(t *testing.T) {
 	tests := map[string]string{
-		"no brokers":         "chains: [{name: eth, chain_id: 1, topic: a}]",
-		"empty broker":       "kafka: {brokers: ['']}\nchains: [{name: eth, chain_id: 1, topic: a}]",
-		"no chains":          "kafka: {brokers: [b]}",
-		"missing topic":      "kafka: {brokers: [b]}\nchains: [{name: eth, chain_id: 1}]",
-		"duplicate id":       "kafka: {brokers: [b]}\nchains: [{name: eth, chain_id: 1, topic: a}, {name: base, chain_id: 1, topic: b}]",
-		"duplicate name":     "kafka: {brokers: [b]}\nchains: [{name: eth, chain_id: 1, topic: a}, {name: eth, chain_id: 2, topic: b}]",
-		"duplicate topic":    "kafka: {brokers: [b]}\nchains: [{name: eth, chain_id: 1, topic: a}, {name: base, chain_id: 2, topic: a}]",
-		"bad interval":       "kafka: {brokers: [b]}\nmarket: {intervals: [1500ms]}\nchains: [{name: eth, chain_id: 1, topic: a}]",
-		"negative liq":       "kafka: {brokers: [b]}\nmarket: {min_liquidity_usd: -1}\nchains: [{name: eth, chain_id: 1, topic: a}]",
-		"feed no token":      "kafka: {brokers: [b]}\nchains: [{name: eth, chain_id: 1, topic: a, feeds: [{address: f, decimals: 8}]}]",
-		"duplicate feed":     "kafka: {brokers: [b]}\nchains: [{name: eth, chain_id: 1, topic: a, feeds: [{address: f, token: t}, {address: F, token: u}]}]",
-		"clickhouse no addr": "kafka: {brokers: [b]}\nstorage: {driver: clickhouse}\nchains: [{name: eth, chain_id: 1, topic: a}]",
-		"unknown driver":     "kafka: {brokers: [b]}\nstorage: {driver: postgres}\nchains: [{name: eth, chain_id: 1, topic: a}]",
-		"postgres no dsn":    "kafka: {brokers: [b]}\nstate: {driver: postgres}\nchains: [{name: eth, chain_id: 1, topic: a}]",
-		"unknown state":      "kafka: {brokers: [b]}\nstate: {driver: redis}\nchains: [{name: eth, chain_id: 1, topic: a}]",
-		"negative holders":   "kafka: {brokers: [b]}\nholders: {rpc_batch_size: -1}\nchains: [{name: eth, chain_id: 1, topic: a}]",
-		"negative registry":  "kafka: {brokers: [b]}\nregistry: {history_depth: -1}\nchains: [{name: eth, chain_id: 1, topic: a}]",
-		"negative rankings":  "kafka: {brokers: [b]}\nrankings: {refresh_interval: -1s}\nchains: [{name: eth, chain_id: 1, topic: a}]",
-		"unknown candle":     "kafka: {brokers: [b]}\nrankings: {candle_interval: 2m}\nchains: [{name: eth, chain_id: 1, topic: a}]",
-		"negative ch_loader": "kafka: {brokers: [b]}\nch_loader: {flush_rows: -1}\nchains: [{name: eth, chain_id: 1, topic: a}]",
-		"negative live":      "kafka: {brokers: [b]}\nlive: {client_buffer: -1}\nchains: [{name: eth, chain_id: 1, topic: a}]",
-		"live topic reused":  "kafka: {brokers: [b]}\nlive: {enabled: true}\nchains: [{name: eth, chain_id: 1, topic: a, live_topic: b}, {name: base, chain_id: 2, topic: b}]",
-		"live topic twice":   "kafka: {brokers: [b]}\nlive: {enabled: true}\nchains: [{name: eth, chain_id: 1, topic: a, live_topic: l}, {name: base, chain_id: 2, topic: b, live_topic: l}]",
+		"no brokers":             "chains: [{name: eth, chain_id: 1, topic: a}]",
+		"empty broker":           "kafka: {brokers: ['']}\nchains: [{name: eth, chain_id: 1, topic: a}]",
+		"no chains":              "kafka: {brokers: [b]}",
+		"missing topic":          "kafka: {brokers: [b]}\nchains: [{name: eth, chain_id: 1}]",
+		"duplicate id":           "kafka: {brokers: [b]}\nchains: [{name: eth, chain_id: 1, topic: a}, {name: base, chain_id: 1, topic: b}]",
+		"duplicate name":         "kafka: {brokers: [b]}\nchains: [{name: eth, chain_id: 1, topic: a}, {name: eth, chain_id: 2, topic: b}]",
+		"duplicate topic":        "kafka: {brokers: [b]}\nchains: [{name: eth, chain_id: 1, topic: a}, {name: base, chain_id: 2, topic: a}]",
+		"bad interval":           "kafka: {brokers: [b]}\nmarket: {intervals: [1500ms]}\nchains: [{name: eth, chain_id: 1, topic: a}]",
+		"negative liq":           "kafka: {brokers: [b]}\nmarket: {min_liquidity_usd: -1}\nchains: [{name: eth, chain_id: 1, topic: a}]",
+		"feed no token":          "kafka: {brokers: [b]}\nchains: [{name: eth, chain_id: 1, topic: a, feeds: [{address: f, decimals: 8}]}]",
+		"duplicate feed":         "kafka: {brokers: [b]}\nchains: [{name: eth, chain_id: 1, topic: a, feeds: [{address: f, token: t}, {address: F, token: T}]}]",
+		"feed proxy and address": "kafka: {brokers: [b]}\nchains: [{name: eth, chain_id: 1, topic: a, rpc_url: r, feeds: [{proxy: p, address: f, token: t}]}]",
+		"feed proxy no rpc":      "kafka: {brokers: [b]}\nchains: [{name: eth, chain_id: 1, topic: a, feeds: [{proxy: p, token: t}]}]",
+		"negative outlier":       "kafka: {brokers: [b]}\nmarket: {outlier_deviation: -0.5}\nchains: [{name: eth, chain_id: 1, topic: a}]",
+		"clickhouse no addr":     "kafka: {brokers: [b]}\nstorage: {driver: clickhouse}\nchains: [{name: eth, chain_id: 1, topic: a}]",
+		"unknown driver":         "kafka: {brokers: [b]}\nstorage: {driver: postgres}\nchains: [{name: eth, chain_id: 1, topic: a}]",
+		"postgres no dsn":        "kafka: {brokers: [b]}\nstate: {driver: postgres}\nchains: [{name: eth, chain_id: 1, topic: a}]",
+		"unknown state":          "kafka: {brokers: [b]}\nstate: {driver: redis}\nchains: [{name: eth, chain_id: 1, topic: a}]",
+		"negative holders":       "kafka: {brokers: [b]}\nholders: {rpc_batch_size: -1}\nchains: [{name: eth, chain_id: 1, topic: a}]",
+		"negative registry":      "kafka: {brokers: [b]}\nregistry: {history_depth: -1}\nchains: [{name: eth, chain_id: 1, topic: a}]",
+		"negative rankings":      "kafka: {brokers: [b]}\nrankings: {refresh_interval: -1s}\nchains: [{name: eth, chain_id: 1, topic: a}]",
+		"unknown candle":         "kafka: {brokers: [b]}\nrankings: {candle_interval: 2m}\nchains: [{name: eth, chain_id: 1, topic: a}]",
+		"negative ch_loader":     "kafka: {brokers: [b]}\nch_loader: {flush_rows: -1}\nchains: [{name: eth, chain_id: 1, topic: a}]",
+		"negative live":          "kafka: {brokers: [b]}\nlive: {client_buffer: -1}\nchains: [{name: eth, chain_id: 1, topic: a}]",
+		"live topic reused":      "kafka: {brokers: [b]}\nlive: {enabled: true}\nchains: [{name: eth, chain_id: 1, topic: a, live_topic: b}, {name: base, chain_id: 2, topic: b}]",
+		"live topic twice":       "kafka: {brokers: [b]}\nlive: {enabled: true}\nchains: [{name: eth, chain_id: 1, topic: a, live_topic: l}, {name: base, chain_id: 2, topic: b, live_topic: l}]",
 	}
 	for name, raw := range tests {
 		t.Run(name, func(t *testing.T) {
@@ -121,18 +124,24 @@ chains:
   - name: eth
     chain_id: 1
     topic: a
+    rpc_url: http://node
     feeds:
       - {address: "0xfeed", token: "0xtoken", decimals: 8}
+      - {proxy: "0xproxy", token: "0xtoken", description: "ETH / USD"}
+      - {proxy: "0xproxy", token: "0xother"}
 `))
 	if err != nil {
 		t.Fatalf("Parse() error = %v", err)
 	}
 	feeds := config.Chains[0].Feeds
-	if len(feeds) != 1 || feeds[0].Address != "0xfeed" || feeds[0].Token != "0xtoken" || feeds[0].Decimals != 8 {
+	if len(feeds) != 3 || feeds[1].Proxy != "0xproxy" || feeds[1].Description != "ETH / USD" || feeds[2].Token != "0xother" {
 		t.Fatalf("feeds = %+v", feeds)
 	}
-	if config.Market.OracleDeviation != defaultOracleDeviation {
-		t.Fatalf("oracle deviation = %v", config.Market.OracleDeviation)
+	if feeds[0].Address != "0xfeed" || feeds[0].Token != "0xtoken" || feeds[0].Decimals != 8 {
+		t.Fatalf("feeds = %+v", feeds)
+	}
+	if config.Market.OracleDeviation != defaultOracleDeviation || config.Market.OutlierDeviation != defaultOutlierDeviation {
+		t.Fatalf("deviations = %v, %v", config.Market.OracleDeviation, config.Market.OutlierDeviation)
 	}
 }
 

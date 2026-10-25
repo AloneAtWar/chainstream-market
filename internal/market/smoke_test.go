@@ -15,6 +15,7 @@ import (
 	"github.com/AloneAtWar/chainstream-market/internal/storage/chstore"
 	"github.com/AloneAtWar/chainstream-market/internal/storage/pgstore"
 	streamv1 "github.com/AloneAtWar/chainstream-market/proto/stream/v1"
+	"github.com/shopspring/decimal"
 	"github.com/twmb/franz-go/pkg/kfake"
 	"github.com/twmb/franz-go/pkg/kgo"
 	"google.golang.org/protobuf/proto"
@@ -43,6 +44,8 @@ type marketSmoke struct {
 	output   *chstore.Store
 	state    *countingState
 	offset   int64
+	// processor builds the engine's processor on every run.
+	processor func(t *testing.T) *Processor
 }
 
 func newMarketSmoke(t *testing.T) *marketSmoke {
@@ -92,6 +95,7 @@ func newMarketSmoke(t *testing.T) *marketSmoke {
 	return &marketSmoke{
 		t: t, cluster: cluster, producer: producer, output: output,
 		state: &countingState{StateStore: state}, offset: -1,
+		processor: func(t *testing.T) *Processor { return newLateProcessor(t, 100, 100) },
 	}
 }
 
@@ -113,7 +117,7 @@ func (s *marketSmoke) produce(records ...*streamv1.StreamRecord) {
 // last produced record is committed.
 func (s *marketSmoke) run() {
 	s.t.Helper()
-	processor := newLateProcessor(s.t, 100, 100)
+	processor := s.processor(s.t)
 	kafka := source.KafkaOptions{
 		Brokers: s.cluster.ListenAddrs(), Topic: smokeTopic, FetchMaxBytes: 1 << 20, FetchMaxWait: 50 * time.Millisecond,
 	}
@@ -162,8 +166,14 @@ func (s *marketSmoke) memeTrades() string {
 
 func (s *marketSmoke) memeCandleTrades() uint32 {
 	s.t.Helper()
+	return s.candleTrades(meme)
+}
+
+// candleTrades sums the trades in token's 5m candles.
+func (s *marketSmoke) candleTrades(token string) uint32 {
+	s.t.Helper()
 	candles, err := s.output.Candles(context.Background(), storage.CandleQuery{
-		ChainID: 1, Subject: storage.CandleSubjectToken, Key: meme, Interval: 5 * time.Minute,
+		ChainID: 1, Subject: storage.CandleSubjectToken, Key: token, Interval: 5 * time.Minute,
 		From: time.Unix(0, 0), To: time.Unix(startTime+3600, 0), Limit: 100,
 	})
 	if err != nil {
@@ -233,4 +243,67 @@ func TestSmokeLateTradesThroughKafka(t *testing.T) {
 	if got := s.memeCandleTrades(); got != 3 {
 		t.Fatalf("after fork candle trades = %d, want 3", got)
 	}
+}
+
+// TestSmokeOutliersThroughKafka runs market-engine over a kfake topic into
+// real ClickHouse and PostgreSQL: a thin pool's swap at twice WETH's price
+// is stored marked outlier and kept out of WETH's candles, then a reorg to a
+// fork where WETH's price moved there unmarks it, across restarts.
+func TestSmokeOutliersThroughKafka(t *testing.T) {
+	s := newMarketSmoke(t)
+	s.processor = func(t *testing.T) *Processor {
+		t.Helper()
+		processor, err := NewProcessor(Options{
+			Catalog: DefaultCatalog(1), MinLiquidityUSD: decimal.NewFromInt(1000),
+			CandleMinLiquidityUSD: decimal.NewFromInt(10000), MaxHops: 3,
+			Intervals: []time.Duration{5 * time.Minute}, HistoryDepth: 16,
+			Feeds:            []Feed{{Address: ethFeed, Token: NativeAddress, Decimals: 8}},
+			OracleDeviation:  decimal.RequireFromString("0.02"),
+			OutlierDeviation: decimal.RequireFromString("0.5"),
+		})
+		if err != nil {
+			t.Fatalf("NewProcessor() error = %v", err)
+		}
+		return processor
+	}
+	first := smokeRecord(100, "0xa100", "0xa099", false, wethSwap(), thinSwap(6000))
+	first.GetBlock().OracleUpdates = []*streamv1.OracleUpdate{oracleUpdate(ethFeed, "300000000000")}
+	s.produce(first)
+	s.run()
+	if got := s.wethTrades(); got != "0xpool-weth-usdc-thin:6000:true 0xpool-weth-usdc:3000:false" {
+		t.Fatalf("trades = %s", got)
+	}
+	if got := s.candleTrades(weth); got != 1 {
+		t.Fatalf("WETH candle trades = %d, want 1", got)
+	}
+
+	moved := swap(wethUSDC,
+		leg{weth, "-1000000000000000000", "1000000000000000000000", 18},
+		leg{usdc, "6000000000", "6000000000000", 6},
+	)
+	s.produce(
+		&streamv1.StreamRecord{Payload: &streamv1.StreamRecord_Revert{Revert: &streamv1.BlockRevert{ChainId: 1, RollbackTo: 99}}},
+		smokeRecord(100, "0xb100", "0xa099", false, moved, thinSwap(6000)),
+	)
+	s.run()
+	if got := s.wethTrades(); got != "0xpool-weth-usdc-thin:6000:false 0xpool-weth-usdc:6000:false" {
+		t.Fatalf("after reorg trades = %s", got)
+	}
+	if got := s.candleTrades(weth); got != 2 {
+		t.Fatalf("after reorg WETH candle trades = %d, want 2", got)
+	}
+}
+
+// wethTrades lists WETH trades newest first as pool:price:outlier.
+func (s *marketSmoke) wethTrades() string {
+	s.t.Helper()
+	trades, err := s.output.Trades(context.Background(), storage.TradeQuery{ChainID: 1, BaseToken: weth, Limit: 100})
+	if err != nil {
+		s.t.Fatalf("Trades() error = %v", err)
+	}
+	keys := make([]string, len(trades))
+	for index, trade := range trades {
+		keys[index] = fmt.Sprintf("%s:%s:%t", trade.PoolID, trade.PriceUSD, trade.Outlier)
+	}
+	return strings.Join(keys, " ")
 }

@@ -5,6 +5,7 @@ package rpc
 import (
 	"bytes"
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -190,4 +191,67 @@ func truncate(raw []byte) string {
 		return string(raw[:200]) + "..."
 	}
 	return string(raw)
+}
+
+// Call is one eth_call: data sent to the contract at To.
+type Call struct {
+	To   string
+	Data string
+}
+
+// CallLatest runs calls against the latest block and returns each call's
+// return data. A nil result means the call itself failed on-chain: it
+// reverted, or the address has no code. Any other failure is an error.
+func (client *Client) CallLatest(ctx context.Context, calls []Call) ([][]byte, error) {
+	results := make([][]byte, len(calls))
+	for start := 0; start < len(calls); start += client.batchSize {
+		end := min(start+client.batchSize, len(calls))
+		if err := client.callBatch(ctx, calls[start:end], results[start:end]); err != nil {
+			return nil, err
+		}
+	}
+	return results, nil
+}
+
+func (client *Client) callBatch(ctx context.Context, calls []Call, out [][]byte) error {
+	requests := make([]request, len(calls))
+	for index, call := range calls {
+		target := map[string]string{"to": call.To, "data": call.Data}
+		requests[index] = request{JSONRPC: "2.0", ID: index, Method: "eth_call", Params: []any{target, "latest"}}
+	}
+	responses, err := client.post(ctx, requests)
+	if err != nil {
+		return err
+	}
+	seen := make([]bool, len(calls))
+	for _, reply := range responses {
+		if reply.ID < 0 || reply.ID >= len(calls) || seen[reply.ID] {
+			return fmt.Errorf("rpc: unexpected response id %d", reply.ID)
+		}
+		seen[reply.ID] = true
+		if reply.Error != nil {
+			if reply.Error.reverted() {
+				continue
+			}
+			return fmt.Errorf("rpc: call %s: %w", calls[reply.ID].To, reply.Error)
+		}
+		var data string
+		if err := json.Unmarshal(reply.Result, &data); err != nil {
+			return fmt.Errorf("rpc: call %s: %w", calls[reply.ID].To, err)
+		}
+		raw, err := hex.DecodeString(strings.TrimPrefix(data, "0x"))
+		if err != nil {
+			return fmt.Errorf("rpc: call %s: %w", calls[reply.ID].To, err)
+		}
+		// An address without code answers with empty data.
+		if len(raw) > 0 {
+			out[reply.ID] = raw
+		}
+	}
+	for index, ok := range seen {
+		if !ok {
+			return fmt.Errorf("rpc: no response for call %d", index)
+		}
+	}
+	return nil
 }

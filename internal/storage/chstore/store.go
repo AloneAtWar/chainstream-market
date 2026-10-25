@@ -194,7 +194,7 @@ func (store *Store) insertTrades(ctx context.Context, block storage.BlockOutput)
 				trade.ChainID, trade.BlockHeight, trade.BlockTime, trade.TransactionHash, trade.TransactionIndex,
 				trade.LogIndex, trade.OperationIndex, trade.Protocol, trade.PoolID, trade.Trader,
 				trade.Side.String(), trade.BaseToken, trade.QuoteToken, trade.BaseAmount, trade.QuoteAmount,
-				trade.PriceQuote, trade.PriceUSD, trade.ValueUSD, block.Finalized, block.Height,
+				trade.PriceQuote, trade.PriceUSD, trade.ValueUSD, block.Finalized, block.Height, trade.Outlier,
 			); err != nil {
 				return err
 			}

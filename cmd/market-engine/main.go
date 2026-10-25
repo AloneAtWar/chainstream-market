@@ -10,13 +10,16 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"strings"
 	"sync"
 	"syscall"
 
+	"github.com/AloneAtWar/chainstream-market/internal/chainlink"
 	"github.com/AloneAtWar/chainstream-market/internal/conf"
 	"github.com/AloneAtWar/chainstream-market/internal/engine"
 	"github.com/AloneAtWar/chainstream-market/internal/live"
 	"github.com/AloneAtWar/chainstream-market/internal/market"
+	"github.com/AloneAtWar/chainstream-market/internal/rpc"
 	"github.com/AloneAtWar/chainstream-market/internal/source"
 	"github.com/AloneAtWar/chainstream-market/internal/storage"
 	"github.com/AloneAtWar/chainstream-market/internal/storage/chstore"
@@ -71,9 +74,9 @@ func run(configPath string, logger *slog.Logger) error {
 			Brokers: config.Kafka.Brokers, ClientID: config.Kafka.ClientID, Topic: chain.Topic,
 			FetchMaxBytes: config.Kafka.FetchMaxBytes, FetchMaxWait: config.Kafka.FetchMaxWait,
 		}
-		feeds := make([]market.Feed, len(chain.Feeds))
-		for index, feed := range chain.Feeds {
-			feeds[index] = market.Feed{Address: feed.Address, Token: feed.Token, Decimals: feed.Decimals}
+		feeds, feedsErr := resolveFeeds(ctx, chain, logger)
+		if feedsErr != nil {
+			return fmt.Errorf("chain %s: %w", chain.Name, feedsErr)
 		}
 		processor, processorErr := market.NewProcessor(market.Options{
 			Catalog:               market.DefaultCatalog(chain.ChainID),
@@ -84,6 +87,7 @@ func run(configPath string, logger *slog.Logger) error {
 			HistoryDepth:          config.Market.HistoryDepth,
 			Feeds:                 feeds,
 			OracleDeviation:       decimal.NewFromFloat(config.Market.OracleDeviation),
+			OutlierDeviation:      decimal.NewFromFloat(max(config.Market.OutlierDeviation, 0)),
 			LateTradeBlocks:       max(config.Market.LateTradeBlocks, 0),
 			LateTradesPerToken:    config.Market.LateTradesPerToken,
 		})
@@ -122,6 +126,47 @@ func run(configPath string, logger *slog.Logger) error {
 		return cause
 	}
 	return nil
+}
+
+// resolveFeeds turns a chain's configured feeds into trusted aggregators.
+// A proxy is read over the chain's rpc_url for the aggregator of every phase,
+// and its decimals and description are checked against the config.
+func resolveFeeds(ctx context.Context, chain conf.Chain, logger *slog.Logger) ([]market.Feed, error) {
+	var client *rpc.Client
+	proxies := make(map[string]chainlink.Proxy)
+	var feeds []market.Feed
+	for _, feed := range chain.Feeds {
+		if feed.Proxy == "" {
+			feeds = append(feeds, market.Feed{Address: feed.Address, Token: feed.Token, Decimals: feed.Decimals})
+			continue
+		}
+		address := strings.ToLower(strings.TrimSpace(feed.Proxy))
+		proxy, ok := proxies[address]
+		if !ok {
+			var err error
+			if client == nil {
+				if client, err = rpc.New(rpc.Options{URL: chain.RPCURL}); err != nil {
+					return nil, err
+				}
+			}
+			if proxy, err = chainlink.Resolve(ctx, client, address); err != nil {
+				return nil, err
+			}
+			proxies[address] = proxy
+			logger.Info("feed proxy resolved", "chain", chain.Name, "proxy", address,
+				"description", proxy.Description, "decimals", proxy.Decimals, "aggregators", proxy.Aggregators)
+		}
+		if feed.Decimals != 0 && feed.Decimals != proxy.Decimals {
+			return nil, fmt.Errorf("feed proxy %s has %d decimals, config says %d", address, proxy.Decimals, feed.Decimals)
+		}
+		if want := strings.TrimSpace(feed.Description); want != "" && !strings.EqualFold(want, strings.TrimSpace(proxy.Description)) {
+			return nil, fmt.Errorf("feed proxy %s is %q, config says %q", address, proxy.Description, want)
+		}
+		for _, aggregator := range proxy.Aggregators {
+			feeds = append(feeds, market.Feed{Address: aggregator, Token: feed.Token, Decimals: proxy.Decimals})
+		}
+	}
+	return feeds, nil
 }
 
 // openNotifier returns the live publisher, or nil when live push is off.
