@@ -15,6 +15,7 @@ import (
 
 	"github.com/AloneAtWar/chainstream-market/internal/conf"
 	"github.com/AloneAtWar/chainstream-market/internal/engine"
+	"github.com/AloneAtWar/chainstream-market/internal/live"
 	"github.com/AloneAtWar/chainstream-market/internal/market"
 	"github.com/AloneAtWar/chainstream-market/internal/source"
 	"github.com/AloneAtWar/chainstream-market/internal/storage"
@@ -59,6 +60,11 @@ func run(configPath string, logger *slog.Logger) error {
 		return err
 	}
 	defer closeState()
+	notifier, closeNotifier, err := openNotifier(config)
+	if err != nil {
+		return err
+	}
+	defer closeNotifier()
 	engines := make([]*engine.Engine, 0, len(config.Chains))
 	for _, chain := range config.Chains {
 		options := source.KafkaOptions{
@@ -90,7 +96,7 @@ func run(configPath string, logger *slog.Logger) error {
 				return source.NewKafka(options, start)
 			},
 			Processor: processor, Output: output, Checkpoints: memory, State: state,
-			Logger: logger,
+			Notifier: notifier, Logger: logger,
 		})
 		if newErr != nil {
 			return fmt.Errorf("chain %s: %w", chain.Name, newErr)
@@ -116,6 +122,21 @@ func run(configPath string, logger *slog.Logger) error {
 		return cause
 	}
 	return nil
+}
+
+// openNotifier returns the live publisher, or nil when live push is off.
+func openNotifier(config *conf.Config) (engine.Notifier, func(), error) {
+	if !config.Live.Enabled {
+		return nil, func() {}, nil
+	}
+	publisher, err := live.NewPublisher(live.PublisherOptions{
+		Brokers: config.Kafka.Brokers, ClientID: config.Kafka.ClientID,
+		Topics: config.LiveTopics(), MaxLag: config.Live.MaxLag,
+	})
+	if err != nil {
+		return nil, nil, err
+	}
+	return publisher, publisher.Close, nil
 }
 
 // openState returns the persistent state store, or nil when checkpoints stay

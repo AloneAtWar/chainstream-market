@@ -24,7 +24,30 @@ type Config struct {
 	Rankings Rankings `yaml:"rankings"`
 	// ChLoader is named after the ch-loader command.
 	ChLoader ChLoader `yaml:"ch_loader"`
+	Live     Live     `yaml:"live"`
 	Chains   []Chain  `yaml:"chains"`
+}
+
+// Live configures realtime push. market-engine publishes each block's trades
+// and candles, and reorg corrections, to every chain's live_topic, and
+// market-api streams them to WebSocket clients at /v1/stream.
+type Live struct {
+	Enabled bool `yaml:"enabled"`
+	// MaxLag skips blocks further than this behind the clock, so a catch-up
+	// does not push history; a negative value such as -1s pushes every block.
+	// Reverts always go out.
+	MaxLag time.Duration `yaml:"max_lag"`
+	// CandleThrottle is how often market-api sends each changed candle
+	// bucket, at its latest value. Trades are sent at once.
+	CandleThrottle time.Duration `yaml:"candle_throttle"`
+	// ClientBuffer is how many messages may wait for one client before it
+	// is disconnected as too slow.
+	ClientBuffer     int `yaml:"client_buffer"`
+	MaxSubscriptions int `yaml:"max_subscriptions"`
+	// AllowedOrigins lists other origins browsers may connect from, as host
+	// patterns such as "localhost:5173". Same-origin requests and clients
+	// that send no Origin are always allowed.
+	AllowedOrigins []string `yaml:"allowed_origins"`
 }
 
 // ChLoader tunes ch-loader, which copies raw chain facts into the
@@ -152,6 +175,9 @@ type Chain struct {
 	// must serve state by block hash for blocks the indexer is applying,
 	// which near the head any full node does.
 	RPCURL string `yaml:"rpc_url"`
+	// LiveTopic carries this chain's live updates when live.enabled is set;
+	// it defaults to the topic name with a "-live" suffix.
+	LiveTopic string `yaml:"live_topic"`
 	// Feeds are the Chainlink aggregators trusted on this chain. Use the
 	// aggregator behind each proxy, since it is the contract that emits
 	// AnswerUpdated.
@@ -198,6 +224,12 @@ const (
 	defaultLoaderBatchLag      = 5 * time.Minute
 	defaultLoaderFlushRows     = 100000
 	defaultLoaderFlushInterval = 2 * time.Second
+
+	defaultLiveMaxLag           = 10 * time.Minute
+	defaultLiveCandleThrottle   = 250 * time.Millisecond
+	defaultLiveClientBuffer     = 1024
+	defaultLiveMaxSubscriptions = 200
+	liveTopicSuffix             = "-live"
 )
 
 // DefaultIntervals are the candle sizes used when none are configured.
@@ -302,6 +334,23 @@ func (config *Config) applyDefaults() {
 	if config.ChLoader.FlushInterval == 0 {
 		config.ChLoader.FlushInterval = defaultLoaderFlushInterval
 	}
+	if config.Live.MaxLag == 0 {
+		config.Live.MaxLag = defaultLiveMaxLag
+	}
+	if config.Live.CandleThrottle == 0 {
+		config.Live.CandleThrottle = defaultLiveCandleThrottle
+	}
+	if config.Live.ClientBuffer == 0 {
+		config.Live.ClientBuffer = defaultLiveClientBuffer
+	}
+	if config.Live.MaxSubscriptions == 0 {
+		config.Live.MaxSubscriptions = defaultLiveMaxSubscriptions
+	}
+	for index := range config.Chains {
+		if strings.TrimSpace(config.Chains[index].LiveTopic) == "" && config.Chains[index].Topic != "" {
+			config.Chains[index].LiveTopic = config.Chains[index].Topic + liveTopicSuffix
+		}
+	}
 	if strings.TrimSpace(config.State.Driver) == "" {
 		config.State.Driver = StateMemory
 	}
@@ -368,6 +417,9 @@ func (config *Config) Validate() error {
 	if config.ChLoader.BatchLag < 0 || config.ChLoader.FlushRows < 0 || config.ChLoader.FlushInterval < 0 {
 		return errors.New("conf: ch_loader settings must be positive")
 	}
+	if config.Live.CandleThrottle < 0 || config.Live.ClientBuffer < 0 || config.Live.MaxSubscriptions < 0 {
+		return errors.New("conf: live settings must be positive")
+	}
 	switch config.State.Driver {
 	case StateMemory:
 	case StatePostgres:
@@ -409,5 +461,37 @@ func (config *Config) Validate() error {
 			feeds[address] = struct{}{}
 		}
 	}
+	return config.validateLiveTopics()
+}
+
+// validateLiveTopics checks that no live topic collides with another chain's
+// live topic or with any chain topic.
+func (config *Config) validateLiveTopics() error {
+	if !config.Live.Enabled {
+		return nil
+	}
+	used := make(map[string]struct{}, 2*len(config.Chains))
+	for _, chain := range config.Chains {
+		used[chain.Topic] = struct{}{}
+	}
+	for _, chain := range config.Chains {
+		if _, ok := used[chain.LiveTopic]; ok {
+			return fmt.Errorf("conf: chain %s live_topic %q is already used", chain.Name, chain.LiveTopic)
+		}
+		used[chain.LiveTopic] = struct{}{}
+	}
 	return nil
+}
+
+// LiveTopics maps chain IDs to their live topics, or returns nil when live
+// push is disabled.
+func (config *Config) LiveTopics() map[uint64]string {
+	if !config.Live.Enabled {
+		return nil
+	}
+	topics := make(map[uint64]string, len(config.Chains))
+	for _, chain := range config.Chains {
+		topics[chain.ChainID] = chain.LiveTopic
+	}
+	return topics
 }

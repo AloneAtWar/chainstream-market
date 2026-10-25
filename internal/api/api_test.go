@@ -148,3 +148,18 @@ func TestIntervalName(t *testing.T) {
 		}
 	}
 }
+
+func TestStreamRouteNeedsLive(t *testing.T) {
+	request := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/v1/stream", nil)
+	recorder := httptest.NewRecorder()
+	New(&fakeReader{}, []time.Duration{time.Minute}, nil).Handler().ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusNotFound {
+		t.Fatalf("status without live = %d, want 404", recorder.Code)
+	}
+	stream := http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) { writer.WriteHeader(http.StatusTeapot) })
+	recorder = httptest.NewRecorder()
+	New(&fakeReader{}, []time.Duration{time.Minute}, nil).WithLive(stream).Handler().ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusTeapot {
+		t.Fatalf("status with live = %d, want the stream handler's", recorder.Code)
+	}
+}

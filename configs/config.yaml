@@ -89,6 +89,23 @@ rankings:
 api:
   addr: ":8080"
 
+# Realtime push. market-engine publishes each block's trades and candles, and
+# reorg corrections, to every chain's live_topic (default "<topic>-live");
+# market-api streams them to WebSocket clients at /v1/stream.
+live:
+  enabled: false
+  # Blocks further than this behind the clock are not pushed, so a catch-up
+  # does not flood clients; a negative value pushes every block.
+  max_lag: 10m
+  # How often each changed candle bucket is sent, at its latest value.
+  # Trades are sent at once.
+  candle_throttle: 250ms
+  # A client this many messages behind is disconnected as too slow.
+  client_buffer: 1024
+  max_subscriptions: 200
+  # Other origins browsers may connect from, e.g. [localhost:5173].
+  allowed_origins: []
+
 # One chainstream-evm topic per chain, each consumed in order by its own engine.
 # feeds lists trusted Chainlink USD aggregators (the contract behind each proxy,
 # found with proxy.aggregator()); any other AnswerUpdated log is ignored.

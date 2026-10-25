@@ -70,6 +70,9 @@ func TestParseRejectsInvalidConfig(t *testing.T) {
 		"negative rankings":  "kafka: {brokers: [b]}\nrankings: {refresh_interval: -1s}\nchains: [{name: eth, chain_id: 1, topic: a}]",
 		"unknown candle":     "kafka: {brokers: [b]}\nrankings: {candle_interval: 2m}\nchains: [{name: eth, chain_id: 1, topic: a}]",
 		"negative ch_loader": "kafka: {brokers: [b]}\nch_loader: {flush_rows: -1}\nchains: [{name: eth, chain_id: 1, topic: a}]",
+		"negative live":      "kafka: {brokers: [b]}\nlive: {client_buffer: -1}\nchains: [{name: eth, chain_id: 1, topic: a}]",
+		"live topic reused":  "kafka: {brokers: [b]}\nlive: {enabled: true}\nchains: [{name: eth, chain_id: 1, topic: a, live_topic: b}, {name: base, chain_id: 2, topic: b}]",
+		"live topic twice":   "kafka: {brokers: [b]}\nlive: {enabled: true}\nchains: [{name: eth, chain_id: 1, topic: a, live_topic: l}, {name: base, chain_id: 2, topic: b, live_topic: l}]",
 	}
 	for name, raw := range tests {
 		t.Run(name, func(t *testing.T) {
@@ -77,6 +80,37 @@ func TestParseRejectsInvalidConfig(t *testing.T) {
 				t.Fatal("Parse() error = nil")
 			}
 		})
+	}
+}
+
+func TestParseLive(t *testing.T) {
+	config, err := Parse([]byte(`
+kafka:
+  brokers: [127.0.0.1:9092]
+live:
+  enabled: true
+  max_lag: -1s
+  allowed_origins: [localhost:5173]
+chains:
+  - {name: eth, chain_id: 1, topic: chainstream-eth}
+  - {name: base, chain_id: 8453, topic: chainstream-base, live_topic: base-push}
+`))
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	live := config.Live
+	if live.MaxLag != -time.Second || live.CandleThrottle != defaultLiveCandleThrottle ||
+		live.ClientBuffer != defaultLiveClientBuffer || live.MaxSubscriptions != defaultLiveMaxSubscriptions ||
+		len(live.AllowedOrigins) != 1 {
+		t.Fatalf("live = %+v", live)
+	}
+	topics := config.LiveTopics()
+	if len(topics) != 2 || topics[1] != "chainstream-eth-live" || topics[8453] != "base-push" {
+		t.Fatalf("LiveTopics() = %v", topics)
+	}
+	config.Live.Enabled = false
+	if topics := config.LiveTopics(); topics != nil {
+		t.Fatalf("disabled LiveTopics() = %v", topics)
 	}
 }
 

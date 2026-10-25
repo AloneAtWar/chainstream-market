@@ -1,7 +1,8 @@
 // Command market-api serves prices, candles and trades from the ClickHouse
 // store that market-engine writes and the raw tables ch-loader writes, and
 // holders, token and pool metadata and token lists from the PostgreSQL store
-// that holder-indexer, market-registry and market-rankings write.
+// that holder-indexer, market-registry and market-rankings write. With
+// live.enabled it also streams market-engine's live topics over WebSocket.
 package main
 
 import (
@@ -18,6 +19,7 @@ import (
 
 	"github.com/AloneAtWar/chainstream-market/internal/api"
 	"github.com/AloneAtWar/chainstream-market/internal/conf"
+	"github.com/AloneAtWar/chainstream-market/internal/live"
 	"github.com/AloneAtWar/chainstream-market/internal/storage/chraw"
 	"github.com/AloneAtWar/chainstream-market/internal/storage/chstore"
 	"github.com/AloneAtWar/chainstream-market/internal/storage/pgstore"
@@ -80,6 +82,23 @@ func run(configPath string, logger *slog.Logger) error {
 		defer holderStore.Close()
 		handler.WithHolders(holderStore).WithRegistry(holderStore).WithRankings(holderStore)
 	}
+	var hubDone chan error
+	if config.Live.Enabled {
+		hub, hubErr := live.NewHub(live.HubOptions{
+			Brokers: config.Kafka.Brokers, ClientID: config.Kafka.ClientID,
+			FetchMaxBytes: config.Kafka.FetchMaxBytes, FetchMaxWait: config.Kafka.FetchMaxWait,
+			Topics: config.LiveTopics(), Intervals: config.Market.Intervals,
+			Throttle: config.Live.CandleThrottle, ClientBuffer: config.Live.ClientBuffer,
+			MaxSubscriptions: config.Live.MaxSubscriptions, OriginPatterns: config.Live.AllowedOrigins,
+			Logger: logger,
+		})
+		if hubErr != nil {
+			return hubErr
+		}
+		hubDone = make(chan error, 1)
+		go func() { hubDone <- hub.Run(ctx) }()
+		handler.WithLive(hub)
+	}
 	server := &http.Server{
 		Addr:              config.API.Addr,
 		Handler:           handler.Handler(),
@@ -93,6 +112,11 @@ func run(configPath string, logger *slog.Logger) error {
 	select {
 	case err := <-errs:
 		return err
+	case err := <-hubDone:
+		// The hub only stops on its own when it cannot start.
+		if ctx.Err() == nil {
+			return errors.Join(errors.New("live hub stopped"), err)
+		}
 	case <-ctx.Done():
 	}
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)

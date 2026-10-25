@@ -97,6 +97,16 @@ func (j *journal[K, V]) revert(height int64) {
 	j.pending = j.pending[:keep]
 }
 
+// restored returns, for every key written above height, the undo entry that
+// holds its value as of height.
+func (j *journal[K, V]) restored(height int64) map[K]undoEntry[K, V] {
+	restored := make(map[K]undoEntry[K, V])
+	for index := len(j.undo) - 1; index >= 0 && j.undo[index].Height > height; index-- {
+		restored[j.undo[index].Key] = j.undo[index]
+	}
+	return restored
+}
+
 // prune forgets undo entries at or below height; those writes become
 // permanent.
 func (j *journal[K, V]) prune(height int64) {

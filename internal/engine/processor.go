@@ -28,6 +28,23 @@ type Stateful interface {
 	TakeDelta() (storage.StateDelta, error)
 }
 
+// CandleReverter is a Processor that can say which candle series a revert
+// will change, so live clients can be corrected.
+type CandleReverter interface {
+	Processor
+	// RevertedCandles is called before Revert with the same height.
+	RevertedCandles(rollbackTo int64) []storage.CandleReset
+}
+
+// Notifier pushes what each record changed to live clients. It is called
+// after the output store has the change and before the checkpoint is
+// committed, so a failure stops the engine and the record is applied and
+// notified again after a restart. Notifications are therefore at least once.
+type Notifier interface {
+	NotifyBlock(ctx context.Context, output storage.BlockOutput, finalizedHeight int64) error
+	NotifyRevert(ctx context.Context, revert storage.Revert) error
+}
+
 // HeaderProcessor emits only block headers. It stands in until orientation,
 // pricing and candle aggregation are added.
 type HeaderProcessor struct{}
