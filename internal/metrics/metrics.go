@@ -94,32 +94,42 @@ func Handler() http.Handler {
 	return promhttp.HandlerFor(Registry, promhttp.HandlerOpts{Registry: Registry})
 }
 
-// Start serves /metrics on addr until ctx is done. An empty addr turns it
-// off. It fails at once when addr cannot be bound.
-func Start(ctx context.Context, addr string, logger *slog.Logger) error {
-	if addr == "" {
-		return nil
-	}
-	listener, err := (&net.ListenConfig{}).Listen(ctx, "tcp", addr)
-	if err != nil {
-		return fmt.Errorf("metrics: listen %s: %w", addr, err)
-	}
+// Server serves /metrics. It is a Kratos transport.Server: Start serves
+// until Stop.
+type Server struct {
+	addr   string
+	logger *slog.Logger
+	server *http.Server
+}
+
+// NewServer serves /metrics on addr.
+func NewServer(addr string, logger *slog.Logger) *Server {
 	mux := http.NewServeMux()
 	mux.Handle("GET /metrics", Handler())
-	server := &http.Server{Handler: mux, ReadHeaderTimeout: 5 * time.Second}
-	go func() {
-		<-ctx.Done()
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		_ = server.Shutdown(shutdownCtx)
-	}()
-	go func() {
-		if serveErr := server.Serve(listener); !errors.Is(serveErr, http.ErrServerClosed) {
-			logger.Error("metrics server stopped", "error", serveErr)
-		}
-	}()
-	logger.Info("serving metrics", "addr", listener.Addr().String())
+	return &Server{
+		addr: addr, logger: logger,
+		server: &http.Server{Handler: mux, ReadHeaderTimeout: 5 * time.Second},
+	}
+}
+
+// Start serves until Stop. It fails at once when addr cannot be bound.
+func (server *Server) Start(ctx context.Context) error {
+	listener, err := (&net.ListenConfig{}).Listen(ctx, "tcp", server.addr)
+	if err != nil {
+		return fmt.Errorf("metrics: listen %s: %w", server.addr, err)
+	}
+	server.logger.Info("serving metrics", "addr", listener.Addr().String())
+	if err := server.server.Serve(listener); !errors.Is(err, http.ErrServerClosed) {
+		return fmt.Errorf("metrics: serve: %w", err)
+	}
 	return nil
+}
+
+// Stop shuts the server down, waiting at most five seconds for requests.
+func (server *Server) Stop(ctx context.Context) error {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	return server.server.Shutdown(ctx)
 }
 
 // Instrument counts and times the requests handler serves, by the

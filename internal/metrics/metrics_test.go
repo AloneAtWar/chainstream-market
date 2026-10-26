@@ -32,7 +32,7 @@ func TestInstrumentLabelsByRoutePattern(t *testing.T) {
 	}
 }
 
-func TestStartServesMetrics(t *testing.T) {
+func TestServerServesMetrics(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	listener, err := (&net.ListenConfig{}).Listen(ctx, "tcp", "127.0.0.1:0")
@@ -42,9 +42,9 @@ func TestStartServesMetrics(t *testing.T) {
 	addr := listener.Addr().String()
 	_ = listener.Close()
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	if err := Start(ctx, addr, logger); err != nil {
-		t.Fatalf("Start() error = %v", err)
-	}
+	server := NewServer(addr, logger)
+	served := make(chan error, 1)
+	go func() { served <- server.Start(ctx) }()
 	Reorgs.WithLabelValues("start-test").Inc()
 	var body string
 	deadline := time.Now().Add(5 * time.Second)
@@ -65,8 +65,11 @@ func TestStartServesMetrics(t *testing.T) {
 			t.Errorf("/metrics lacks %q", want)
 		}
 	}
-	if err := Start(ctx, "", logger); err != nil {
-		t.Errorf("Start() with no address error = %v", err)
+	if err := server.Stop(ctx); err != nil {
+		t.Errorf("Stop() error = %v", err)
+	}
+	if err := <-served; err != nil {
+		t.Errorf("Start() error = %v", err)
 	}
 }
 

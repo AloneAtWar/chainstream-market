@@ -1,4 +1,4 @@
-package main
+package biz
 
 import (
 	"context"
@@ -61,14 +61,14 @@ func TestResolveFeedsReadsProxies(t *testing.T) {
 	node := proxyNode(t)
 	defer node.Close()
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	chain := conf.Chain{Name: "base", RPCURL: node.URL, Feeds: []conf.Feed{
+	chain := &conf.Chain{Name: "base", RpcUrl: node.URL, Feeds: []*conf.Feed{
 		{Proxy: proxy, Token: weth, Description: "eth / usd"},
 		{Proxy: proxy, Token: market.NativeAddress, Decimals: 8},
 		{Address: "0xcc", Token: "0xdd", Decimals: 18},
 	}}
-	feeds, err := resolveFeeds(context.Background(), chain, logger)
+	feeds, err := ResolveFeeds(context.Background(), chain, logger)
 	if err != nil {
-		t.Fatalf("resolveFeeds() error = %v", err)
+		t.Fatalf("ResolveFeeds() error = %v", err)
 	}
 	want := []market.Feed{
 		{Address: aggregator, Token: weth, Decimals: 8},
@@ -76,17 +76,17 @@ func TestResolveFeedsReadsProxies(t *testing.T) {
 		{Address: "0xcc", Token: "0xdd", Decimals: 18},
 	}
 	if !reflect.DeepEqual(feeds, want) {
-		t.Fatalf("resolveFeeds() = %+v, want %+v", feeds, want)
+		t.Fatalf("ResolveFeeds() = %+v, want %+v", feeds, want)
 	}
 
-	for name, feed := range map[string]conf.Feed{
+	for name, feed := range map[string]*conf.Feed{
 		"wrong decimals":    {Proxy: proxy, Token: weth, Decimals: 18},
 		"wrong description": {Proxy: proxy, Token: weth, Description: "BTC / USD"},
 		"not a proxy":       {Proxy: "0x00000000000000000000000000000000000000ee", Token: weth},
 	} {
-		chain.Feeds = []conf.Feed{feed}
-		if _, err := resolveFeeds(context.Background(), chain, logger); err == nil {
-			t.Fatalf("resolveFeeds() with %s error = nil", name)
+		chain.Feeds = []*conf.Feed{feed}
+		if _, err := ResolveFeeds(context.Background(), chain, logger); err == nil {
+			t.Fatalf("ResolveFeeds() with %s error = nil", name)
 		}
 	}
 }

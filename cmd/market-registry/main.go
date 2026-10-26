@@ -3,7 +3,6 @@
 package main
 
 import (
-	"cmp"
 	"context"
 	"errors"
 	"flag"
@@ -11,96 +10,70 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
-	"sync"
 	"syscall"
 
-	"github.com/AloneAtWar/chainstream-market/internal/metrics"
-
 	"github.com/AloneAtWar/chainstream-market/internal/conf"
-	"github.com/AloneAtWar/chainstream-market/internal/engine"
-	"github.com/AloneAtWar/chainstream-market/internal/registry"
-	"github.com/AloneAtWar/chainstream-market/internal/source"
-	"github.com/AloneAtWar/chainstream-market/internal/storage/pgstore"
+	"github.com/go-kratos/kratos/v2"
+	"github.com/go-kratos/kratos/v2/transport"
 )
 
-// Version is set at build time.
-var Version = "dev"
+// Name is the service name.
+const Name = "market-registry"
 
-// metricsAddr, when set, overrides metrics.addr.
-var metricsAddr string
+var (
+	// Version is set at build time.
+	Version = "dev"
+
+	flagconf string
+	// metricsAddr, when set, overrides metrics.addr.
+	metricsAddr string
+	id, _       = os.Hostname()
+)
+
+func init() {
+	flag.StringVar(&flagconf, "conf", "configs/config.yaml", "config file or directory, eg: -conf configs/config.yaml")
+	flag.StringVar(&metricsAddr, "metrics-addr", "", "address to serve /metrics on, overriding metrics.addr")
+}
+
+func newApp(servers []transport.Server) *kratos.App {
+	return kratos.New(
+		kratos.ID(id),
+		kratos.Name(Name),
+		kratos.Version(Version),
+		kratos.Server(servers...),
+	)
+}
 
 func main() {
-	configPath := flag.String("conf", "configs/config.yaml", "config file path")
-	flag.StringVar(&metricsAddr, "metrics-addr", "", "address to serve /metrics on, overriding metrics.addr")
 	flag.Parse()
-	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil)).With("service", "market-registry", "version", Version)
-	if err := run(*configPath, logger); err != nil {
-		logger.Error("market-registry stopped", "error", err)
+	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil)).With("service", Name, "version", Version)
+	if err := run(logger); err != nil {
+		logger.Error(Name+" stopped", "error", err)
 		os.Exit(1)
 	}
 }
 
-func run(configPath string, logger *slog.Logger) error {
-	config, err := conf.Load(configPath)
+func run(logger *slog.Logger) (resultErr error) {
+	bootstrap, closeConfig, err := conf.Load(flagconf)
 	if err != nil {
 		return err
 	}
-	if config.State.Driver != conf.StatePostgres {
-		return fmt.Errorf("market-registry needs state.driver %q, got %q", conf.StatePostgres, config.State.Driver)
+	defer func() { resultErr = errors.Join(resultErr, closeConfig()) }()
+	if bootstrap.State.Driver != conf.StatePostgres {
+		return fmt.Errorf("market-registry needs state.driver %q, got %q", conf.StatePostgres, bootstrap.State.Driver)
 	}
+	if metricsAddr != "" {
+		bootstrap.Metrics.Addr = metricsAddr
+	}
+
+	// A signal while the stores connect stops the start; once the app runs,
+	// Kratos handles signals itself.
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
-	if err = metrics.Start(ctx, cmp.Or(metricsAddr, config.Metrics.Addr), logger); err != nil {
-		return err
-	}
-
-	store, err := pgstore.Open(ctx, pgstore.Options{DSN: config.State.Postgres.DSN, Schema: config.State.Postgres.Schema})
+	app, cleanup, err := wireApp(ctx, bootstrap, logger)
+	stop()
 	if err != nil {
 		return err
 	}
-	defer store.Close()
-
-	engines := make([]*engine.Engine, 0, len(config.Chains))
-	for _, chain := range config.Chains {
-		handler, handlerErr := registry.New(registry.Options{
-			ChainID: chain.ChainID, Store: store, HistoryDepth: config.Registry.HistoryDepth,
-			Logger: logger.With("chain", chain.Name),
-		})
-		if handlerErr != nil {
-			return fmt.Errorf("chain %s: %w", chain.Name, handlerErr)
-		}
-		options := source.KafkaOptions{
-			Brokers: config.Kafka.Brokers, ClientID: config.Kafka.ClientID, Topic: chain.Topic,
-			FetchMaxBytes: config.Kafka.FetchMaxBytes, FetchMaxWait: config.Kafka.FetchMaxWait,
-		}
-		chainEngine, newErr := engine.New(engine.Options{
-			ChainID: chain.ChainID, Chain: chain.Name, Handler: handler, Logger: logger,
-			Open: func(start int64) (source.Source, error) {
-				return source.NewKafka(options, start)
-			},
-		})
-		if newErr != nil {
-			return fmt.Errorf("chain %s: %w", chain.Name, newErr)
-		}
-		engines = append(engines, chainEngine)
-	}
-
-	// Chains are independent; the first failure stops them all so the
-	// process restarts from consistent checkpoints.
-	ctx, cancel := context.WithCancelCause(ctx)
-	defer cancel(nil)
-	var wg sync.WaitGroup
-	for index, chainEngine := range engines {
-		name := config.Chains[index].Name
-		wg.Go(func() {
-			if runErr := chainEngine.Run(ctx); runErr != nil {
-				cancel(fmt.Errorf("chain %s: %w", name, runErr))
-			}
-		})
-	}
-	wg.Wait()
-	if cause := context.Cause(ctx); cause != nil && !errors.Is(cause, context.Canceled) {
-		return cause
-	}
-	return nil
+	defer cleanup()
+	return app.Run()
 }
