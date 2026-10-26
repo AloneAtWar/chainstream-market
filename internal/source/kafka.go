@@ -32,6 +32,13 @@ type KafkaOptions struct {
 	FetchMaxWait  time.Duration
 }
 
+// Lagger is a Source that knows where its topic ends.
+type Lagger interface {
+	// HighWatermark returns the offset after the topic's last record, as of
+	// the last fetch, or -1 before one returned it.
+	HighWatermark() int64
+}
+
 // Partition is the only partition chainstream-evm writes to; total order
 // across reverts and blocks depends on it.
 const Partition int32 = 0
@@ -39,8 +46,9 @@ const Partition int32 = 0
 // Kafka consumes partition zero of one topic without a consumer group. The
 // engine owns the offset through its checkpoint store.
 type Kafka struct {
-	client *kgo.Client
-	topic  string
+	client        *kgo.Client
+	topic         string
+	highWatermark int64
 }
 
 // NewKafka starts consuming at offset start.
@@ -75,7 +83,7 @@ func NewKafka(options KafkaOptions, start int64) (*Kafka, error) {
 	if err != nil {
 		return nil, fmt.Errorf("kafka source: create client: %w", err)
 	}
-	return &Kafka{client: client, topic: topic}, nil
+	return &Kafka{client: client, topic: topic, highWatermark: -1}, nil
 }
 
 func (source *Kafka) Fetch(ctx context.Context) ([]Message, error) {
@@ -92,6 +100,11 @@ func (source *Kafka) Fetch(ctx context.Context) ([]Message, error) {
 		}
 		return nil, fmt.Errorf("kafka source: fetch %s/%d: %w", fetchErr.Topic, fetchErr.Partition, fetchErr.Err)
 	}
+	fetches.EachPartition(func(partition kgo.FetchTopicPartition) {
+		if partition.Topic == source.topic && partition.Partition == Partition && partition.HighWatermark >= 0 {
+			source.highWatermark = partition.HighWatermark
+		}
+	})
 	var messages []Message
 	fetches.EachRecord(func(record *kgo.Record) {
 		if record.Topic == source.topic && record.Partition == Partition {
@@ -101,8 +114,15 @@ func (source *Kafka) Fetch(ctx context.Context) ([]Message, error) {
 	return messages, nil
 }
 
+func (source *Kafka) HighWatermark() int64 {
+	return source.highWatermark
+}
+
 func (source *Kafka) Close() {
 	source.client.Close()
 }
 
-var _ Source = (*Kafka)(nil)
+var (
+	_ Source = (*Kafka)(nil)
+	_ Lagger = (*Kafka)(nil)
+)

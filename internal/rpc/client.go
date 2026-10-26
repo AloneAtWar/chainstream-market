@@ -14,6 +14,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/AloneAtWar/chainstream-market/internal/metrics"
 )
 
 // balanceOfSelector is the ERC-20 balanceOf(address) selector.
@@ -21,6 +23,8 @@ const balanceOfSelector = "0x70a08231"
 
 type Options struct {
 	URL string
+	// Chain labels the client's metrics.
+	Chain string
 	// BatchSize caps the calls sent in one JSON-RPC batch; zero uses 100.
 	BatchSize int
 	// Timeout bounds each HTTP request; zero uses 30 seconds.
@@ -29,6 +33,7 @@ type Options struct {
 
 type Client struct {
 	url       string
+	chain     string
 	batchSize int
 	http      *http.Client
 }
@@ -45,7 +50,7 @@ func New(options Options) (*Client, error) {
 	if timeout <= 0 {
 		timeout = 30 * time.Second
 	}
-	return &Client{url: options.URL, batchSize: batchSize, http: &http.Client{Timeout: timeout}}, nil
+	return &Client{url: options.URL, chain: options.Chain, batchSize: batchSize, http: &http.Client{Timeout: timeout}}, nil
 }
 
 // BalanceQuery asks for holder's balance of token.
@@ -122,6 +127,7 @@ func (client *Client) balanceBatch(ctx context.Context, blockHash string, querie
 			if reply.Error.reverted() {
 				continue
 			}
+			metrics.RPCFailures.WithLabelValues(client.chain).Inc()
 			return fmt.Errorf("rpc: balanceOf %s at %s: %w", queries[reply.ID].Token, blockHash, reply.Error)
 		}
 		out[reply.ID] = decodeUint256(reply.Result)
@@ -152,7 +158,21 @@ func decodeUint256(raw json.RawMessage) *big.Int {
 	return value
 }
 
+// post sends one batch and records its latency and result.
 func (client *Client) post(ctx context.Context, requests []request) ([]response, error) {
+	start := time.Now()
+	responses, err := client.send(ctx, requests)
+	metrics.RPCSeconds.WithLabelValues(client.chain).Observe(time.Since(start).Seconds())
+	result := "ok"
+	if err != nil {
+		result = "error"
+		metrics.RPCFailures.WithLabelValues(client.chain).Inc()
+	}
+	metrics.RPCRequests.WithLabelValues(client.chain, result).Inc()
+	return responses, err
+}
+
+func (client *Client) send(ctx context.Context, requests []request) ([]response, error) {
 	body, err := json.Marshal(requests)
 	if err != nil {
 		return nil, fmt.Errorf("rpc: encode: %w", err)
@@ -233,6 +253,7 @@ func (client *Client) callBatch(ctx context.Context, calls []Call, out [][]byte)
 			if reply.Error.reverted() {
 				continue
 			}
+			metrics.RPCFailures.WithLabelValues(client.chain).Inc()
 			return fmt.Errorf("rpc: call %s: %w", calls[reply.ID].To, reply.Error)
 		}
 		var data string

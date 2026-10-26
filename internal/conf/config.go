@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"regexp"
 	"slices"
 	"strings"
 	"time"
@@ -25,7 +26,15 @@ type Config struct {
 	// ChLoader is named after the ch-loader command.
 	ChLoader ChLoader `yaml:"ch_loader"`
 	Live     Live     `yaml:"live"`
+	Metrics  Metrics  `yaml:"metrics"`
 	Chains   []Chain  `yaml:"chains"`
+}
+
+// Metrics configures the Prometheus endpoint every command serves.
+type Metrics struct {
+	// Addr serves /metrics, such as ":9100"; empty turns it off. Commands
+	// sharing one host take -metrics-addr to use their own port.
+	Addr string `yaml:"addr"`
 }
 
 // Live configures realtime push. market-engine publishes each block's trades
@@ -288,13 +297,29 @@ func DefaultIntervals() []time.Duration {
 	}
 }
 
-// Load reads, defaults and validates the configuration file at path.
+// Load reads, defaults and validates the configuration file at path, after
+// replacing each ${NAME} or ${NAME:-default} in it with that environment
+// variable. Other uses of $ are left alone.
 func Load(path string) (*Config, error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("conf: read %s: %w", path, err)
 	}
-	return Parse(raw)
+	return Parse(ExpandEnv(raw, os.LookupEnv))
+}
+
+var envReference = regexp.MustCompile(`\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-([^}]*))?\}`)
+
+// ExpandEnv replaces each ${NAME} in raw with lookup(NAME), and each
+// ${NAME:-default} with default when NAME is unset or empty.
+func ExpandEnv(raw []byte, lookup func(string) (string, bool)) []byte {
+	return envReference.ReplaceAllFunc(raw, func(reference []byte) []byte {
+		match := envReference.FindSubmatch(reference)
+		if value, ok := lookup(string(match[1])); ok && value != "" {
+			return []byte(value)
+		}
+		return match[2]
+	})
 }
 
 // Parse decodes, defaults and validates raw YAML.

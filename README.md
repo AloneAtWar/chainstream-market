@@ -28,6 +28,8 @@ Market data services built on the [chainstream-evm](https://github.com/AloneAtWa
 | `internal/storage/chraw` | ClickHouse raw fact store and schema for ch-loader. |
 | `internal/storage/pgstore` | PostgreSQL checkpoints, market state, holder balances and the token and pool registry. |
 | `internal/conf` | YAML configuration. |
+| `internal/metrics` | Prometheus metrics every command serves at `/metrics`. |
+| `deploy/` | docker-compose stack: infrastructure, chainstream-evm, every service, Prometheus and Grafana. |
 
 ## market-engine
 
@@ -340,6 +342,51 @@ All state is journaled by height. A revert undoes it exactly, as long as the reo
 ```sh
 go run ./cmd/market-engine -conf configs/config.yaml
 ```
+
+## Local stack
+
+`make up` builds both images and starts everything with docker compose: Kafka, ClickHouse, PostgreSQL and Redis, chainstream-evm scanning eth into `chainstream-eth`, the six services here, and Prometheus and Grafana. It needs Docker with Compose v2, an eth node, and a chainstream-evm checkout next to this one (`EVM_DIR=...` points elsewhere). chainstream-evm reads the private oh-my-blockchain module through your SSH agent; see its README.
+
+```sh
+cp deploy/.env.example deploy/.env   # set ETH_RPC_URL
+make up      # build and start; make logs follows them
+make down    # stop, keeping data; make clean also drops the volumes
+```
+
+| Port | What |
+| --- | --- |
+| 8080 | market-api, with WebSocket push at `/v1/stream` |
+| 3000 | Grafana, signed in anonymously, opening on the Chainstream dashboard |
+| 9090 | Prometheus |
+| 8000 | chainstream-evm health and `/metrics` |
+| 19092 | Kafka for host tools (`localhost:19092`); containers use `kafka:9092` |
+| 8123, 9000 | ClickHouse HTTP and native, user `default` without password, database `market` |
+| 5432 | PostgreSQL, `market:market@localhost:5432/market` |
+
+The node must answer `eth_call` by block hash near the head, for holder-indexer, and serve the Chainlink proxies market-engine resolves at startup. chainstream-evm starts at the chain tip unless `ETH_START_HEIGHT` is set, and keeps its cursor in Redis afterwards. Its config is `deploy/evm/config.yaml`; the services share `deploy/config.yaml`. A service that cannot start, such as market-engine without a reachable node, restarts until it can.
+
+The topics are created by `kafka-init` with one partition and no retention limit, since every consumer resumes from its own committed offset. To add a chain, add a chainstream-evm service with its own config and topic, the topics to `kafka-init`, and the chain to `deploy/config.yaml`.
+
+## Metrics
+
+Every command serves Prometheus metrics at `/metrics` on `metrics.addr`, off by default; `-metrics-addr :9101` overrides it, so several commands can share one host. All series are prefixed `chainstream_market_` and labelled by `chain`; Prometheus's `job` label tells the services apart.
+
+| Metric | What |
+| --- | --- |
+| `engine_consumer_lag_records` | Records in the chain topic after the last committed one. |
+| `engine_block_lag_seconds` | Clock time minus the last applied block's time. |
+| `engine_height` | Last applied block height. |
+| `engine_record_seconds{kind}` | Time to apply and commit one record, `block` or `revert`. |
+| `engine_records_total{kind}` | Records committed. |
+| `engine_reorgs_total`, `engine_reorg_depth_blocks` | Reverts that undid applied blocks, and how many each undid. |
+| `rpc_requests_total{result}`, `rpc_request_seconds` | JSON-RPC batches sent by holder-indexer and market-engine's feed lookups. |
+| `rpc_failures_total` | Failed batches, plus node errors on single calls other than a revert. |
+| `rankings_refresh_seconds`, `rankings_refresh_failures_total` | market-rankings refreshes. |
+| `http_requests_total{route,code}`, `http_request_seconds{route}` | market-api requests by matched route pattern. |
+
+The engine metrics come from every consumer: market-engine, ch-loader, holder-indexer and market-registry. chainstream-evm exports its own under `chainstream_evm_`. The Grafana dashboard in `deploy/grafana/dashboards` charts both.
+
+The config file may read the environment: `${NAME}` is replaced by the variable, and `${NAME:-default}` by the default when it is unset or empty.
 
 ## Development
 

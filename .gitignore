@@ -6,3 +6,5 @@
 /.vscode/
 *.local.yaml
 *.log
+/vendor/
+/deploy/.env
