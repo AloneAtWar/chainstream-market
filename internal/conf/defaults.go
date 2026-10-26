@@ -28,10 +28,6 @@ const (
 	defaultRankingsReorgWindow     = time.Hour
 	// minRankingCandleDays keeps the candles market-rankings sums over 24h.
 	minRankingCandleDays = 2
-
-	defaultLoaderBatchLag      = 5 * time.Minute
-	defaultLoaderFlushRows     = 100000
-	defaultLoaderFlushInterval = 2 * time.Second
 )
 
 // DefaultIntervals are the candle sizes used when none are configured.
@@ -64,9 +60,6 @@ func (bootstrap *Bootstrap) ApplyDefaults() {
 	}
 	if bootstrap.Rankings == nil {
 		bootstrap.Rankings = &Rankings{}
-	}
-	if bootstrap.ChLoader == nil {
-		bootstrap.ChLoader = &ChLoader{}
 	}
 	if bootstrap.Live == nil {
 		bootstrap.Live = &config.Live{}
@@ -127,13 +120,6 @@ func (bootstrap *Bootstrap) ApplyDefaults() {
 		rankings.CandleInterval = durationpb.New(candleInterval)
 	}
 	config.DefaultDuration(&rankings.ReorgWindow, defaultRankingsReorgWindow)
-
-	loader := bootstrap.ChLoader
-	config.DefaultDuration(&loader.BatchLag, defaultLoaderBatchLag)
-	if loader.FlushRows == 0 {
-		loader.FlushRows = defaultLoaderFlushRows
-	}
-	config.DefaultDuration(&loader.FlushInterval, defaultLoaderFlushInterval)
 
 	if strings.TrimSpace(bootstrap.Api.Addr) == "" {
 		bootstrap.Api.Addr = defaultAPIAddr

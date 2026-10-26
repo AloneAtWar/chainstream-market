@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/AloneAtWar/chainstream-market/internal/pkg/config"
 	"gorm.io/gorm"
 )
 
@@ -43,6 +44,19 @@ type Retention struct {
 	RawTransfersDays  int
 	RawTradesDays     int
 	OracleUpdatesDays int
+}
+
+// NewRetention turns the retention section of a clickhouse config into a
+// Retention.
+func NewRetention(retention *config.Retention) Retention {
+	return Retention{
+		StoragePolicy: retention.GetStoragePolicy(), ColdVolume: retention.GetColdVolume(),
+		ColdAfterDays: int(retention.GetColdAfterDays()), TradesDays: int(retention.GetTradesDays()),
+		TokenPriceRollupDays: int(retention.GetTokenPriceRollupDays()),
+		CandleCompactDays:    int(retention.GetCandleCompactDays()), CandleDays: retention.CandleDayDurations(),
+		RawTransfersDays: int(retention.GetRawTransfersDays()), RawTradesDays: int(retention.GetRawTradesDays()),
+		OracleUpdatesDays: int(retention.GetOracleUpdatesDays()),
+	}
 }
 
 // Validate reports a negative age or a cold tier configured by halves.

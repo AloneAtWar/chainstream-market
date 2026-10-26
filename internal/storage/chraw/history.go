@@ -70,7 +70,7 @@ func (history *History) RawTrades(ctx context.Context, chainID uint64, tokens []
 }
 
 func (store *Store) rawTrades(ctx context.Context, chainID uint64, tokens []string, from, through int64) ([]model.RawTradeAt, error) {
-	var rows []tradeRow
+	var rows []chdb.TradeRow
 	err := store.db.WithContext(ctx).Select(`block_height, block_time, transaction_hash, transaction_index,
 		log_index, operation_index, protocol, dex_address, pool_id, action, sender, trader, recipient,
 		amount_assets, amount_raw, amount_values, amount_decimals, amount_decimals_known,

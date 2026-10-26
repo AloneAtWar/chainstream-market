@@ -70,10 +70,6 @@ func (bootstrap *Bootstrap) Validate() error {
 	if !slices.Contains(intervals, candleInterval) || candleInterval > 24*time.Hour {
 		return fmt.Errorf("conf: rankings.candle_interval %s must be one of market.intervals and at most 24h", candleInterval)
 	}
-	loader := bootstrap.GetChLoader()
-	if loader.GetBatchLag().AsDuration() < 0 || loader.GetFlushRows() < 0 || loader.GetFlushInterval().AsDuration() < 0 {
-		return errors.New("conf: ch_loader settings must be positive")
-	}
 	if err := bootstrap.GetState().Validate(); err != nil {
 		return err
 	}

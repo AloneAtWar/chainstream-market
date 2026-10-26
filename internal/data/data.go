@@ -13,7 +13,6 @@ import (
 	"github.com/AloneAtWar/chainstream-market/internal/conf"
 	"github.com/AloneAtWar/chainstream-market/internal/live"
 	"github.com/AloneAtWar/chainstream-market/internal/market"
-	"github.com/AloneAtWar/chainstream-market/internal/pkg/chdb"
 	"github.com/AloneAtWar/chainstream-market/internal/pkg/config"
 	"github.com/AloneAtWar/chainstream-market/internal/pkg/source"
 	"github.com/AloneAtWar/chainstream-market/internal/storage"
@@ -28,7 +27,6 @@ var ProviderSet = wire.NewSet(
 	NewOutput,
 	NewReader,
 	NewRankingSource,
-	NewRawStore,
 	NewTransferReader,
 	NewHistory,
 	NewStateStore,
@@ -141,18 +139,6 @@ func NewHub(bootstrap *conf.Bootstrap, logger *slog.Logger) (*live.Hub, error) {
 		MaxSubscriptions: int(liveConfig.GetMaxSubscriptions()), OriginPatterns: liveConfig.GetAllowedOrigins(),
 		Logger: logger,
 	})
-}
-
-// Retention turns storage.clickhouse.retention into the store's retention.
-func Retention(retention *config.Retention) chdb.Retention {
-	return chdb.Retention{
-		StoragePolicy: retention.GetStoragePolicy(), ColdVolume: retention.GetColdVolume(),
-		ColdAfterDays: int(retention.GetColdAfterDays()), TradesDays: int(retention.GetTradesDays()),
-		TokenPriceRollupDays: int(retention.GetTokenPriceRollupDays()),
-		CandleCompactDays:    int(retention.GetCandleCompactDays()), CandleDays: retention.CandleDayDurations(),
-		RawTransfersDays: int(retention.GetRawTransfersDays()), RawTradesDays: int(retention.GetRawTradesDays()),
-		OracleUpdatesDays: int(retention.GetOracleUpdatesDays()),
-	}
 }
 
 // closer logs the error of closing a store, since a cleanup cannot return

@@ -30,7 +30,8 @@ storage:
     password: ""
     dial_timeout: 5s
     # Ages rows out by block time, in whole days; 0 keeps them. market-engine
-    # applies this to its tables at startup and ch-loader to the raw ones.
+    # applies this to its tables at startup; ch-loader.yaml has the ages of
+    # the raw ones.
     # Fact tables are partitioned by month; trades and raw tables drop a
     # month whole once its newest row expires, so rows can stay up to a
     # month longer than their age. Changing a value rewrites the affected
@@ -53,10 +54,6 @@ storage:
       token_price_rollup_days: 30
       candle_compact_days: 3
       candle_days: {1m: 30, 5m: 180}
-      # ch-loader raw facts. Asset and pool facts are always kept.
-      raw_transfers_days: 90
-      raw_trades_days: 90
-      oracle_updates_days: 0
 
 # Where checkpoints and market state are kept: memory or postgres.
 # memory: a restart replays each topic from offset zero, and the output store
@@ -99,15 +96,6 @@ market:
   # How long a backfill waits for ch-loader to reach the heights it reads
   # before it falls back to the held trades.
   backfill_wait: 30s
-
-# ch-loader copies raw facts (every ERC-20 transfer, unoriented trades, oracle
-# updates, asset and pool facts) into the storage.clickhouse database; it
-# needs storage.driver: clickhouse. Blocks older than batch_lag are written in
-# batches of up to flush_rows facts or flush_interval; newer blocks one by one.
-ch_loader:
-  batch_lag: 5m
-  flush_rows: 100000
-  flush_interval: 2s
 
 # market-rankings rolls market-engine's ClickHouse output, holder counts and
 # registry metadata into the token_rankings table that market-api lists; it

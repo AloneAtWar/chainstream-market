@@ -25,10 +25,10 @@ func TestHistoryReadsTradesOnceTheLoaderCaughtUp(t *testing.T) {
 	}
 	blocks := []model.RawBlock{testBlock(100), testBlock(101), testBlock(102)}
 	blocks[1].Trades[0].Amounts[0].Asset = "0xother"
-	if err := store.WriteRaw(ctx, blocks); err != nil {
+	if err := chdb.WriteRaw(ctx, store.db, blocks); err != nil {
 		t.Fatalf("WriteRaw() error = %v", err)
 	}
-	if err := store.SaveRawCheckpoint(ctx, chainsync.Checkpoint{ChainID: 1, Offset: 5, Height: 101}); err != nil {
+	if err := chdb.SaveRawCheckpoint(ctx, store.db, chainsync.Checkpoint{ChainID: 1, Offset: 5, Height: 101}); err != nil {
 		t.Fatalf("SaveRawCheckpoint() error = %v", err)
 	}
 	if _, ok, err := history.RawTrades(ctx, 1, []string{token}, 100, 102); err != nil || ok {
@@ -54,15 +54,15 @@ func TestHistoryReadsTradesOnceTheLoaderCaughtUp(t *testing.T) {
 func TestHistoryWaitsForTheLoader(t *testing.T) {
 	ctx := context.Background()
 	store := openTestStore(t)
-	if err := store.SaveRawCheckpoint(ctx, chainsync.Checkpoint{ChainID: 1, Offset: 1, Height: 99}); err != nil {
+	if err := chdb.SaveRawCheckpoint(ctx, store.db, chainsync.Checkpoint{ChainID: 1, Offset: 1, Height: 99}); err != nil {
 		t.Fatalf("SaveRawCheckpoint() error = %v", err)
 	}
 	go func() {
 		time.Sleep(300 * time.Millisecond)
-		if err := store.WriteRaw(ctx, []model.RawBlock{testBlock(100)}); err != nil {
+		if err := chdb.WriteRaw(ctx, store.db, []model.RawBlock{testBlock(100)}); err != nil {
 			t.Errorf("WriteRaw() error = %v", err)
 		}
-		if err := store.SaveRawCheckpoint(ctx, chainsync.Checkpoint{ChainID: 1, Offset: 2, Height: 100}); err != nil {
+		if err := chdb.SaveRawCheckpoint(ctx, store.db, chainsync.Checkpoint{ChainID: 1, Offset: 2, Height: 100}); err != nil {
 			t.Errorf("SaveRawCheckpoint() error = %v", err)
 		}
 	}()

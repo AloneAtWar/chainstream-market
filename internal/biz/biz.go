@@ -9,9 +9,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
-	"time"
 
-	"github.com/AloneAtWar/chainstream-market/internal/chloader"
 	"github.com/AloneAtWar/chainstream-market/internal/conf"
 	"github.com/AloneAtWar/chainstream-market/internal/market"
 	"github.com/AloneAtWar/chainstream-market/internal/pkg/asset"
@@ -29,7 +27,6 @@ import (
 // The provider sets of the commands that consume chain topics.
 var (
 	MarketSet  = wire.NewSet(NewMarketEngines)
-	LoaderSet  = wire.NewSet(NewLoaderEngines)
 	RankingSet = wire.NewSet(NewRefreshers)
 )
 
@@ -147,48 +144,6 @@ func ResolveFeeds(ctx context.Context, chain *config.Chain, logger *slog.Logger)
 		}
 	}
 	return feeds, nil
-}
-
-// NewLoaderEngines builds ch-loader's loader and engine per chain. A chain that stops cleanly writes its buffered batch, so
-// a restart replays less.
-func NewLoaderEngines(
-	chains []*config.Chain,
-	loaderConfig *conf.ChLoader,
-	sources *source.Sources,
-	store storage.RawStore,
-	logger *slog.Logger,
-) (Runners, error) {
-	runners := make(Runners, 0, len(chains))
-	for _, chain := range chains {
-		loader, err := chloader.New(chloader.Options{
-			ChainID: chain.GetChainId(), Store: store, BatchLag: loaderConfig.GetBatchLag().AsDuration(),
-			FlushRows: int(loaderConfig.GetFlushRows()), FlushInterval: loaderConfig.GetFlushInterval().AsDuration(),
-			Logger: logger.With("chain", chain.GetName()),
-		})
-		if err != nil {
-			return nil, fmt.Errorf("chain %s: %w", chain.GetName(), err)
-		}
-		chainEngine, err := chainsync.New(chainsync.Options{
-			ChainID: chain.GetChainId(), Chain: chain.GetName(), Handler: loader, Logger: logger,
-			Open: sources.Opener(chain.GetTopic()),
-		})
-		if err != nil {
-			return nil, fmt.Errorf("chain %s: %w", chain.GetName(), err)
-		}
-		name := chain.GetName()
-		runners = append(runners, Runner{Name: "chain " + name, Run: func(ctx context.Context) error {
-			if err := chainEngine.Run(ctx); err != nil {
-				return err
-			}
-			flushCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
-			defer cancel()
-			if err := loader.Flush(flushCtx); err != nil {
-				logger.Error("flush on stop", "chain", name, "error", err)
-			}
-			return nil
-		}})
-	}
-	return runners, nil
 }
 
 // NewRefreshers builds market-rankings' refresher per chain.

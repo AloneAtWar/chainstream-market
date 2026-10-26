@@ -12,6 +12,7 @@ import (
 	"regexp"
 	"time"
 
+	"github.com/AloneAtWar/chainstream-market/internal/pkg/config"
 	chgo "github.com/ClickHouse/clickhouse-go/v2"
 	"gorm.io/driver/clickhouse"
 	"gorm.io/gorm"
@@ -110,3 +111,22 @@ func Insert(ctx context.Context, db *gorm.DB, rows any) error {
 type ArrayParam[T any] []T
 
 func (values ArrayParam[T]) Value() (driver.Value, error) { return []T(values), nil }
+
+// OpenConfig connects to the database the clickhouse section names, creating
+// it if needed, for a component's data layer, which creates the tables it
+// uses. The returned func closes the connection and logs the error.
+func OpenConfig(ctx context.Context, clickhouse *config.ClickHouse, logger *slog.Logger) (*gorm.DB, func(), error) {
+	db, err := Connect(ctx, Options{
+		Addr: clickhouse.GetAddr(), Database: clickhouse.GetDatabase(),
+		Username: clickhouse.GetUsername(), Password: clickhouse.GetPassword(),
+		DialTimeout: clickhouse.GetDialTimeout().AsDuration(), Logger: logger,
+	})
+	if err != nil {
+		return nil, nil, err
+	}
+	return db, func() {
+		if err := Close(db); err != nil && !errors.Is(err, context.Canceled) {
+			logger.Error("close clickhouse", "error", err)
+		}
+	}, nil
+}

@@ -29,10 +29,6 @@ chains:
 	if bootstrap.Source.Driver != config.SourceKafka || bootstrap.Live.Driver != config.LiveKafka {
 		t.Fatalf("source driver = %q, live driver = %q", bootstrap.Source.Driver, bootstrap.Live.Driver)
 	}
-	if bootstrap.ChLoader.BatchLag.AsDuration() != defaultLoaderBatchLag || bootstrap.ChLoader.FlushRows != defaultLoaderFlushRows ||
-		bootstrap.ChLoader.FlushInterval.AsDuration() != defaultLoaderFlushInterval {
-		t.Fatalf("ch_loader defaults = %+v", bootstrap.ChLoader)
-	}
 	if bootstrap.State.Driver != config.StateMemory {
 		t.Fatalf("state driver = %q", bootstrap.State.Driver)
 	}
@@ -69,7 +65,6 @@ func TestParseRejectsInvalidConfig(t *testing.T) {
 		"unknown state":          "kafka: {brokers: [b]}\nstate: {driver: redis}\nchains: [{name: eth, chain_id: 1, topic: a}]",
 		"negative rankings":      "kafka: {brokers: [b]}\nrankings: {refresh_interval: -1s}\nchains: [{name: eth, chain_id: 1, topic: a}]",
 		"unknown candle":         "kafka: {brokers: [b]}\nrankings: {candle_interval: 2m}\nchains: [{name: eth, chain_id: 1, topic: a}]",
-		"negative ch_loader":     "kafka: {brokers: [b]}\nch_loader: {flush_rows: -1}\nchains: [{name: eth, chain_id: 1, topic: a}]",
 		"negative live":          "kafka: {brokers: [b]}\nlive: {client_buffer: -1}\nchains: [{name: eth, chain_id: 1, topic: a}]",
 		"live topic reused":      "kafka: {brokers: [b]}\nlive: {enabled: true}\nchains: [{name: eth, chain_id: 1, topic: a, live_topic: b}, {name: base, chain_id: 2, topic: b}]",
 		"live topic twice":       "kafka: {brokers: [b]}\nlive: {enabled: true}\nchains: [{name: eth, chain_id: 1, topic: a, live_topic: l}, {name: base, chain_id: 2, topic: b, live_topic: l}]",

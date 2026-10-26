@@ -9,7 +9,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/AloneAtWar/chainstream-market/internal/pkg/chainsync"
 	"github.com/AloneAtWar/chainstream-market/internal/pkg/chdb"
 	"github.com/AloneAtWar/chainstream-market/internal/pkg/model"
 )
@@ -78,83 +77,15 @@ func testBlock(height int64) model.RawBlock {
 	}
 }
 
-func count(t *testing.T, store *Store, table string) uint64 {
-	t.Helper()
-	var rows uint64
-	if err := store.db.WithContext(context.Background()).Raw("SELECT count() FROM " + table).Row().Scan(&rows); err != nil {
-		t.Fatalf("count %s: %v", table, err)
-	}
-	return rows
-}
-
-func assertBlocks(t *testing.T, store *Store, want uint64) {
-	t.Helper()
-	for _, table := range tables {
-		perBlock := uint64(1)
-		if table == "raw_transfers" {
-			perBlock = 2
-		}
-		if got := count(t, store, table); got != want*perBlock {
-			t.Fatalf("%s rows = %d, want %d", table, got, want*perBlock)
-		}
-	}
-}
-
-func TestStoreWritesDeletesAndCheckpoints(t *testing.T) {
-	ctx := context.Background()
-	store := openTestStore(t)
-	if _, ok, err := store.LoadRawCheckpoint(ctx, 1); err != nil || ok {
-		t.Fatalf("empty LoadRawCheckpoint() = %v, %v", ok, err)
-	}
-	if err := store.WriteRaw(ctx, []model.RawBlock{testBlock(100), testBlock(101), {ChainID: 1, Height: 102}}); err != nil {
-		t.Fatalf("WriteRaw() error = %v", err)
-	}
-	assertBlocks(t, store, 2)
-
-	// A replay deletes the height and everything above, then inserts again.
-	if err := store.DeleteRawAbove(ctx, 1, 100); err != nil {
-		t.Fatalf("DeleteRawAbove() error = %v", err)
-	}
-	assertBlocks(t, store, 1)
-	if err := store.WriteRaw(ctx, []model.RawBlock{testBlock(101)}); err != nil {
-		t.Fatalf("replay WriteRaw() error = %v", err)
-	}
-	assertBlocks(t, store, 2)
-
-	var amounts []string
-	var bin *uint32
-	if err := store.db.WithContext(ctx).Raw("SELECT amount_raw, active_bin_id FROM raw_trades WHERE block_height = 101").Row().Scan(&amounts, &bin); err != nil {
-		t.Fatalf("read trade: %v", err)
-	}
-	if strings.Join(amounts, ",") != "-100,5" || bin == nil || *bin != 8388608 {
-		t.Fatalf("trade amounts = %v, bin = %v", amounts, bin)
-	}
-	var answer string
-	if err := store.db.WithContext(ctx).Raw("SELECT toString(answer) FROM oracle_updates WHERE block_height = 101").Row().Scan(&answer); err != nil || answer != "-5" {
-		t.Fatalf("oracle answer = %q, %v", answer, err)
-	}
-
-	for offset, height := range []int64{100, 101} {
-		checkpoint := chainsync.Checkpoint{ChainID: 1, Offset: int64(offset), Height: height, Hash: fmt.Sprintf("0x%d", height)}
-		if err := store.SaveRawCheckpoint(ctx, checkpoint); err != nil {
-			t.Fatalf("SaveRawCheckpoint() error = %v", err)
-		}
-	}
-	checkpoint, ok, err := store.LoadRawCheckpoint(ctx, 1)
-	if err != nil || !ok || checkpoint.Offset != 1 || checkpoint.Height != 101 || checkpoint.Hash != "0x101" {
-		t.Fatalf("LoadRawCheckpoint() = %+v, %v, %v", checkpoint, ok, err)
-	}
-}
-
 func TestTransfersPagesNewestFirst(t *testing.T) {
 	ctx := context.Background()
 	store := openTestStore(t)
-	if err := store.WriteRaw(ctx, []model.RawBlock{testBlock(100), testBlock(101)}); err != nil {
+	if err := chdb.WriteRaw(ctx, store.db, []model.RawBlock{testBlock(100), testBlock(101)}); err != nil {
 		t.Fatalf("WriteRaw() error = %v", err)
 	}
 	other := testBlock(102)
 	other.Transfers = []model.RawTransfer{{LogIndex: 0, Token: "0xother", From: alice, To: "0xcc", Amount: big.NewInt(1)}}
-	if err := store.WriteRaw(ctx, []model.RawBlock{other}); err != nil {
+	if err := chdb.WriteRaw(ctx, store.db, []model.RawBlock{other}); err != nil {
 		t.Fatalf("WriteRaw() error = %v", err)
 	}
 
@@ -204,7 +135,7 @@ func TestTransfersPagesNewestFirst(t *testing.T) {
 func TestHolderFilterUsesPartyIndex(t *testing.T) {
 	ctx := context.Background()
 	store := openTestStore(t)
-	if err := store.WriteRaw(ctx, []model.RawBlock{testBlock(100)}); err != nil {
+	if err := chdb.WriteRaw(ctx, store.db, []model.RawBlock{testBlock(100)}); err != nil {
 		t.Fatalf("WriteRaw() error = %v", err)
 	}
 	rows, err := store.db.WithContext(ctx).Raw(
@@ -223,32 +154,5 @@ func TestHolderFilterUsesPartyIndex(t *testing.T) {
 	}
 	if !strings.Contains(plan.String(), "raw_transfers_party") {
 		t.Fatalf("plan does not use raw_transfers_party:\n%s", plan.String())
-	}
-}
-
-// Old transfers and trades are dropped a month at a time; asset and pool
-// facts stay.
-func TestRetentionDropsOldFacts(t *testing.T) {
-	ctx := context.Background()
-	store := openTestStore(t)
-	retention := chdb.Retention{RawTransfersDays: 30, RawTradesDays: 30}
-	if err := store.ApplyRetention(ctx, retention); err != nil {
-		t.Fatalf("ApplyRetention() error = %v", err)
-	}
-	recent := testBlock(200)
-	recent.BlockTime = time.Now().UTC()
-	if err := store.WriteRaw(ctx, []model.RawBlock{testBlock(100), recent}); err != nil {
-		t.Fatalf("WriteRaw() error = %v", err)
-	}
-	for _, table := range tables {
-		if err := store.db.WithContext(ctx).Exec("OPTIMIZE TABLE " + table + " FINAL").Error; err != nil {
-			t.Fatalf("optimize %s: %v", table, err)
-		}
-	}
-	want := map[string]uint64{"raw_transfers": 2, "raw_trades": 1, "oracle_updates": 2, "asset_facts": 2, "pool_facts": 2}
-	for table, rows := range want {
-		if got := count(t, store, table); got != rows {
-			t.Errorf("%s rows = %d, want %d", table, got, rows)
-		}
 	}
 }

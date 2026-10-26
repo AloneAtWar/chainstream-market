@@ -1,0 +1,31 @@
+syntax = "proto3";
+
+package app.loader.conf;
+
+option go_package = "github.com/AloneAtWar/chainstream-market/internal/app/loader/conf;conf";
+
+import "google/protobuf/duration.proto";
+import "pkg/config/common.proto";
+
+// Bootstrap is ch-loader's configuration; configs/ch-loader.yaml documents
+// every setting. Durations may be written as Go durations such as 500ms or
+// 5m.
+message Bootstrap {
+  pkg.config.Source source = 1;
+  pkg.config.Kafka kafka = 2;
+  // clickhouse is the database the raw tables live in. Of its retention,
+  // the cold tier and the raw_* and oracle_updates ages apply here.
+  pkg.config.ClickHouse clickhouse = 3;
+  pkg.config.Metrics metrics = 4;
+  repeated pkg.config.Chain chains = 5;
+  Loader loader = 6;
+}
+
+// Loader tunes how ch-loader writes. Blocks older than batch_lag are written
+// in batches of up to flush_rows facts or flush_interval; newer blocks are
+// written one by one.
+message Loader {
+  google.protobuf.Duration batch_lag = 1;
+  int32 flush_rows = 2;
+  google.protobuf.Duration flush_interval = 3;
+}

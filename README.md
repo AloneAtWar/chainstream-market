@@ -68,7 +68,7 @@ Rows are keyed by `(chain_id, height)`. A revert deletes every row above `rollba
 
 ### Retention and cold storage
 
-Every fact table except `blocks` is partitioned by month (`candles` by interval and month). `storage.clickhouse.retention` turns that into TTLs, in whole days of block time (a candle's open time); zero keeps rows. market-engine sets the TTLs of `trades`, `token_prices` and `candles` at startup, and ch-loader those of its raw tables. market-api and market-rankings open the same tables without touching them.
+Every fact table except `blocks` is partitioned by month (`candles` by interval and month). `storage.clickhouse.retention` turns that into TTLs, in whole days of block time (a candle's open time); zero keeps rows. market-engine sets the TTLs of `trades`, `token_prices` and `candles` at startup, and ch-loader, from its own `clickhouse.retention`, those of its raw tables. market-api and market-rankings open the same tables without touching them.
 
 | Setting | Effect |
 | --- | --- |
@@ -262,7 +262,7 @@ Name, symbol and decimals come from market-registry. The response includes `refr
 ## ch-loader
 
 ```sh
-go run ./cmd/ch-loader -conf configs/config.yaml   # needs storage.driver: clickhouse
+go run ./cmd/ch-loader -conf configs/ch-loader.yaml   # needs clickhouse.addr
 ```
 
 ch-loader reads each chain topic on its own checkpoint and stores the facts chainstream-evm published, without deriving anything. Addresses are lowercased; everything else is as published. It writes these tables in the `storage.clickhouse` database:
@@ -281,7 +281,7 @@ Fact tables are sorted by `(chain_id, block_height, ...)`, where `block_height` 
 - **Checkpoint in ClickHouse.** ClickHouse has no transactions, so a flush inserts the facts first and the checkpoint after them. The checkpoint lives in the same database as the facts, so dropping or restoring that database moves them together, and ch-loader needs no PostgreSQL.
 - **Replays.** A crash can leave facts above the checkpoint. After a restart, the first block or revert deletes everything above the checkpoint's next height before inserting, so a replay leaves one copy. A flush that failed part way is cleared the same way before it is retried.
 - **Reorgs.** A revert drops buffered blocks above `rollback_to` and deletes stored facts above it with lightweight `DELETE`. Raw facts need no undo history, so any depth of reorg can be reverted.
-- **Batching.** Blocks older than `ch_loader.batch_lag` (catching up) are buffered and written together once `flush_rows` facts or `flush_interval` accumulate, one insert per table. Newer blocks are written on their own commit, so the API sees them right away. A clean stop writes the buffer.
+- **Batching.** Blocks older than `loader.batch_lag` (catching up) are buffered and written together once `flush_rows` facts or `flush_interval` accumulate, one insert per table. Newer blocks are written on their own commit, so the API sees them right away. A clean stop writes the buffer.
 
 ## Pricing and candles
 

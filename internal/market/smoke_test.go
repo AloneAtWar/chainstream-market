@@ -10,7 +10,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/AloneAtWar/chainstream-market/internal/chloader"
 	"github.com/AloneAtWar/chainstream-market/internal/pkg/asset"
 	"github.com/AloneAtWar/chainstream-market/internal/pkg/chainsync"
 	"github.com/AloneAtWar/chainstream-market/internal/pkg/chdb"
@@ -26,6 +25,7 @@ import (
 	"github.com/twmb/franz-go/pkg/kfake"
 	"github.com/twmb/franz-go/pkg/kgo"
 	"google.golang.org/protobuf/proto"
+	"gorm.io/gorm"
 )
 
 const smokeTopic = "chainstream-eth"
@@ -53,7 +53,7 @@ type marketSmoke struct {
 	state    *countingState
 	// raw, when set, is ch-loader's store: run then loads the topic into it
 	// alongside market-engine.
-	raw    *chraw.Store
+	raw    *gorm.DB
 	offset int64
 	// processor builds the engine's processor on every run.
 	processor func(t *testing.T) *Processor
@@ -173,16 +173,12 @@ func (s *marketSmoke) run() {
 	}
 }
 
-// load runs ch-loader over the topic until ctx ends, writing every block on
-// its own commit.
+// load stands in for ch-loader over the topic until ctx ends, writing every
+// block on its own commit.
 func (s *marketSmoke) load(ctx context.Context, kafka source.KafkaOptions) <-chan error {
 	s.t.Helper()
-	loader, err := chloader.New(chloader.Options{ChainID: 1, Store: s.raw})
-	if err != nil {
-		s.t.Fatalf("chloader.New() error = %v", err)
-	}
 	loaderEngine, err := chainsync.New(chainsync.Options{
-		ChainID: 1, Chain: "eth", Handler: loader,
+		ChainID: 1, Chain: "eth", Handler: &rawLoader{db: s.raw},
 		Open: func(start int64) (source.Source, error) { return source.NewKafka(kafka, start) },
 	})
 	if err != nil {
@@ -191,6 +187,50 @@ func (s *marketSmoke) load(ctx context.Context, kafka source.KafkaOptions) <-cha
 	done := make(chan error, 1)
 	go func() { done <- loaderEngine.Run(ctx) }()
 	return done
+}
+
+// rawLoader writes what ch-loader would: each block's raw facts, then its
+// checkpoint. A revert deletes the facts above it.
+type rawLoader struct {
+	db      *gorm.DB
+	pending []model.RawBlock
+}
+
+func (loader *rawLoader) Restore(ctx context.Context, chainID uint64) (chainsync.Checkpoint, bool, error) {
+	return chdb.LoadRawCheckpoint(ctx, loader.db, chainID)
+}
+
+func (loader *rawLoader) Apply(_ context.Context, block *streamv1.BlockEvent) error {
+	raw, err := model.NewRawBlock(block)
+	if err != nil {
+		return err
+	}
+	loader.pending = append(loader.pending, raw)
+	return nil
+}
+
+func (loader *rawLoader) Revert(ctx context.Context, rollbackTo int64) error {
+	return loader.deleteAbove(ctx, 1, rollbackTo)
+}
+
+func (loader *rawLoader) Commit(ctx context.Context, checkpoint chainsync.Checkpoint) error {
+	if len(loader.pending) > 0 {
+		if err := chdb.WriteRaw(ctx, loader.db, loader.pending); err != nil {
+			return err
+		}
+		loader.pending = loader.pending[:0]
+	}
+	return chdb.SaveRawCheckpoint(ctx, loader.db, checkpoint)
+}
+
+func (loader *rawLoader) deleteAbove(ctx context.Context, chainID uint64, height int64) error {
+	for _, table := range chdb.RawTables {
+		if err := loader.db.WithContext(ctx).Exec("DELETE FROM "+table+" WHERE chain_id = ? AND block_height > ?",
+			chainID, height).Error; err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // memeTrades lists MEME trades newest first as height:log.
@@ -368,7 +408,16 @@ func TestSmokeBackfillThroughKafka(t *testing.T) {
 			t.Errorf("Close() error = %v", closeErr)
 		}
 	})
-	s.raw = raw
+	db, err := chdb.Connect(context.Background(), s.options)
+	if err != nil {
+		t.Fatalf("Connect() error = %v", err)
+	}
+	t.Cleanup(func() {
+		if closeErr := chdb.Close(db); closeErr != nil {
+			t.Errorf("Close() error = %v", closeErr)
+		}
+	})
+	s.raw = db
 	history := chraw.NewHistory(raw, 10*time.Second)
 	s.processor = func(t *testing.T) *Processor { return newBackfillProcessor(t, history, 0, 0) }
 	memePrices := func() string {

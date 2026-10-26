@@ -116,7 +116,8 @@ func (state *State) Validate() error {
 }
 
 // Validate checks that no age is negative, that the cold tier is configured
-// whole, and that every candle age names one of intervals.
+// whole, and that every candle age names one of intervals. A component
+// without candles passes nil intervals, and its candle ages are not checked.
 func (retention *Retention) Validate(intervals []time.Duration) error {
 	ages := []int32{
 		retention.GetColdAfterDays(), retention.GetTradesDays(), retention.GetTokenPriceRollupDays(),
@@ -125,7 +126,7 @@ func (retention *Retention) Validate(intervals []time.Duration) error {
 	}
 	for key, age := range retention.GetCandleDays() {
 		interval, err := time.ParseDuration(key)
-		if err != nil || !slices.Contains(intervals, interval) {
+		if intervals != nil && (err != nil || !slices.Contains(intervals, interval)) {
 			return fmt.Errorf("conf: storage.clickhouse.retention.candle_days %s is not one of market.intervals", key)
 		}
 		ages = append(ages, age)

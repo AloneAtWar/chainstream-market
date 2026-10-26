@@ -123,7 +123,7 @@ services:
 
   ch-loader:
     <<: *market
-    command: ["/usr/local/bin/ch-loader", "-conf", "/etc/chainstream-market/config.yaml"]
+    command: ["/usr/local/bin/ch-loader", "-conf", "/etc/chainstream-market/ch-loader.yaml"]
 
   holder-indexer:
     <<: *market

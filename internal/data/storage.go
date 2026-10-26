@@ -138,7 +138,7 @@ type retainer interface {
 // out.
 func retain(ctx context.Context, store any, config *config.Storage) error {
 	if store, ok := store.(retainer); ok {
-		return store.ApplyRetention(ctx, Retention(config.GetClickhouse().GetRetention()))
+		return store.ApplyRetention(ctx, chdb.NewRetention(config.GetClickhouse().GetRetention()))
 	}
 	return nil
 }
@@ -165,19 +165,6 @@ func NewReader(backend *MarketBackend) (storage.Reader, error) {
 // output through.
 func NewRankingSource(backend *MarketBackend) (storage.RankingSource, error) {
 	return Role[storage.RankingSource](backend.Backend)
-}
-
-// NewRawStore returns ch-loader's raw store and applies the backend's
-// retention.
-func NewRawStore(ctx context.Context, backend *RawBackend, config *config.Storage) (storage.RawStore, error) {
-	store, err := Role[storage.RawStore](backend.Backend)
-	if err != nil {
-		return nil, err
-	}
-	if err := retain(ctx, store, config); err != nil {
-		return nil, err
-	}
-	return store, nil
 }
 
 // NewTransferReader returns what market-api reads ch-loader's transfers

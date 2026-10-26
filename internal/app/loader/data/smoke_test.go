@@ -1,4 +1,4 @@
-package chloader
+package data
 
 import (
 	"context"
@@ -10,11 +10,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/AloneAtWar/chainstream-market/internal/app/loader/biz"
 	"github.com/AloneAtWar/chainstream-market/internal/pkg/chainsync"
 	"github.com/AloneAtWar/chainstream-market/internal/pkg/chdb"
 	"github.com/AloneAtWar/chainstream-market/internal/pkg/model"
 	"github.com/AloneAtWar/chainstream-market/internal/pkg/source"
-	"github.com/AloneAtWar/chainstream-market/internal/storage/chraw"
 	streamv1 "github.com/AloneAtWar/chainstream-market/proto/stream/v1"
 	"github.com/twmb/franz-go/pkg/kfake"
 	"github.com/twmb/franz-go/pkg/kgo"
@@ -32,7 +32,7 @@ type smoke struct {
 	cluster  *kfake.Cluster
 	producer *kgo.Client
 	options  chdb.Options
-	store    *chraw.Store
+	repo     *rawRepo
 	offset   int64
 }
 
@@ -57,23 +57,19 @@ func newSmoke(t *testing.T) *smoke {
 		Database: fmt.Sprintf("loader_test_%d", time.Now().UnixNano()),
 		Username: os.Getenv("CLICKHOUSE_USER"), Password: os.Getenv("CLICKHOUSE_PASSWORD"),
 	}
-	store, err := chraw.Open(context.Background(), options)
+	db, err := chdb.Connect(context.Background(), options)
 	if err != nil {
-		t.Fatalf("Open() error = %v", err)
+		t.Fatalf("Connect() error = %v", err)
 	}
 	t.Cleanup(func() {
-		db, connErr := chdb.Connect(context.Background(), options)
-		if connErr == nil {
-			connErr = errors.Join(db.Exec("DROP DATABASE IF EXISTS "+options.Database).Error, chdb.Close(db))
-		}
-		if connErr != nil {
-			t.Errorf("drop database: %v", connErr)
-		}
-		if err := store.Close(); err != nil {
-			t.Errorf("Close() error = %v", err)
+		if err := errors.Join(db.Exec("DROP DATABASE IF EXISTS "+options.Database).Error, chdb.Close(db)); err != nil {
+			t.Errorf("drop database: %v", err)
 		}
 	})
-	return &smoke{t: t, cluster: cluster, producer: producer, options: options, store: store, offset: -1}
+	if err := chdb.Migrate(context.Background(), db, chdb.RawSchema); err != nil {
+		t.Fatalf("Migrate() error = %v", err)
+	}
+	return &smoke{t: t, cluster: cluster, producer: producer, options: options, repo: &rawRepo{db: db}, offset: -1}
 }
 
 func (s *smoke) produce(records ...*streamv1.StreamRecord) {
@@ -92,10 +88,10 @@ func (s *smoke) produce(records ...*streamv1.StreamRecord) {
 
 // run consumes until the checkpoint reaches the last produced record, then
 // stops the engine the way ch-loader does.
-func (s *smoke) run(options Options) {
+func (s *smoke) run(options biz.Options) {
 	s.t.Helper()
-	options.ChainID, options.Store = 1, s.store
-	loader, err := New(options)
+	options.ChainID, options.Repo = 1, s.repo
+	loader, err := biz.New(options)
 	if err != nil {
 		s.t.Fatalf("New() error = %v", err)
 	}
@@ -137,7 +133,7 @@ func (s *smoke) run(options Options) {
 
 // observed reports how far the engine has committed, plus one.
 type observed struct {
-	*Loader
+	*biz.Loader
 	committed atomic.Int64
 }
 
@@ -151,9 +147,11 @@ func (handler *observed) Commit(ctx context.Context, checkpoint chainsync.Checkp
 
 func (s *smoke) transfers() string {
 	s.t.Helper()
-	transfers, err := s.store.Transfers(context.Background(), model.TransferQuery{ChainID: 1, Token: smokeToken, Limit: 100})
+	var transfers []chdb.TransferRow
+	err := s.repo.db.Where("chain_id = 1 AND token = ?", smokeToken).
+		Order("block_height DESC, log_index DESC").Find(&transfers).Error
 	if err != nil {
-		s.t.Fatalf("Transfers() error = %v", err)
+		s.t.Fatalf("read transfers: %v", err)
 	}
 	keys := make([]string, len(transfers))
 	for index, transfer := range transfers {
@@ -189,22 +187,22 @@ func TestSmokeKafkaToClickHouse(t *testing.T) {
 		smokeBlock(102, "0xa102", "0xa101", 3, head), smokeRevert(100),
 		smokeBlock(101, "0xb101", "0xa100", 20, head), smokeBlock(102, "0xb102", "0xb101", 30, head),
 	)
-	s.run(Options{})
+	s.run(biz.Options{})
 	if got := s.transfers(); got != "102:30 101:20 100:1" {
 		t.Fatalf("after reorg transfers = %s", got)
 	}
 
 	// A crash after writing block 103's facts but before its checkpoint.
 	partial := smokeBlock(103, "0xb103", "0xb102", 40, head).GetBlock()
-	raw, err := convert(partial)
+	raw, err := model.NewRawBlock(partial)
 	if err != nil {
-		t.Fatalf("convert() error = %v", err)
+		t.Fatalf("NewRawBlock() error = %v", err)
 	}
-	if err = s.store.WriteRaw(context.Background(), []model.RawBlock{raw}); err != nil {
+	if err = s.repo.WriteRaw(context.Background(), []model.RawBlock{raw}); err != nil {
 		t.Fatalf("WriteRaw() error = %v", err)
 	}
 	s.produce(&streamv1.StreamRecord{Payload: &streamv1.StreamRecord_Block{Block: partial}})
-	s.run(Options{})
+	s.run(biz.Options{})
 	if got := s.transfers(); got != "103:40 102:30 101:20 100:1" {
 		t.Fatalf("after replay transfers = %s", got)
 	}
@@ -217,11 +215,11 @@ func TestSmokeKafkaToClickHouse(t *testing.T) {
 		s.produce(smokeBlock(height, hash, parent, int(height), old))
 		parent = hash
 	}
-	s.run(Options{BatchLag: time.Minute, FlushRows: 7, FlushInterval: time.Hour})
+	s.run(biz.Options{BatchLag: time.Minute, FlushRows: 7, FlushInterval: time.Hour})
 	if got := s.transfers(); !strings.HasPrefix(got, "109:109 108:108 107:107 106:106 105:105 104:104 103:40") {
 		t.Fatalf("after catch-up transfers = %s", got)
 	}
-	checkpoint, ok, err := s.store.LoadRawCheckpoint(context.Background(), 1)
+	checkpoint, ok, err := s.repo.LoadRawCheckpoint(context.Background(), 1)
 	if err != nil || !ok || checkpoint.Height != 109 || checkpoint.Offset != s.offset || checkpoint.Hash != "0xb109" {
 		t.Fatalf("checkpoint = %+v, %v, %v", checkpoint, ok, err)
 	}

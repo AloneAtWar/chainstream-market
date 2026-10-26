@@ -1,0 +1,68 @@
+# ch-loader copies every chain's raw facts (every ERC-20 transfer,
+# unoriented trades, oracle updates, asset and pool facts) into ClickHouse,
+# where market-api reads the transfers and market-engine's backfills the
+# trades. Durations may be written as Go durations such as 500ms or 5m; any
+# ${NAME} or ${NAME:default} is read from the environment.
+
+# Where chain topics are read from: kafka or file.
+# kafka: each chain's topic on the kafka brokers below.
+# file: <file.dir>/<topic>.jsonl, one stream.v1.StreamRecord in protobuf JSON
+#   per line, as chainstream-evm writes with output.type file and
+#   output.file.format protojson. The file is followed as it grows; a
+#   record's offset is its index among the non-blank lines.
+source:
+  driver: kafka
+  file:
+    dir: data
+    poll_interval: 200ms
+
+kafka:
+  brokers:
+    - 127.0.0.1:9092
+  client_id: ch-loader
+  # Must be >= chainstream-evm's max_message_bytes.
+  fetch_max_bytes: 104857600
+  fetch_max_wait: 500ms
+
+# The database of the raw tables. ch-loader creates them if needed.
+clickhouse:
+  addr:
+    - 127.0.0.1:9000
+  database: market
+  username: default
+  password: ""
+  dial_timeout: 5s
+  # Ages raw facts out by block time, in whole days; 0 keeps them. ch-loader
+  # applies this to the raw tables at startup. They are partitioned by month
+  # and drop a month whole once its newest row expires, so rows can stay up
+  # to a month longer than their age. Changing a value rewrites the affected
+  # tables' parts in the background. Asset and pool facts are always kept.
+  retention:
+    # Cold tier: parts older than cold_after_days move to cold_volume of
+    # storage_policy, a policy defined in the ClickHouse server config with
+    # a "default" volume for hot parts (tables created without a policy
+    # live there) and the cold volume. Set both or neither; a table cannot
+    # go back to its old policy.
+    storage_policy: ""
+    cold_volume: cold
+    cold_after_days: 0
+    raw_transfers_days: 90
+    raw_trades_days: 90
+    oracle_updates_days: 0
+
+# Blocks older than batch_lag are written in batches of up to flush_rows
+# facts or flush_interval; newer blocks one by one.
+loader:
+  batch_lag: 5m
+  flush_rows: 100000
+  flush_interval: 2s
+
+# Prometheus metrics at /metrics on addr; empty turns them off.
+metrics:
+  addr: ""
+
+# One chainstream-evm topic per chain, each consumed in order.
+chains:
+  - {name: eth, chain_id: 1, topic: chainstream-eth}
+  - {name: bsc, chain_id: 56, topic: chainstream-bsc}
+  - {name: base, chain_id: 8453, topic: chainstream-base}

@@ -17,8 +17,6 @@ message Bootstrap {
   Market market = 4;
   API api = 5;
   Rankings rankings = 8;
-  // ch_loader is named after the ch-loader command.
-  ChLoader ch_loader = 9;
   pkg.config.Live live = 10;
   pkg.config.Metrics metrics = 11;
   repeated pkg.config.Chain chains = 12;
@@ -78,15 +76,7 @@ message Rankings {
   google.protobuf.Duration reorg_window = 3;
 }
 
-// ChLoader tunes ch-loader, which copies raw chain facts into the
-// storage.clickhouse database. Blocks older than batch_lag are written in
-// batches of up to flush_rows facts or flush_interval; newer blocks are
-// written one by one.
-message ChLoader {
-  google.protobuf.Duration batch_lag = 1;
-  int32 flush_rows = 2;
-  google.protobuf.Duration flush_interval = 3;
-}
+
 
 
 

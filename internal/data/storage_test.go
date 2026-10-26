@@ -24,10 +24,8 @@ var (
 		retainer
 	} = (*chstore.Store)(nil)
 	_ interface {
-		storage.RawStore
 		storage.TransferReader
 		historian
-		retainer
 	} = (*chraw.Store)(nil)
 	_ interface {
 		storage.StateStore
