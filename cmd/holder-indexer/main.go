@@ -6,7 +6,6 @@ import (
 	"context"
 	"errors"
 	"flag"
-	"fmt"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -59,9 +58,6 @@ func run(logger *slog.Logger) (resultErr error) {
 		return err
 	}
 	defer func() { resultErr = errors.Join(resultErr, closeConfig()) }()
-	if bootstrap.State.Driver != conf.StatePostgres {
-		return fmt.Errorf("holder-indexer needs state.driver %q, got %q", conf.StatePostgres, bootstrap.State.Driver)
-	}
 	if metricsAddr != "" {
 		bootstrap.Metrics.Addr = metricsAddr
 	}

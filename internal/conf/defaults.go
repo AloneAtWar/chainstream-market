@@ -15,12 +15,21 @@ const (
 	StateMemory   = "memory"
 	StatePostgres = "postgres"
 
+	SourceKafka = "kafka"
+	SourceFile  = "file"
+
+	LiveKafka = "kafka"
+	LiveRedis = "redis"
+
 	defaultClickHouseDatabase = "market"
 	defaultAPIAddr            = ":8080"
 	defaultColdVolume         = "cold"
 
 	defaultFetchMaxBytes = 104857600
 	defaultFetchMaxWait  = 500 * time.Millisecond
+
+	defaultSourcePollInterval = 200 * time.Millisecond
+	defaultRedisDialTimeout   = 5 * time.Second
 
 	defaultMinLiquidityUSD       = 1000
 	defaultCandleMinLiquidityUSD = 10000
@@ -68,6 +77,12 @@ func (bootstrap *Bootstrap) applyDefaults() {
 	if bootstrap.Kafka == nil {
 		bootstrap.Kafka = &Kafka{}
 	}
+	if bootstrap.Source == nil {
+		bootstrap.Source = &Source{}
+	}
+	if bootstrap.Source.File == nil {
+		bootstrap.Source.File = &FileSource{}
+	}
 	if bootstrap.Storage == nil {
 		bootstrap.Storage = &Storage{}
 	}
@@ -103,6 +118,9 @@ func (bootstrap *Bootstrap) applyDefaults() {
 	}
 	if bootstrap.Live == nil {
 		bootstrap.Live = &Live{}
+	}
+	if bootstrap.Live.Redis == nil {
+		bootstrap.Live.Redis = &Redis{}
 	}
 	if bootstrap.Metrics == nil {
 		bootstrap.Metrics = &Metrics{}
@@ -189,7 +207,16 @@ func (bootstrap *Bootstrap) applyDefaults() {
 	}
 	defaultDuration(&loader.FlushInterval, defaultLoaderFlushInterval)
 
+	if strings.TrimSpace(bootstrap.Source.Driver) == "" {
+		bootstrap.Source.Driver = SourceKafka
+	}
+	defaultDuration(&bootstrap.Source.File.PollInterval, defaultSourcePollInterval)
+
 	live := bootstrap.Live
+	if strings.TrimSpace(live.Driver) == "" {
+		live.Driver = LiveKafka
+	}
+	defaultDuration(&live.Redis.DialTimeout, defaultRedisDialTimeout)
 	defaultDuration(&live.MaxLag, defaultLiveMaxLag)
 	defaultDuration(&live.CandleThrottle, defaultLiveCandleThrottle)
 	if live.ClientBuffer == 0 {

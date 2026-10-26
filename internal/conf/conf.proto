@@ -23,9 +23,30 @@ message Bootstrap {
   Live live = 10;
   Metrics metrics = 11;
   repeated Chain chains = 12;
+  Source source = 13;
 }
 
-// Kafka configures the per-chain topic consumers.
+// Source selects where the commands read chain topics from.
+message Source {
+  // driver is kafka or file. kafka reads each chain's topic from the kafka
+  // brokers; file reads it from a file, see FileSource.
+  string driver = 1;
+  FileSource file = 2;
+}
+
+// FileSource reads each chain's records from <dir>/<topic>.jsonl, one
+// stream.v1.StreamRecord in protobuf JSON per line, such as chainstream-evm
+// writes with output.type file and output.file.format protojson. A record's
+// offset is its index among the file's non-blank lines. The file is
+// followed as it grows.
+message FileSource {
+  string dir = 1;
+  // poll_interval is how often the end of a file is checked for new lines.
+  google.protobuf.Duration poll_interval = 2;
+}
+
+// Kafka configures the kafka clients: chain topic consumers with
+// source.driver kafka, and live push with live.driver kafka.
 message Kafka {
   repeated string brokers = 1;
   string client_id = 2;
@@ -194,6 +215,22 @@ message Live {
   // patterns such as "localhost:5173". Same-origin requests and clients that
   // send no Origin are always allowed.
   repeated string allowed_origins = 6;
+  // driver is kafka or redis: the transport that carries updates from
+  // market-engine to market-api. kafka writes each chain's live_topic on the
+  // kafka brokers; redis publishes to a Redis Pub/Sub channel named after
+  // live_topic. Either way market-api only sees updates published while it
+  // is connected.
+  string driver = 7;
+  Redis redis = 8;
+}
+
+// Redis is the Redis server live.driver redis publishes through.
+message Redis {
+  string addr = 1;
+  string username = 2;
+  string password = 3;
+  int32 database = 4;
+  google.protobuf.Duration dial_timeout = 5;
 }
 
 // Metrics configures the Prometheus endpoint every command serves.

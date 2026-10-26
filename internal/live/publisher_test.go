@@ -67,12 +67,12 @@ func TestRevertUpdates(t *testing.T) {
 	}
 }
 
-// TestPublisherSkipsOldBlocks never reaches a broker: blocks behind MaxLag
-// and chains without a topic are not produced.
+// TestPublisherSkipsOldBlocks checks that blocks behind MaxLag and chains
+// without a topic are not sent.
 func TestPublisherSkipsOldBlocks(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0)
 	publisher, err := NewPublisher(PublisherOptions{
-		Brokers: []string{"127.0.0.1:1"}, Topics: map[uint64]string{1: "eth-live"},
+		Sink: failingSink{t}, Topics: map[uint64]string{1: "eth-live"},
 		MaxLag: time.Minute, Now: func() time.Time { return now },
 	})
 	if err != nil {
@@ -91,3 +91,13 @@ func TestPublisherSkipsOldBlocks(t *testing.T) {
 		t.Fatalf("NotifyRevert(other chain) error = %v", err)
 	}
 }
+
+// failingSink fails the test on any send.
+type failingSink struct{ t *testing.T }
+
+func (sink failingSink) Send(_ context.Context, topic string, _ [][]byte) error {
+	sink.t.Errorf("sent to %s", topic)
+	return nil
+}
+
+func (failingSink) Close() {}

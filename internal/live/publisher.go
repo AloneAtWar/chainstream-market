@@ -5,12 +5,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/AloneAtWar/chainstream-market/internal/engine"
 	"github.com/AloneAtWar/chainstream-market/internal/storage"
-	"github.com/twmb/franz-go/pkg/kgo"
 )
 
 // Partition is the only partition of a live topic, so a chain's updates stay
@@ -22,8 +20,8 @@ const Partition int32 = 0
 const maxItemsPerRecord = 500
 
 type PublisherOptions struct {
-	Brokers  []string
-	ClientID string
+	// Sink carries the records to market-api.
+	Sink Sink
 	// Topics maps chain IDs to their live topics. Chains without one are not
 	// published.
 	Topics map[uint64]string
@@ -35,36 +33,23 @@ type PublisherOptions struct {
 }
 
 // Publisher writes market-engine's per-block output and reorg corrections to
-// the live topics. Topics are created on first write when the broker allows
-// it.
+// the live topics through a Sink.
 type Publisher struct {
-	client *kgo.Client
+	sink   Sink
 	topics map[uint64]string
 	maxLag time.Duration
 	now    func() time.Time
 }
 
 func NewPublisher(options PublisherOptions) (*Publisher, error) {
-	if len(options.Brokers) == 0 || len(options.Topics) == 0 {
-		return nil, errors.New("live publisher: brokers and topics are required")
-	}
-	clientOptions := []kgo.Opt{
-		kgo.SeedBrokers(options.Brokers...),
-		kgo.RecordPartitioner(kgo.ManualPartitioner()),
-		kgo.AllowAutoTopicCreation(),
-	}
-	if clientID := strings.TrimSpace(options.ClientID); clientID != "" {
-		clientOptions = append(clientOptions, kgo.ClientID(clientID))
-	}
-	client, err := kgo.NewClient(clientOptions...)
-	if err != nil {
-		return nil, fmt.Errorf("live publisher: create client: %w", err)
+	if options.Sink == nil || len(options.Topics) == 0 {
+		return nil, errors.New("live publisher: sink and topics are required")
 	}
 	now := options.Now
 	if now == nil {
 		now = time.Now
 	}
-	return &Publisher{client: client, topics: options.Topics, maxLag: options.MaxLag, now: now}, nil
+	return &Publisher{sink: options.Sink, topics: options.Topics, maxLag: options.MaxLag, now: now}, nil
 }
 
 func (publisher *Publisher) NotifyBlock(ctx context.Context, output storage.BlockOutput, finalizedHeight int64) error {
@@ -84,22 +69,20 @@ func (publisher *Publisher) NotifyRevert(ctx context.Context, revert storage.Rev
 }
 
 func (publisher *Publisher) produce(ctx context.Context, topic string, updates []Update) error {
-	records := make([]*kgo.Record, len(updates))
+	values := make([][]byte, len(updates))
 	for index, update := range updates {
 		value, err := json.Marshal(update)
 		if err != nil {
 			return fmt.Errorf("live publisher: encode: %w", err)
 		}
-		records[index] = &kgo.Record{Topic: topic, Partition: Partition, Value: value}
+		values[index] = value
 	}
-	if err := publisher.client.ProduceSync(ctx, records...).FirstErr(); err != nil {
-		return fmt.Errorf("live publisher: produce to %s: %w", topic, err)
-	}
-	return nil
+	return publisher.sink.Send(ctx, topic, values)
 }
 
+// Close closes the sink.
 func (publisher *Publisher) Close() {
-	publisher.client.Close()
+	publisher.sink.Close()
 }
 
 // BlockUpdates splits a block's output into live records. Every record

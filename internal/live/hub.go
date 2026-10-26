@@ -15,14 +15,11 @@ import (
 	"time"
 
 	"github.com/AloneAtWar/chainstream-market/internal/market"
-	"github.com/twmb/franz-go/pkg/kgo"
 )
 
 type HubOptions struct {
-	Brokers       []string
-	ClientID      string
-	FetchMaxBytes int32
-	FetchMaxWait  time.Duration
+	// Feed delivers what market-engine publishes.
+	Feed Feed
 	// Topics maps chain IDs to the live topics market-engine publishes.
 	Topics    map[uint64]string
 	Intervals []time.Duration
@@ -103,8 +100,8 @@ type (
 )
 
 func NewHub(options HubOptions) (*Hub, error) {
-	if len(options.Topics) == 0 || len(options.Intervals) == 0 {
-		return nil, errors.New("live hub: topics and intervals are required")
+	if options.Feed == nil || len(options.Topics) == 0 || len(options.Intervals) == 0 {
+		return nil, errors.New("live hub: feed, topics and intervals are required")
 	}
 	if options.Throttle <= 0 || options.ClientBuffer <= 0 || options.MaxSubscriptions <= 0 {
 		return nil, errors.New("live hub: throttle, client buffer and max subscriptions must be positive")
@@ -126,38 +123,15 @@ func NewHub(options HubOptions) (*Hub, error) {
 	}, nil
 }
 
-// Run consumes the live topics from their end until ctx is done. Clients
+// Run follows the live topics through the feed until ctx is done. Clients
 // connected to the hub are closed when it returns.
 func (hub *Hub) Run(ctx context.Context) error {
 	defer close(hub.stopped)
-	partitions := make(map[string]map[int32]kgo.Offset, len(hub.options.Topics))
-	for _, topic := range hub.options.Topics {
-		partitions[topic] = map[int32]kgo.Offset{Partition: kgo.NewOffset().AtEnd()}
-	}
-	clientOptions := []kgo.Opt{
-		kgo.SeedBrokers(hub.options.Brokers...),
-		kgo.ConsumePartitions(partitions),
-		kgo.ConsumeResetOffset(kgo.NewOffset().AtEnd()),
-	}
-	if hub.options.FetchMaxBytes > 0 {
-		clientOptions = append(clientOptions,
-			kgo.FetchMaxBytes(hub.options.FetchMaxBytes), kgo.FetchMaxPartitionBytes(hub.options.FetchMaxBytes),
-			kgo.BrokerMaxReadBytes(hub.options.FetchMaxBytes+1<<20))
-	}
-	if hub.options.FetchMaxWait > 0 {
-		clientOptions = append(clientOptions, kgo.FetchMaxWait(hub.options.FetchMaxWait))
-	}
-	if clientID := strings.TrimSpace(hub.options.ClientID); clientID != "" {
-		clientOptions = append(clientOptions, kgo.ClientID(clientID))
-	}
-	client, err := kgo.NewClient(clientOptions...)
-	if err != nil {
-		return fmt.Errorf("live hub: create client: %w", err)
-	}
-	defer client.Close()
-
 	var wg sync.WaitGroup
 	defer wg.Wait()
+	// A feed that fails stops the flusher too.
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
 	wg.Go(func() {
 		ticker := time.NewTicker(hub.options.Throttle)
 		defer ticker.Stop()
@@ -170,23 +144,19 @@ func (hub *Hub) Run(ctx context.Context) error {
 			}
 		}
 	})
-	for {
-		fetches := client.PollFetches(ctx)
-		if ctx.Err() != nil {
-			return nil
+	topics := slices.Sorted(maps.Values(hub.options.Topics))
+	err := hub.options.Feed.Run(ctx, topics, func(topic string, value []byte) {
+		var update Update
+		if decodeErr := json.Unmarshal(value, &update); decodeErr != nil {
+			hub.logger.Warn("live hub skipped a bad record", "topic", topic, "error", decodeErr)
+			return
 		}
-		for _, fetchErr := range fetches.Errors() {
-			hub.logger.Warn("live hub fetch failed", "topic", fetchErr.Topic, "error", fetchErr.Err)
-		}
-		fetches.EachRecord(func(record *kgo.Record) {
-			var update Update
-			if decodeErr := json.Unmarshal(record.Value, &update); decodeErr != nil {
-				hub.logger.Warn("live hub skipped a bad record", "topic", record.Topic, "offset", record.Offset, "error", decodeErr)
-				return
-			}
-			hub.dispatch(update)
-		})
+		hub.dispatch(update)
+	})
+	if err != nil {
+		return fmt.Errorf("live hub: %w", err)
 	}
+	return nil
 }
 
 // dispatch routes one live record to the subscribed clients.

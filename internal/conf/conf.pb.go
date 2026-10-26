@@ -40,6 +40,7 @@ type Bootstrap struct {
 	Live          *Live     `protobuf:"bytes,10,opt,name=live,proto3" json:"live,omitempty"`
 	Metrics       *Metrics  `protobuf:"bytes,11,opt,name=metrics,proto3" json:"metrics,omitempty"`
 	Chains        []*Chain  `protobuf:"bytes,12,rep,name=chains,proto3" json:"chains,omitempty"`
+	Source        *Source   `protobuf:"bytes,13,opt,name=source,proto3" json:"source,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -158,7 +159,128 @@ func (x *Bootstrap) GetChains() []*Chain {
 	return nil
 }
 
-// Kafka configures the per-chain topic consumers.
+func (x *Bootstrap) GetSource() *Source {
+	if x != nil {
+		return x.Source
+	}
+	return nil
+}
+
+// Source selects where the commands read chain topics from.
+type Source struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// driver is kafka or file. kafka reads each chain's topic from the kafka
+	// brokers; file reads it from a file, see FileSource.
+	Driver        string      `protobuf:"bytes,1,opt,name=driver,proto3" json:"driver,omitempty"`
+	File          *FileSource `protobuf:"bytes,2,opt,name=file,proto3" json:"file,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *Source) Reset() {
+	*x = Source{}
+	mi := &file_conf_conf_proto_msgTypes[1]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *Source) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*Source) ProtoMessage() {}
+
+func (x *Source) ProtoReflect() protoreflect.Message {
+	mi := &file_conf_conf_proto_msgTypes[1]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use Source.ProtoReflect.Descriptor instead.
+func (*Source) Descriptor() ([]byte, []int) {
+	return file_conf_conf_proto_rawDescGZIP(), []int{1}
+}
+
+func (x *Source) GetDriver() string {
+	if x != nil {
+		return x.Driver
+	}
+	return ""
+}
+
+func (x *Source) GetFile() *FileSource {
+	if x != nil {
+		return x.File
+	}
+	return nil
+}
+
+// FileSource reads each chain's records from <dir>/<topic>.jsonl, one
+// stream.v1.StreamRecord in protobuf JSON per line, such as chainstream-evm
+// writes with output.type file and output.file.format protojson. A record's
+// offset is its index among the file's non-blank lines. The file is
+// followed as it grows.
+type FileSource struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	Dir   string                 `protobuf:"bytes,1,opt,name=dir,proto3" json:"dir,omitempty"`
+	// poll_interval is how often the end of a file is checked for new lines.
+	PollInterval  *durationpb.Duration `protobuf:"bytes,2,opt,name=poll_interval,json=pollInterval,proto3" json:"poll_interval,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *FileSource) Reset() {
+	*x = FileSource{}
+	mi := &file_conf_conf_proto_msgTypes[2]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *FileSource) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*FileSource) ProtoMessage() {}
+
+func (x *FileSource) ProtoReflect() protoreflect.Message {
+	mi := &file_conf_conf_proto_msgTypes[2]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use FileSource.ProtoReflect.Descriptor instead.
+func (*FileSource) Descriptor() ([]byte, []int) {
+	return file_conf_conf_proto_rawDescGZIP(), []int{2}
+}
+
+func (x *FileSource) GetDir() string {
+	if x != nil {
+		return x.Dir
+	}
+	return ""
+}
+
+func (x *FileSource) GetPollInterval() *durationpb.Duration {
+	if x != nil {
+		return x.PollInterval
+	}
+	return nil
+}
+
+// Kafka configures the kafka clients: chain topic consumers with
+// source.driver kafka, and live push with live.driver kafka.
 type Kafka struct {
 	state    protoimpl.MessageState `protogen:"open.v1"`
 	Brokers  []string               `protobuf:"bytes,1,rep,name=brokers,proto3" json:"brokers,omitempty"`
@@ -173,7 +295,7 @@ type Kafka struct {
 
 func (x *Kafka) Reset() {
 	*x = Kafka{}
-	mi := &file_conf_conf_proto_msgTypes[1]
+	mi := &file_conf_conf_proto_msgTypes[3]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -185,7 +307,7 @@ func (x *Kafka) String() string {
 func (*Kafka) ProtoMessage() {}
 
 func (x *Kafka) ProtoReflect() protoreflect.Message {
-	mi := &file_conf_conf_proto_msgTypes[1]
+	mi := &file_conf_conf_proto_msgTypes[3]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -198,7 +320,7 @@ func (x *Kafka) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Kafka.ProtoReflect.Descriptor instead.
 func (*Kafka) Descriptor() ([]byte, []int) {
-	return file_conf_conf_proto_rawDescGZIP(), []int{1}
+	return file_conf_conf_proto_rawDescGZIP(), []int{3}
 }
 
 func (x *Kafka) GetBrokers() []string {
@@ -241,7 +363,7 @@ type Storage struct {
 
 func (x *Storage) Reset() {
 	*x = Storage{}
-	mi := &file_conf_conf_proto_msgTypes[2]
+	mi := &file_conf_conf_proto_msgTypes[4]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -253,7 +375,7 @@ func (x *Storage) String() string {
 func (*Storage) ProtoMessage() {}
 
 func (x *Storage) ProtoReflect() protoreflect.Message {
-	mi := &file_conf_conf_proto_msgTypes[2]
+	mi := &file_conf_conf_proto_msgTypes[4]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -266,7 +388,7 @@ func (x *Storage) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Storage.ProtoReflect.Descriptor instead.
 func (*Storage) Descriptor() ([]byte, []int) {
-	return file_conf_conf_proto_rawDescGZIP(), []int{2}
+	return file_conf_conf_proto_rawDescGZIP(), []int{4}
 }
 
 func (x *Storage) GetDriver() string {
@@ -297,7 +419,7 @@ type ClickHouse struct {
 
 func (x *ClickHouse) Reset() {
 	*x = ClickHouse{}
-	mi := &file_conf_conf_proto_msgTypes[3]
+	mi := &file_conf_conf_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -309,7 +431,7 @@ func (x *ClickHouse) String() string {
 func (*ClickHouse) ProtoMessage() {}
 
 func (x *ClickHouse) ProtoReflect() protoreflect.Message {
-	mi := &file_conf_conf_proto_msgTypes[3]
+	mi := &file_conf_conf_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -322,7 +444,7 @@ func (x *ClickHouse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ClickHouse.ProtoReflect.Descriptor instead.
 func (*ClickHouse) Descriptor() ([]byte, []int) {
-	return file_conf_conf_proto_rawDescGZIP(), []int{3}
+	return file_conf_conf_proto_rawDescGZIP(), []int{5}
 }
 
 func (x *ClickHouse) GetAddr() []string {
@@ -392,7 +514,7 @@ type Retention struct {
 
 func (x *Retention) Reset() {
 	*x = Retention{}
-	mi := &file_conf_conf_proto_msgTypes[4]
+	mi := &file_conf_conf_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -404,7 +526,7 @@ func (x *Retention) String() string {
 func (*Retention) ProtoMessage() {}
 
 func (x *Retention) ProtoReflect() protoreflect.Message {
-	mi := &file_conf_conf_proto_msgTypes[4]
+	mi := &file_conf_conf_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -417,7 +539,7 @@ func (x *Retention) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Retention.ProtoReflect.Descriptor instead.
 func (*Retention) Descriptor() ([]byte, []int) {
-	return file_conf_conf_proto_rawDescGZIP(), []int{4}
+	return file_conf_conf_proto_rawDescGZIP(), []int{6}
 }
 
 func (x *Retention) GetStoragePolicy() string {
@@ -506,7 +628,7 @@ type State struct {
 
 func (x *State) Reset() {
 	*x = State{}
-	mi := &file_conf_conf_proto_msgTypes[5]
+	mi := &file_conf_conf_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -518,7 +640,7 @@ func (x *State) String() string {
 func (*State) ProtoMessage() {}
 
 func (x *State) ProtoReflect() protoreflect.Message {
-	mi := &file_conf_conf_proto_msgTypes[5]
+	mi := &file_conf_conf_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -531,7 +653,7 @@ func (x *State) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use State.ProtoReflect.Descriptor instead.
 func (*State) Descriptor() ([]byte, []int) {
-	return file_conf_conf_proto_rawDescGZIP(), []int{5}
+	return file_conf_conf_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *State) GetDriver() string {
@@ -559,7 +681,7 @@ type Postgres struct {
 
 func (x *Postgres) Reset() {
 	*x = Postgres{}
-	mi := &file_conf_conf_proto_msgTypes[6]
+	mi := &file_conf_conf_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -571,7 +693,7 @@ func (x *Postgres) String() string {
 func (*Postgres) ProtoMessage() {}
 
 func (x *Postgres) ProtoReflect() protoreflect.Message {
-	mi := &file_conf_conf_proto_msgTypes[6]
+	mi := &file_conf_conf_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -584,7 +706,7 @@ func (x *Postgres) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Postgres.ProtoReflect.Descriptor instead.
 func (*Postgres) Descriptor() ([]byte, []int) {
-	return file_conf_conf_proto_rawDescGZIP(), []int{6}
+	return file_conf_conf_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *Postgres) GetDsn() string {
@@ -641,7 +763,7 @@ type Market struct {
 
 func (x *Market) Reset() {
 	*x = Market{}
-	mi := &file_conf_conf_proto_msgTypes[7]
+	mi := &file_conf_conf_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -653,7 +775,7 @@ func (x *Market) String() string {
 func (*Market) ProtoMessage() {}
 
 func (x *Market) ProtoReflect() protoreflect.Message {
-	mi := &file_conf_conf_proto_msgTypes[7]
+	mi := &file_conf_conf_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -666,7 +788,7 @@ func (x *Market) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Market.ProtoReflect.Descriptor instead.
 func (*Market) Descriptor() ([]byte, []int) {
-	return file_conf_conf_proto_rawDescGZIP(), []int{7}
+	return file_conf_conf_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *Market) GetMinLiquidityUsd() float64 {
@@ -756,7 +878,7 @@ type API struct {
 
 func (x *API) Reset() {
 	*x = API{}
-	mi := &file_conf_conf_proto_msgTypes[8]
+	mi := &file_conf_conf_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -768,7 +890,7 @@ func (x *API) String() string {
 func (*API) ProtoMessage() {}
 
 func (x *API) ProtoReflect() protoreflect.Message {
-	mi := &file_conf_conf_proto_msgTypes[8]
+	mi := &file_conf_conf_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -781,7 +903,7 @@ func (x *API) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use API.ProtoReflect.Descriptor instead.
 func (*API) Descriptor() ([]byte, []int) {
-	return file_conf_conf_proto_rawDescGZIP(), []int{8}
+	return file_conf_conf_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *API) GetAddr() string {
@@ -811,7 +933,7 @@ type Holders struct {
 
 func (x *Holders) Reset() {
 	*x = Holders{}
-	mi := &file_conf_conf_proto_msgTypes[9]
+	mi := &file_conf_conf_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -823,7 +945,7 @@ func (x *Holders) String() string {
 func (*Holders) ProtoMessage() {}
 
 func (x *Holders) ProtoReflect() protoreflect.Message {
-	mi := &file_conf_conf_proto_msgTypes[9]
+	mi := &file_conf_conf_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -836,7 +958,7 @@ func (x *Holders) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Holders.ProtoReflect.Descriptor instead.
 func (*Holders) Descriptor() ([]byte, []int) {
-	return file_conf_conf_proto_rawDescGZIP(), []int{9}
+	return file_conf_conf_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *Holders) GetHistoryDepth() int64 {
@@ -887,7 +1009,7 @@ type Registry struct {
 
 func (x *Registry) Reset() {
 	*x = Registry{}
-	mi := &file_conf_conf_proto_msgTypes[10]
+	mi := &file_conf_conf_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -899,7 +1021,7 @@ func (x *Registry) String() string {
 func (*Registry) ProtoMessage() {}
 
 func (x *Registry) ProtoReflect() protoreflect.Message {
-	mi := &file_conf_conf_proto_msgTypes[10]
+	mi := &file_conf_conf_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -912,7 +1034,7 @@ func (x *Registry) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Registry.ProtoReflect.Descriptor instead.
 func (*Registry) Descriptor() ([]byte, []int) {
-	return file_conf_conf_proto_rawDescGZIP(), []int{10}
+	return file_conf_conf_proto_rawDescGZIP(), []int{12}
 }
 
 func (x *Registry) GetHistoryDepth() int64 {
@@ -940,7 +1062,7 @@ type Rankings struct {
 
 func (x *Rankings) Reset() {
 	*x = Rankings{}
-	mi := &file_conf_conf_proto_msgTypes[11]
+	mi := &file_conf_conf_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -952,7 +1074,7 @@ func (x *Rankings) String() string {
 func (*Rankings) ProtoMessage() {}
 
 func (x *Rankings) ProtoReflect() protoreflect.Message {
-	mi := &file_conf_conf_proto_msgTypes[11]
+	mi := &file_conf_conf_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -965,7 +1087,7 @@ func (x *Rankings) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Rankings.ProtoReflect.Descriptor instead.
 func (*Rankings) Descriptor() ([]byte, []int) {
-	return file_conf_conf_proto_rawDescGZIP(), []int{11}
+	return file_conf_conf_proto_rawDescGZIP(), []int{13}
 }
 
 func (x *Rankings) GetRefreshInterval() *durationpb.Duration {
@@ -1004,7 +1126,7 @@ type ChLoader struct {
 
 func (x *ChLoader) Reset() {
 	*x = ChLoader{}
-	mi := &file_conf_conf_proto_msgTypes[12]
+	mi := &file_conf_conf_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1016,7 +1138,7 @@ func (x *ChLoader) String() string {
 func (*ChLoader) ProtoMessage() {}
 
 func (x *ChLoader) ProtoReflect() protoreflect.Message {
-	mi := &file_conf_conf_proto_msgTypes[12]
+	mi := &file_conf_conf_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1029,7 +1151,7 @@ func (x *ChLoader) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ChLoader.ProtoReflect.Descriptor instead.
 func (*ChLoader) Descriptor() ([]byte, []int) {
-	return file_conf_conf_proto_rawDescGZIP(), []int{12}
+	return file_conf_conf_proto_rawDescGZIP(), []int{14}
 }
 
 func (x *ChLoader) GetBatchLag() *durationpb.Duration {
@@ -1074,13 +1196,20 @@ type Live struct {
 	// patterns such as "localhost:5173". Same-origin requests and clients that
 	// send no Origin are always allowed.
 	AllowedOrigins []string `protobuf:"bytes,6,rep,name=allowed_origins,json=allowedOrigins,proto3" json:"allowed_origins,omitempty"`
-	unknownFields  protoimpl.UnknownFields
-	sizeCache      protoimpl.SizeCache
+	// driver is kafka or redis: the transport that carries updates from
+	// market-engine to market-api. kafka writes each chain's live_topic on the
+	// kafka brokers; redis publishes to a Redis Pub/Sub channel named after
+	// live_topic. Either way market-api only sees updates published while it
+	// is connected.
+	Driver        string `protobuf:"bytes,7,opt,name=driver,proto3" json:"driver,omitempty"`
+	Redis         *Redis `protobuf:"bytes,8,opt,name=redis,proto3" json:"redis,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *Live) Reset() {
 	*x = Live{}
-	mi := &file_conf_conf_proto_msgTypes[13]
+	mi := &file_conf_conf_proto_msgTypes[15]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1092,7 +1221,7 @@ func (x *Live) String() string {
 func (*Live) ProtoMessage() {}
 
 func (x *Live) ProtoReflect() protoreflect.Message {
-	mi := &file_conf_conf_proto_msgTypes[13]
+	mi := &file_conf_conf_proto_msgTypes[15]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1105,7 +1234,7 @@ func (x *Live) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Live.ProtoReflect.Descriptor instead.
 func (*Live) Descriptor() ([]byte, []int) {
-	return file_conf_conf_proto_rawDescGZIP(), []int{13}
+	return file_conf_conf_proto_rawDescGZIP(), []int{15}
 }
 
 func (x *Live) GetEnabled() bool {
@@ -1150,6 +1279,97 @@ func (x *Live) GetAllowedOrigins() []string {
 	return nil
 }
 
+func (x *Live) GetDriver() string {
+	if x != nil {
+		return x.Driver
+	}
+	return ""
+}
+
+func (x *Live) GetRedis() *Redis {
+	if x != nil {
+		return x.Redis
+	}
+	return nil
+}
+
+// Redis is the Redis server live.driver redis publishes through.
+type Redis struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Addr          string                 `protobuf:"bytes,1,opt,name=addr,proto3" json:"addr,omitempty"`
+	Username      string                 `protobuf:"bytes,2,opt,name=username,proto3" json:"username,omitempty"`
+	Password      string                 `protobuf:"bytes,3,opt,name=password,proto3" json:"password,omitempty"`
+	Database      int32                  `protobuf:"varint,4,opt,name=database,proto3" json:"database,omitempty"`
+	DialTimeout   *durationpb.Duration   `protobuf:"bytes,5,opt,name=dial_timeout,json=dialTimeout,proto3" json:"dial_timeout,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *Redis) Reset() {
+	*x = Redis{}
+	mi := &file_conf_conf_proto_msgTypes[16]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *Redis) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*Redis) ProtoMessage() {}
+
+func (x *Redis) ProtoReflect() protoreflect.Message {
+	mi := &file_conf_conf_proto_msgTypes[16]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use Redis.ProtoReflect.Descriptor instead.
+func (*Redis) Descriptor() ([]byte, []int) {
+	return file_conf_conf_proto_rawDescGZIP(), []int{16}
+}
+
+func (x *Redis) GetAddr() string {
+	if x != nil {
+		return x.Addr
+	}
+	return ""
+}
+
+func (x *Redis) GetUsername() string {
+	if x != nil {
+		return x.Username
+	}
+	return ""
+}
+
+func (x *Redis) GetPassword() string {
+	if x != nil {
+		return x.Password
+	}
+	return ""
+}
+
+func (x *Redis) GetDatabase() int32 {
+	if x != nil {
+		return x.Database
+	}
+	return 0
+}
+
+func (x *Redis) GetDialTimeout() *durationpb.Duration {
+	if x != nil {
+		return x.DialTimeout
+	}
+	return nil
+}
+
 // Metrics configures the Prometheus endpoint every command serves.
 type Metrics struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
@@ -1162,7 +1382,7 @@ type Metrics struct {
 
 func (x *Metrics) Reset() {
 	*x = Metrics{}
-	mi := &file_conf_conf_proto_msgTypes[14]
+	mi := &file_conf_conf_proto_msgTypes[17]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1174,7 +1394,7 @@ func (x *Metrics) String() string {
 func (*Metrics) ProtoMessage() {}
 
 func (x *Metrics) ProtoReflect() protoreflect.Message {
-	mi := &file_conf_conf_proto_msgTypes[14]
+	mi := &file_conf_conf_proto_msgTypes[17]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1187,7 +1407,7 @@ func (x *Metrics) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Metrics.ProtoReflect.Descriptor instead.
 func (*Metrics) Descriptor() ([]byte, []int) {
-	return file_conf_conf_proto_rawDescGZIP(), []int{14}
+	return file_conf_conf_proto_rawDescGZIP(), []int{17}
 }
 
 func (x *Metrics) GetAddr() string {
@@ -1218,7 +1438,7 @@ type Chain struct {
 
 func (x *Chain) Reset() {
 	*x = Chain{}
-	mi := &file_conf_conf_proto_msgTypes[15]
+	mi := &file_conf_conf_proto_msgTypes[18]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1230,7 +1450,7 @@ func (x *Chain) String() string {
 func (*Chain) ProtoMessage() {}
 
 func (x *Chain) ProtoReflect() protoreflect.Message {
-	mi := &file_conf_conf_proto_msgTypes[15]
+	mi := &file_conf_conf_proto_msgTypes[18]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1243,7 +1463,7 @@ func (x *Chain) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Chain.ProtoReflect.Descriptor instead.
 func (*Chain) Descriptor() ([]byte, []int) {
-	return file_conf_conf_proto_rawDescGZIP(), []int{15}
+	return file_conf_conf_proto_rawDescGZIP(), []int{18}
 }
 
 func (x *Chain) GetName() string {
@@ -1313,7 +1533,7 @@ type Feed struct {
 
 func (x *Feed) Reset() {
 	*x = Feed{}
-	mi := &file_conf_conf_proto_msgTypes[16]
+	mi := &file_conf_conf_proto_msgTypes[19]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1325,7 +1545,7 @@ func (x *Feed) String() string {
 func (*Feed) ProtoMessage() {}
 
 func (x *Feed) ProtoReflect() protoreflect.Message {
-	mi := &file_conf_conf_proto_msgTypes[16]
+	mi := &file_conf_conf_proto_msgTypes[19]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1338,7 +1558,7 @@ func (x *Feed) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Feed.ProtoReflect.Descriptor instead.
 func (*Feed) Descriptor() ([]byte, []int) {
-	return file_conf_conf_proto_rawDescGZIP(), []int{16}
+	return file_conf_conf_proto_rawDescGZIP(), []int{19}
 }
 
 func (x *Feed) GetProxy() string {
@@ -1380,7 +1600,7 @@ var File_conf_conf_proto protoreflect.FileDescriptor
 
 const file_conf_conf_proto_rawDesc = "" +
 	"\n" +
-	"\x0fconf/conf.proto\x12\x04conf\x1a\x1egoogle/protobuf/duration.proto\"\xd9\x03\n" +
+	"\x0fconf/conf.proto\x12\x04conf\x1a\x1egoogle/protobuf/duration.proto\"\xff\x03\n" +
 	"\tBootstrap\x12!\n" +
 	"\x05kafka\x18\x01 \x01(\v2\v.conf.KafkaR\x05kafka\x12'\n" +
 	"\astorage\x18\x02 \x01(\v2\r.conf.StorageR\astorage\x12!\n" +
@@ -1395,7 +1615,15 @@ const file_conf_conf_proto_rawDesc = "" +
 	" \x01(\v2\n" +
 	".conf.LiveR\x04live\x12'\n" +
 	"\ametrics\x18\v \x01(\v2\r.conf.MetricsR\ametrics\x12#\n" +
-	"\x06chains\x18\f \x03(\v2\v.conf.ChainR\x06chains\"\xa7\x01\n" +
+	"\x06chains\x18\f \x03(\v2\v.conf.ChainR\x06chains\x12$\n" +
+	"\x06source\x18\r \x01(\v2\f.conf.SourceR\x06source\"F\n" +
+	"\x06Source\x12\x16\n" +
+	"\x06driver\x18\x01 \x01(\tR\x06driver\x12$\n" +
+	"\x04file\x18\x02 \x01(\v2\x10.conf.FileSourceR\x04file\"^\n" +
+	"\n" +
+	"FileSource\x12\x10\n" +
+	"\x03dir\x18\x01 \x01(\tR\x03dir\x12>\n" +
+	"\rpoll_interval\x18\x02 \x01(\v2\x19.google.protobuf.DurationR\fpollInterval\"\xa7\x01\n" +
 	"\x05Kafka\x12\x18\n" +
 	"\abrokers\x18\x01 \x03(\tR\abrokers\x12\x1b\n" +
 	"\tclient_id\x18\x02 \x01(\tR\bclientId\x12&\n" +
@@ -1470,14 +1698,22 @@ const file_conf_conf_proto_rawDesc = "" +
 	"\tbatch_lag\x18\x01 \x01(\v2\x19.google.protobuf.DurationR\bbatchLag\x12\x1d\n" +
 	"\n" +
 	"flush_rows\x18\x02 \x01(\x05R\tflushRows\x12@\n" +
-	"\x0eflush_interval\x18\x03 \x01(\v2\x19.google.protobuf.DurationR\rflushInterval\"\x93\x02\n" +
+	"\x0eflush_interval\x18\x03 \x01(\v2\x19.google.protobuf.DurationR\rflushInterval\"\xce\x02\n" +
 	"\x04Live\x12\x18\n" +
 	"\aenabled\x18\x01 \x01(\bR\aenabled\x122\n" +
 	"\amax_lag\x18\x02 \x01(\v2\x19.google.protobuf.DurationR\x06maxLag\x12B\n" +
 	"\x0fcandle_throttle\x18\x03 \x01(\v2\x19.google.protobuf.DurationR\x0ecandleThrottle\x12#\n" +
 	"\rclient_buffer\x18\x04 \x01(\x05R\fclientBuffer\x12+\n" +
 	"\x11max_subscriptions\x18\x05 \x01(\x05R\x10maxSubscriptions\x12'\n" +
-	"\x0fallowed_origins\x18\x06 \x03(\tR\x0eallowedOrigins\"\x1d\n" +
+	"\x0fallowed_origins\x18\x06 \x03(\tR\x0eallowedOrigins\x12\x16\n" +
+	"\x06driver\x18\a \x01(\tR\x06driver\x12!\n" +
+	"\x05redis\x18\b \x01(\v2\v.conf.RedisR\x05redis\"\xad\x01\n" +
+	"\x05Redis\x12\x12\n" +
+	"\x04addr\x18\x01 \x01(\tR\x04addr\x12\x1a\n" +
+	"\busername\x18\x02 \x01(\tR\busername\x12\x1a\n" +
+	"\bpassword\x18\x03 \x01(\tR\bpassword\x12\x1a\n" +
+	"\bdatabase\x18\x04 \x01(\x05R\bdatabase\x12<\n" +
+	"\fdial_timeout\x18\x05 \x01(\v2\x19.google.protobuf.DurationR\vdialTimeout\"\x1d\n" +
 	"\aMetrics\x12\x12\n" +
 	"\x04addr\x18\x01 \x01(\tR\x04addr\"\xa6\x01\n" +
 	"\x05Chain\x12\x12\n" +
@@ -1508,63 +1744,71 @@ func file_conf_conf_proto_rawDescGZIP() []byte {
 	return file_conf_conf_proto_rawDescData
 }
 
-var file_conf_conf_proto_msgTypes = make([]protoimpl.MessageInfo, 18)
+var file_conf_conf_proto_msgTypes = make([]protoimpl.MessageInfo, 21)
 var file_conf_conf_proto_goTypes = []any{
 	(*Bootstrap)(nil),           // 0: conf.Bootstrap
-	(*Kafka)(nil),               // 1: conf.Kafka
-	(*Storage)(nil),             // 2: conf.Storage
-	(*ClickHouse)(nil),          // 3: conf.ClickHouse
-	(*Retention)(nil),           // 4: conf.Retention
-	(*State)(nil),               // 5: conf.State
-	(*Postgres)(nil),            // 6: conf.Postgres
-	(*Market)(nil),              // 7: conf.Market
-	(*API)(nil),                 // 8: conf.API
-	(*Holders)(nil),             // 9: conf.Holders
-	(*Registry)(nil),            // 10: conf.Registry
-	(*Rankings)(nil),            // 11: conf.Rankings
-	(*ChLoader)(nil),            // 12: conf.ChLoader
-	(*Live)(nil),                // 13: conf.Live
-	(*Metrics)(nil),             // 14: conf.Metrics
-	(*Chain)(nil),               // 15: conf.Chain
-	(*Feed)(nil),                // 16: conf.Feed
-	nil,                         // 17: conf.Retention.CandleDaysEntry
-	(*durationpb.Duration)(nil), // 18: google.protobuf.Duration
+	(*Source)(nil),              // 1: conf.Source
+	(*FileSource)(nil),          // 2: conf.FileSource
+	(*Kafka)(nil),               // 3: conf.Kafka
+	(*Storage)(nil),             // 4: conf.Storage
+	(*ClickHouse)(nil),          // 5: conf.ClickHouse
+	(*Retention)(nil),           // 6: conf.Retention
+	(*State)(nil),               // 7: conf.State
+	(*Postgres)(nil),            // 8: conf.Postgres
+	(*Market)(nil),              // 9: conf.Market
+	(*API)(nil),                 // 10: conf.API
+	(*Holders)(nil),             // 11: conf.Holders
+	(*Registry)(nil),            // 12: conf.Registry
+	(*Rankings)(nil),            // 13: conf.Rankings
+	(*ChLoader)(nil),            // 14: conf.ChLoader
+	(*Live)(nil),                // 15: conf.Live
+	(*Redis)(nil),               // 16: conf.Redis
+	(*Metrics)(nil),             // 17: conf.Metrics
+	(*Chain)(nil),               // 18: conf.Chain
+	(*Feed)(nil),                // 19: conf.Feed
+	nil,                         // 20: conf.Retention.CandleDaysEntry
+	(*durationpb.Duration)(nil), // 21: google.protobuf.Duration
 }
 var file_conf_conf_proto_depIdxs = []int32{
-	1,  // 0: conf.Bootstrap.kafka:type_name -> conf.Kafka
-	2,  // 1: conf.Bootstrap.storage:type_name -> conf.Storage
-	5,  // 2: conf.Bootstrap.state:type_name -> conf.State
-	7,  // 3: conf.Bootstrap.market:type_name -> conf.Market
-	8,  // 4: conf.Bootstrap.api:type_name -> conf.API
-	9,  // 5: conf.Bootstrap.holders:type_name -> conf.Holders
-	10, // 6: conf.Bootstrap.registry:type_name -> conf.Registry
-	11, // 7: conf.Bootstrap.rankings:type_name -> conf.Rankings
-	12, // 8: conf.Bootstrap.ch_loader:type_name -> conf.ChLoader
-	13, // 9: conf.Bootstrap.live:type_name -> conf.Live
-	14, // 10: conf.Bootstrap.metrics:type_name -> conf.Metrics
-	15, // 11: conf.Bootstrap.chains:type_name -> conf.Chain
-	18, // 12: conf.Kafka.fetch_max_wait:type_name -> google.protobuf.Duration
-	3,  // 13: conf.Storage.clickhouse:type_name -> conf.ClickHouse
-	18, // 14: conf.ClickHouse.dial_timeout:type_name -> google.protobuf.Duration
-	4,  // 15: conf.ClickHouse.retention:type_name -> conf.Retention
-	17, // 16: conf.Retention.candle_days:type_name -> conf.Retention.CandleDaysEntry
-	6,  // 17: conf.State.postgres:type_name -> conf.Postgres
-	18, // 18: conf.Market.intervals:type_name -> google.protobuf.Duration
-	18, // 19: conf.Market.backfill_wait:type_name -> google.protobuf.Duration
-	18, // 20: conf.Holders.rpc_timeout:type_name -> google.protobuf.Duration
-	18, // 21: conf.Rankings.refresh_interval:type_name -> google.protobuf.Duration
-	18, // 22: conf.Rankings.candle_interval:type_name -> google.protobuf.Duration
-	18, // 23: conf.Rankings.reorg_window:type_name -> google.protobuf.Duration
-	18, // 24: conf.ChLoader.batch_lag:type_name -> google.protobuf.Duration
-	18, // 25: conf.ChLoader.flush_interval:type_name -> google.protobuf.Duration
-	18, // 26: conf.Live.max_lag:type_name -> google.protobuf.Duration
-	18, // 27: conf.Live.candle_throttle:type_name -> google.protobuf.Duration
-	16, // 28: conf.Chain.feeds:type_name -> conf.Feed
-	29, // [29:29] is the sub-list for method output_type
-	29, // [29:29] is the sub-list for method input_type
-	29, // [29:29] is the sub-list for extension type_name
-	29, // [29:29] is the sub-list for extension extendee
-	0,  // [0:29] is the sub-list for field type_name
+	3,  // 0: conf.Bootstrap.kafka:type_name -> conf.Kafka
+	4,  // 1: conf.Bootstrap.storage:type_name -> conf.Storage
+	7,  // 2: conf.Bootstrap.state:type_name -> conf.State
+	9,  // 3: conf.Bootstrap.market:type_name -> conf.Market
+	10, // 4: conf.Bootstrap.api:type_name -> conf.API
+	11, // 5: conf.Bootstrap.holders:type_name -> conf.Holders
+	12, // 6: conf.Bootstrap.registry:type_name -> conf.Registry
+	13, // 7: conf.Bootstrap.rankings:type_name -> conf.Rankings
+	14, // 8: conf.Bootstrap.ch_loader:type_name -> conf.ChLoader
+	15, // 9: conf.Bootstrap.live:type_name -> conf.Live
+	17, // 10: conf.Bootstrap.metrics:type_name -> conf.Metrics
+	18, // 11: conf.Bootstrap.chains:type_name -> conf.Chain
+	1,  // 12: conf.Bootstrap.source:type_name -> conf.Source
+	2,  // 13: conf.Source.file:type_name -> conf.FileSource
+	21, // 14: conf.FileSource.poll_interval:type_name -> google.protobuf.Duration
+	21, // 15: conf.Kafka.fetch_max_wait:type_name -> google.protobuf.Duration
+	5,  // 16: conf.Storage.clickhouse:type_name -> conf.ClickHouse
+	21, // 17: conf.ClickHouse.dial_timeout:type_name -> google.protobuf.Duration
+	6,  // 18: conf.ClickHouse.retention:type_name -> conf.Retention
+	20, // 19: conf.Retention.candle_days:type_name -> conf.Retention.CandleDaysEntry
+	8,  // 20: conf.State.postgres:type_name -> conf.Postgres
+	21, // 21: conf.Market.intervals:type_name -> google.protobuf.Duration
+	21, // 22: conf.Market.backfill_wait:type_name -> google.protobuf.Duration
+	21, // 23: conf.Holders.rpc_timeout:type_name -> google.protobuf.Duration
+	21, // 24: conf.Rankings.refresh_interval:type_name -> google.protobuf.Duration
+	21, // 25: conf.Rankings.candle_interval:type_name -> google.protobuf.Duration
+	21, // 26: conf.Rankings.reorg_window:type_name -> google.protobuf.Duration
+	21, // 27: conf.ChLoader.batch_lag:type_name -> google.protobuf.Duration
+	21, // 28: conf.ChLoader.flush_interval:type_name -> google.protobuf.Duration
+	21, // 29: conf.Live.max_lag:type_name -> google.protobuf.Duration
+	21, // 30: conf.Live.candle_throttle:type_name -> google.protobuf.Duration
+	16, // 31: conf.Live.redis:type_name -> conf.Redis
+	21, // 32: conf.Redis.dial_timeout:type_name -> google.protobuf.Duration
+	19, // 33: conf.Chain.feeds:type_name -> conf.Feed
+	34, // [34:34] is the sub-list for method output_type
+	34, // [34:34] is the sub-list for method input_type
+	34, // [34:34] is the sub-list for extension type_name
+	34, // [34:34] is the sub-list for extension extendee
+	0,  // [0:34] is the sub-list for field type_name
 }
 
 func init() { file_conf_conf_proto_init() }
@@ -1578,7 +1822,7 @@ func file_conf_conf_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_conf_conf_proto_rawDesc), len(file_conf_conf_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   18,
+			NumMessages:   21,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

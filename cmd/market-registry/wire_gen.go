@@ -24,14 +24,21 @@ func wireApp(contextContext context.Context, bootstrap *conf.Bootstrap, logger *
 	metricsServer := server.NewMetricsServer(metrics, logger)
 	v := bootstrap.Chains
 	registry := bootstrap.Registry
-	kafka := bootstrap.Kafka
-	sources := data.NewSources(kafka)
-	state := conf.NewState(bootstrap)
-	store, cleanup, err := data.NewPostgres(contextContext, state, logger)
+	sources, err := data.NewSources(bootstrap)
 	if err != nil {
 		return nil, nil, err
 	}
-	runners, err := biz.NewRegistryEngines(v, registry, sources, store, logger)
+	state := conf.NewState(bootstrap)
+	stateBackend, cleanup, err := data.NewStateBackend(contextContext, state, logger)
+	if err != nil {
+		return nil, nil, err
+	}
+	registryStore, err := data.NewRegistryStore(stateBackend)
+	if err != nil {
+		cleanup()
+		return nil, nil, err
+	}
+	runners, err := biz.NewRegistryEngines(v, registry, sources, registryStore, logger)
 	if err != nil {
 		cleanup()
 		return nil, nil, err

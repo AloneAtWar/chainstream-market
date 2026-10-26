@@ -1,137 +1,141 @@
-// Package data opens the stores and clients the commands share. A provider
-// whose resource the config turns off returns nil, as in chainstream-evm,
-// and the commands that need it check the config before wiring.
+// Package data opens the stores and clients the commands share. Stores are
+// opened by the driver the config names and provided by role, see
+// storage.go. A provider whose resource the config turns off returns nil, as
+// in chainstream-evm.
 package data
 
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
+	"path/filepath"
 
 	"github.com/AloneAtWar/chainstream-market/internal/conf"
 	"github.com/AloneAtWar/chainstream-market/internal/engine"
 	"github.com/AloneAtWar/chainstream-market/internal/live"
 	"github.com/AloneAtWar/chainstream-market/internal/source"
 	"github.com/AloneAtWar/chainstream-market/internal/storage"
-	"github.com/AloneAtWar/chainstream-market/internal/storage/chraw"
 	"github.com/AloneAtWar/chainstream-market/internal/storage/chstore"
-	"github.com/AloneAtWar/chainstream-market/internal/storage/pgstore"
 	"github.com/google/wire"
 )
 
 // ProviderSet is the data-layer provider set.
 var ProviderSet = wire.NewSet(
-	NewPostgres,
-	NewClickHouseOptions,
-	NewClickHouse,
+	NewMarketBackend,
+	NewRawBackend,
+	NewStateBackend,
+	NewOutput,
+	NewReader,
+	NewRankingSource,
 	NewRawStore,
+	NewTransferReader,
 	NewHistory,
-	NewMemory,
 	NewStateStore,
+	NewHolderStore,
+	NewRegistryStore,
+	NewRankingStore,
+	NewStateReaders,
+	NewMemory,
 	NewSources,
 	NewPublisher,
 	NewHub,
 )
 
-// NewPostgres opens the state.postgres store, or returns nil when
-// state.driver is not postgres.
-func NewPostgres(ctx context.Context, state *conf.State, logger *slog.Logger) (*pgstore.Store, func(), error) {
-	if state.GetDriver() != conf.StatePostgres {
-		return nil, func() {}, nil
-	}
-	store, err := pgstore.Open(ctx, pgstore.Options{
-		DSN: state.GetPostgres().GetDsn(), Schema: state.GetPostgres().GetSchema(), Logger: logger,
-	})
-	if err != nil {
-		return nil, nil, err
-	}
-	return store, store.Close, nil
-}
-
-// NewClickHouseOptions turns storage.clickhouse into store options.
-func NewClickHouseOptions(storageConfig *conf.Storage, logger *slog.Logger) chstore.Options {
-	clickhouse := storageConfig.GetClickhouse()
-	return chstore.Options{
-		Addr: clickhouse.GetAddr(), Database: clickhouse.GetDatabase(),
-		Username: clickhouse.GetUsername(), Password: clickhouse.GetPassword(),
-		DialTimeout: clickhouse.GetDialTimeout().AsDuration(), Logger: logger,
-	}
-}
-
-// NewClickHouse opens market-engine's output store, or returns nil when
-// storage.driver is not clickhouse.
-func NewClickHouse(ctx context.Context, storageConfig *conf.Storage, options chstore.Options, logger *slog.Logger) (*chstore.Store, func(), error) {
-	if storageConfig.GetDriver() != conf.StorageClickHouse {
-		return nil, func() {}, nil
-	}
-	store, err := chstore.Open(ctx, options)
-	if err != nil {
-		return nil, nil, err
-	}
-	return store, closer(store.Close, logger, "clickhouse"), nil
-}
-
-// NewRawStore opens ch-loader's raw store, or returns nil when
-// storage.driver is not clickhouse.
-func NewRawStore(ctx context.Context, storageConfig *conf.Storage, options chstore.Options, logger *slog.Logger) (*chraw.Store, func(), error) {
-	if storageConfig.GetDriver() != conf.StorageClickHouse {
-		return nil, func() {}, nil
-	}
-	store, err := chraw.Open(ctx, options)
-	if err != nil {
-		return nil, nil, err
-	}
-	return store, closer(store.Close, logger, "clickhouse raw"), nil
-}
-
-// NewHistory returns ch-loader's raw trades for market-engine's backfills,
-// or nil when backfills are off or the output is not in ClickHouse. It opens
-// its own raw store, so market-engine only touches ch-loader's tables when
-// it backfills.
-func NewHistory(ctx context.Context, storageConfig *conf.Storage, market *conf.Market, options chstore.Options, logger *slog.Logger) (storage.History, func(), error) {
-	if storageConfig.GetDriver() != conf.StorageClickHouse || market.GetBackfillBlocks() <= 0 {
-		return nil, func() {}, nil
-	}
-	store, err := chraw.Open(ctx, options)
-	if err != nil {
-		return nil, nil, err
-	}
-	return chraw.NewHistory(store, market.GetBackfillWait().AsDuration()), closer(store.Close, logger, "clickhouse history"), nil
-}
-
-// NewMemory is the in-memory store market-engine keeps checkpoints in, and
-// writes its output to without ClickHouse.
+// NewMemory keeps market-engine's checkpoints when state.driver keeps no
+// state.
 func NewMemory() *storage.Memory { return storage.NewMemory() }
 
-// NewStateStore returns the persistent state store, or nil when checkpoints
-// stay in memory.
-func NewStateStore(store *pgstore.Store) storage.StateStore {
-	if store == nil {
-		return nil
-	}
-	return store
-}
-
-// Sources opens chain topics.
+// Sources opens chain topics through the driver source.driver names.
 type Sources struct {
-	options source.KafkaOptions
+	open func(topic string, start int64) (source.Source, error)
 }
 
-// NewSources reads chain topics with the kafka settings.
-func NewSources(kafka *conf.Kafka) *Sources {
-	return &Sources{options: source.KafkaOptions{
-		Brokers: kafka.GetBrokers(), ClientID: kafka.GetClientId(),
-		FetchMaxBytes: kafka.GetFetchMaxBytes(), FetchMaxWait: kafka.GetFetchMaxWait().AsDuration(),
-	}}
+// sourceDrivers open a chain topic at an offset, by source.driver.
+var sourceDrivers = map[string]func(bootstrap *conf.Bootstrap) func(topic string, start int64) (source.Source, error){
+	conf.SourceKafka: func(bootstrap *conf.Bootstrap) func(string, int64) (source.Source, error) {
+		kafka := bootstrap.GetKafka()
+		options := source.KafkaOptions{
+			Brokers: kafka.GetBrokers(), ClientID: kafka.GetClientId(),
+			FetchMaxBytes: kafka.GetFetchMaxBytes(), FetchMaxWait: kafka.GetFetchMaxWait().AsDuration(),
+		}
+		return func(topic string, start int64) (source.Source, error) {
+			topicOptions := options
+			topicOptions.Topic = topic
+			return source.NewKafka(topicOptions, start)
+		}
+	},
+	conf.SourceFile: func(bootstrap *conf.Bootstrap) func(string, int64) (source.Source, error) {
+		file := bootstrap.GetSource().GetFile()
+		return func(topic string, start int64) (source.Source, error) {
+			return source.NewFile(source.FileOptions{
+				Path: filepath.Join(file.GetDir(), topic+".jsonl"), PollInterval: file.GetPollInterval().AsDuration(),
+			}, start)
+		}
+	},
+}
+
+// NewSources reads chain topics with the driver source.driver names.
+func NewSources(bootstrap *conf.Bootstrap) (*Sources, error) {
+	driver := bootstrap.GetSource().GetDriver()
+	open, ok := sourceDrivers[driver]
+	if !ok {
+		return nil, fmt.Errorf("source.driver %q is not supported; use one of: %s", driver, driverNames(sourceDrivers))
+	}
+	return &Sources{open: open(bootstrap)}, nil
 }
 
 // Opener returns the engine's opener of topic.
 func (sources *Sources) Opener(topic string) func(start int64) (source.Source, error) {
-	options := sources.options
-	options.Topic = topic
-	return func(start int64) (source.Source, error) {
-		return source.NewKafka(options, start)
+	return func(start int64) (source.Source, error) { return sources.open(topic, start) }
+}
+
+// liveDrivers open the live transport live.driver names: the sink
+// market-engine publishes through and the feed market-api follows.
+var liveDrivers = map[string]struct {
+	sink func(bootstrap *conf.Bootstrap) (live.Sink, error)
+	feed func(bootstrap *conf.Bootstrap, logger *slog.Logger) (live.Feed, error)
+}{
+	conf.LiveKafka: {
+		sink: func(bootstrap *conf.Bootstrap) (live.Sink, error) {
+			return live.NewKafkaSink(liveKafkaOptions(bootstrap, nil))
+		},
+		feed: func(bootstrap *conf.Bootstrap, logger *slog.Logger) (live.Feed, error) {
+			return live.NewKafkaFeed(liveKafkaOptions(bootstrap, logger))
+		},
+	},
+	conf.LiveRedis: {
+		sink: func(bootstrap *conf.Bootstrap) (live.Sink, error) {
+			return live.NewRedisSink(liveRedisOptions(bootstrap))
+		},
+		feed: func(bootstrap *conf.Bootstrap, _ *slog.Logger) (live.Feed, error) {
+			return live.NewRedisFeed(liveRedisOptions(bootstrap))
+		},
+	},
+}
+
+func liveKafkaOptions(bootstrap *conf.Bootstrap, logger *slog.Logger) live.KafkaOptions {
+	kafka := bootstrap.GetKafka()
+	return live.KafkaOptions{
+		Brokers: kafka.GetBrokers(), ClientID: kafka.GetClientId(),
+		FetchMaxBytes: kafka.GetFetchMaxBytes(), FetchMaxWait: kafka.GetFetchMaxWait().AsDuration(), Logger: logger,
 	}
+}
+
+func liveRedisOptions(bootstrap *conf.Bootstrap) live.RedisOptions {
+	redis := bootstrap.GetLive().GetRedis()
+	return live.RedisOptions{
+		Addr: redis.GetAddr(), Username: redis.GetUsername(), Password: redis.GetPassword(),
+		DB: int(redis.GetDatabase()), DialTimeout: redis.GetDialTimeout().AsDuration(),
+	}
+}
+
+func liveDriver(bootstrap *conf.Bootstrap) (string, error) {
+	driver := bootstrap.GetLive().GetDriver()
+	if _, ok := liveDrivers[driver]; !ok {
+		return "", fmt.Errorf("live.driver %q is not supported; use one of: %s", driver, driverNames(liveDrivers))
+	}
+	return driver, nil
 }
 
 // NewPublisher returns market-engine's live publisher, or nil when live push
@@ -140,12 +144,19 @@ func NewPublisher(bootstrap *conf.Bootstrap) (engine.Notifier, func(), error) {
 	if !bootstrap.GetLive().GetEnabled() {
 		return nil, func() {}, nil
 	}
-	kafka, liveConfig := bootstrap.GetKafka(), bootstrap.GetLive()
+	driver, err := liveDriver(bootstrap)
+	if err != nil {
+		return nil, nil, err
+	}
+	sink, err := liveDrivers[driver].sink(bootstrap)
+	if err != nil {
+		return nil, nil, err
+	}
 	publisher, err := live.NewPublisher(live.PublisherOptions{
-		Brokers: kafka.GetBrokers(), ClientID: kafka.GetClientId(),
-		Topics: bootstrap.LiveTopics(), MaxLag: liveConfig.GetMaxLag().AsDuration(),
+		Sink: sink, Topics: bootstrap.LiveTopics(), MaxLag: bootstrap.GetLive().GetMaxLag().AsDuration(),
 	})
 	if err != nil {
+		sink.Close()
 		return nil, nil, err
 	}
 	return publisher, publisher.Close, nil
@@ -156,11 +167,17 @@ func NewHub(bootstrap *conf.Bootstrap, logger *slog.Logger) (*live.Hub, error) {
 	if !bootstrap.GetLive().GetEnabled() {
 		return nil, nil
 	}
-	kafka, liveConfig := bootstrap.GetKafka(), bootstrap.GetLive()
+	driver, err := liveDriver(bootstrap)
+	if err != nil {
+		return nil, err
+	}
+	feed, err := liveDrivers[driver].feed(bootstrap, logger)
+	if err != nil {
+		return nil, err
+	}
+	liveConfig := bootstrap.GetLive()
 	return live.NewHub(live.HubOptions{
-		Brokers: kafka.GetBrokers(), ClientID: kafka.GetClientId(),
-		FetchMaxBytes: kafka.GetFetchMaxBytes(), FetchMaxWait: kafka.GetFetchMaxWait().AsDuration(),
-		Topics: bootstrap.LiveTopics(), Intervals: bootstrap.GetMarket().IntervalDurations(),
+		Feed: feed, Topics: bootstrap.LiveTopics(), Intervals: bootstrap.GetMarket().IntervalDurations(),
 		Throttle: liveConfig.GetCandleThrottle().AsDuration(), ClientBuffer: int(liveConfig.GetClientBuffer()),
 		MaxSubscriptions: int(liveConfig.GetMaxSubscriptions()), OriginPatterns: liveConfig.GetAllowedOrigins(),
 		Logger: logger,
