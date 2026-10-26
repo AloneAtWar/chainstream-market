@@ -126,6 +126,14 @@ type Market struct {
 	LateTradeBlocks int64 `yaml:"late_trade_blocks"`
 	// LateTradesPerToken caps the trades held while waiting on one token.
 	LateTradesPerToken int `yaml:"late_trades_per_token"`
+	// BackfillBlocks is how far back the block that brings a token's
+	// decimals recomputes the token's trades, prices and candles from
+	// ch-loader's raw trades; -1 replays only held trades. It needs
+	// storage.driver: clickhouse.
+	BackfillBlocks int64 `yaml:"backfill_blocks"`
+	// BackfillWait is how long a backfill waits for ch-loader to store the
+	// heights it reads before it replays only held trades.
+	BackfillWait time.Duration `yaml:"backfill_wait"`
 }
 
 // Kafka configures the per-chain topic consumers.
@@ -248,6 +256,8 @@ const (
 	defaultOutlierDeviation      = 0.5
 	defaultLateTradeBlocks       = 7200
 	defaultLateTradesPerToken    = 1000
+	defaultBackfillBlocks        = 50400
+	defaultBackfillWait          = 30 * time.Second
 
 	defaultHoldersReconcileEvery = 100
 	defaultHoldersReconcileBatch = 200
@@ -333,6 +343,12 @@ func (config *Config) applyDefaults() {
 	}
 	if config.Market.LateTradesPerToken == 0 {
 		config.Market.LateTradesPerToken = defaultLateTradesPerToken
+	}
+	if config.Market.BackfillBlocks == 0 {
+		config.Market.BackfillBlocks = defaultBackfillBlocks
+	}
+	if config.Market.BackfillWait == 0 {
+		config.Market.BackfillWait = defaultBackfillWait
 	}
 	if strings.TrimSpace(config.Storage.Driver) == "" {
 		config.Storage.Driver = StorageMemory
@@ -434,6 +450,9 @@ func (config *Config) Validate() error {
 	}
 	if config.Market.LateTradeBlocks < -1 || config.Market.LateTradesPerToken < 0 {
 		return errors.New("conf: market.late_trade_blocks must be positive or -1, and late_trades_per_token positive")
+	}
+	if config.Market.BackfillBlocks < -1 || config.Market.BackfillWait < 0 {
+		return errors.New("conf: market.backfill_blocks must be positive or -1, and backfill_wait positive")
 	}
 	for _, interval := range config.Market.Intervals {
 		if interval < time.Second || interval%time.Second != 0 {

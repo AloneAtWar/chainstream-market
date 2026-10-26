@@ -24,12 +24,12 @@ type Options struct {
 }
 
 // tables lists every output table with the column Rewind deletes by. A trade
-// replayed after its token's decimals arrived keeps its own block_height and
-// is deleted by the block that replayed it.
+// or price recomputed after its token's decimals arrived keeps its own
+// block_height and is deleted by the block that recomputed it.
 var tables = []struct{ name, height string }{
 	{"blocks", "block_height"},
 	{"trades", "revision_height"},
-	{"token_prices", "block_height"},
+	{"token_prices", "revision_height"},
 	{"candles", "update_height"},
 }
 
@@ -211,7 +211,7 @@ func (store *Store) insertPrices(ctx context.Context, block storage.BlockOutput)
 		for _, price := range block.Prices {
 			if err := batch.Append(
 				price.ChainID, price.Token, price.BlockHeight, price.BlockTime, price.PriceUSD,
-				price.Source.String(), price.Hops, price.LiquidityUSD,
+				price.Source.String(), price.Hops, price.LiquidityUSD, block.Height,
 			); err != nil {
 				return err
 			}

@@ -163,8 +163,8 @@ func assertDecimalEqual(t *testing.T, got decimal.Decimal, want string) {
 	}
 }
 
-// A trade replayed by a later block keeps its own height but belongs to the
-// block that replayed it.
+// A trade replayed by a later block, and a price that block recomputed,
+// keep their own height but belong to the block that wrote them.
 func TestReplayedTradesFollowTheirRevision(t *testing.T) {
 	ctx := context.Background()
 	store, _ := openTestStore(t)
@@ -172,6 +172,9 @@ func TestReplayedTradesFollowTheirRevision(t *testing.T) {
 	late := testOutput(100, "0.03").Trades[0]
 	late.LogIndex = 2
 	replaying.Trades = append(replaying.Trades, late)
+	recomputed := testOutput(100, "0.03").Prices[0]
+	recomputed.Token = "0xlate"
+	replaying.Prices = append(replaying.Prices, recomputed)
 	for _, block := range []storage.BlockOutput{testOutput(100, "0.03"), replaying, replaying} {
 		if err := store.WriteBlock(ctx, block); err != nil {
 			t.Fatalf("WriteBlock(%d) error = %v", block.Height, err)
@@ -184,14 +187,21 @@ func TestReplayedTradesFollowTheirRevision(t *testing.T) {
 		}
 		return rows
 	}
-	if got := atHeight(); got != 2 {
-		t.Fatalf("trades at 100 after replay = %d, want 2", got)
+	pricesAtHeight := func() uint64 {
+		var rows uint64
+		if err := store.conn.QueryRow(ctx, "SELECT count() FROM token_prices WHERE block_height = 100").Scan(&rows); err != nil {
+			t.Fatalf("count prices: %v", err)
+		}
+		return rows
+	}
+	if got, prices := atHeight(), pricesAtHeight(); got != 2 || prices != 2 {
+		t.Fatalf("trades and prices at 100 after replay = %d, %d; want 2, 2", got, prices)
 	}
 	if err := store.Rewind(ctx, 1, 100); err != nil {
 		t.Fatalf("Rewind() error = %v", err)
 	}
-	if got := atHeight(); got != 1 {
-		t.Fatalf("trades at 100 after rewind = %d, want 1", got)
+	if got, prices := atHeight(), pricesAtHeight(); got != 1 || prices != 1 {
+		t.Fatalf("trades and prices at 100 after rewind = %d, %d; want 1, 1", got, prices)
 	}
 }
 
@@ -199,8 +209,14 @@ func TestReplayedTradesFollowTheirRevision(t *testing.T) {
 func TestMigrateAddsRevisionHeight(t *testing.T) {
 	ctx := context.Background()
 	store, options := openTestStore(t)
-	if err := store.conn.Exec(ctx, "ALTER TABLE trades DROP COLUMN revision_height"); err != nil {
-		t.Fatalf("drop column: %v", err)
+	for _, table := range []string{"trades", "token_prices"} {
+		if err := store.conn.Exec(ctx, "ALTER TABLE "+table+" DROP COLUMN revision_height"); err != nil {
+			t.Fatalf("drop %s column: %v", table, err)
+		}
+	}
+	if err := store.conn.Exec(ctx, `INSERT INTO token_prices (chain_id, token, block_height, block_time)
+		VALUES (1, '0xmeme', 100, now()), (1, '0xmeme', 101, now())`); err != nil {
+		t.Fatalf("insert old prices: %v", err)
 	}
 	if err := store.conn.Exec(ctx, `INSERT INTO trades (chain_id, block_height, block_time, side)
 		VALUES (1, 100, now(), 'buy'), (1, 101, now(), 'buy')`); err != nil {
@@ -224,5 +240,8 @@ func TestMigrateAddsRevisionHeight(t *testing.T) {
 	}
 	if got := count(t, store, "trades"); got != 1 || revision != 100 {
 		t.Fatalf("trades = %d, revision = %d; want 1 row at 100", got, revision)
+	}
+	if got := count(t, store, "token_prices"); got != 1 {
+		t.Fatalf("token prices = %d, want 1 row at 100", got)
 	}
 }

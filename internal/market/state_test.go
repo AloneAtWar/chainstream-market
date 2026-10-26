@@ -136,6 +136,9 @@ func (h *harness) values() map[string]string {
 	for key, value := range processor.late.values {
 		add(kindLate, key, value)
 	}
+	for key, value := range processor.missed.values {
+		add(kindMissed, key, value)
+	}
 	return out
 }
 

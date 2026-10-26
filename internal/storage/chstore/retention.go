@@ -113,7 +113,7 @@ func (retention Retention) EngineTTL() []TableTTL {
 	if retention.TokenPriceRollupDays > 0 {
 		prices = append(prices, days("block_time", retention.TokenPriceRollupDays)+
 			" GROUP BY chain_id, token SET block_time = max(block_time), "+
-			latest("block_height", "price_usd", "source", "hops", "liquidity_usd"))
+			latest("block_height", "price_usd", "source", "hops", "liquidity_usd", "revision_height"))
 	}
 	candles := retention.deleteRules("open_time", 0)
 	if retention.CandleCompactDays > 0 {

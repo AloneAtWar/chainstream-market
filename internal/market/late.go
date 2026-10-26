@@ -32,11 +32,14 @@ type lateTrade struct {
 	Prices map[string]decimal.Decimal `json:",omitempty"`
 }
 
-// readyTrade is a held trade whose tokens all have decimals now.
+// readyTrade is a held or backfilled trade whose tokens all have decimals
+// now.
 type readyTrade struct {
 	key    string
 	held   lateTrade
 	source *streamv1.Trade
+	// hops are the graph hops of the tokens in held.Prices, when known.
+	hops map[string]uint8
 }
 
 // lateKey orders held trades by height, so the oldest expire first.
@@ -150,6 +153,12 @@ func (processor *Processor) ready(learned map[string]struct{}) []readyTrade {
 		}
 		ready = append(ready, readyTrade{key: key, held: held, source: source})
 	}
+	sortReady(ready)
+	return ready
+}
+
+// sortReady puts ready trades in chain order.
+func sortReady(ready []readyTrade) {
 	slices.SortStableFunc(ready, func(left, right readyTrade) int {
 		return cmp.Or(
 			cmp.Compare(left.held.Height, right.held.Height),
@@ -157,7 +166,6 @@ func (processor *Processor) ready(learned map[string]struct{}) []readyTrade {
 			cmp.Compare(left.source.GetOperationIndex(), right.source.GetOperationIndex()),
 		)
 	})
-	return ready
 }
 
 func (processor *Processor) complete(held lateTrade) bool {
@@ -190,7 +198,11 @@ func (processor *Processor) seedPools(height int64, ready []readyTrade, touched 
 // their candles. A candle key that already has a bucket is left alone: its
 // trades all came after the decimals arrived, so a held trade would land
 // before them. It returns every bucket it built per key, oldest first.
-func (processor *Processor) replay(height int64, output *storage.BlockOutput, ready []readyTrade, touched map[candleKey]struct{}) map[candleKey][]storage.Candle {
+//
+// A trade quoted in a token whose decimals just arrived is valued at that
+// token's recomputed price, and a swap of such a token is checked for
+// outliers against it.
+func (processor *Processor) replay(height int64, output *storage.BlockOutput, ready []readyTrade, past pastPrices, touched map[candleKey]struct{}) map[candleKey][]storage.Candle {
 	built := make(map[candleKey][]storage.Candle)
 	for _, item := range ready {
 		processor.late.remove(height, item.key)
@@ -202,8 +214,16 @@ func (processor *Processor) replay(height int64, output *storage.BlockOutput, re
 		trade.ChainID, trade.BlockHeight = output.ChainID, item.held.Height
 		trade.BlockTime = time.Unix(item.held.Time, 0).UTC()
 		quoteUSD, priced := item.held.Prices[trade.QuoteToken]
+		if !priced {
+			if reference, ok := past.at(processor.options.Catalog.Canonical(trade.QuoteToken), item.held.Height); ok {
+				quoteUSD, priced = reference.USD, true
+			}
+		}
 		if priced {
 			valueTrade(&trade, quoteUSD)
+			if reference, ok := past.at(processor.options.Catalog.Canonical(trade.BaseToken), item.held.Height); ok {
+				trade.Outlier = processor.strays(trade, reference, true)
+			}
 		}
 		output.Trades = append(output.Trades, trade)
 		if !priced {

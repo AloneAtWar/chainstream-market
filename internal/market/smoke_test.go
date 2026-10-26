@@ -9,9 +9,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/AloneAtWar/chainstream-market/internal/chloader"
 	"github.com/AloneAtWar/chainstream-market/internal/engine"
 	"github.com/AloneAtWar/chainstream-market/internal/source"
 	"github.com/AloneAtWar/chainstream-market/internal/storage"
+	"github.com/AloneAtWar/chainstream-market/internal/storage/chraw"
 	"github.com/AloneAtWar/chainstream-market/internal/storage/chstore"
 	"github.com/AloneAtWar/chainstream-market/internal/storage/pgstore"
 	streamv1 "github.com/AloneAtWar/chainstream-market/proto/stream/v1"
@@ -41,9 +43,13 @@ type marketSmoke struct {
 	t        *testing.T
 	cluster  *kfake.Cluster
 	producer *kgo.Client
+	options  chstore.Options
 	output   *chstore.Store
 	state    *countingState
-	offset   int64
+	// raw, when set, is ch-loader's store: run then loads the topic into it
+	// alongside market-engine.
+	raw    *chraw.Store
+	offset int64
 	// processor builds the engine's processor on every run.
 	processor func(t *testing.T) *Processor
 }
@@ -93,7 +99,7 @@ func newMarketSmoke(t *testing.T) *marketSmoke {
 	}
 	t.Cleanup(state.Close)
 	return &marketSmoke{
-		t: t, cluster: cluster, producer: producer, output: output,
+		t: t, cluster: cluster, producer: producer, options: options, output: output,
 		state: &countingState{StateStore: state}, offset: -1,
 		processor: func(t *testing.T) *Processor { return newLateProcessor(t, 100, 100) },
 	}
@@ -129,6 +135,14 @@ func (s *marketSmoke) run() {
 		s.t.Fatalf("engine.New() error = %v", err)
 	}
 	ctx, cancel := context.WithCancel(s.t.Context())
+	if s.raw != nil {
+		loaded := s.load(ctx, kafka)
+		defer func() {
+			if loadErr := <-loaded; loadErr != nil {
+				s.t.Fatalf("ch-loader Run() error = %v", loadErr)
+			}
+		}()
+	}
 	done := make(chan error, 1)
 	go func() { done <- chainEngine.Run(ctx) }()
 	deadline := time.Now().Add(20 * time.Second)
@@ -148,6 +162,26 @@ func (s *marketSmoke) run() {
 	if runErr := <-done; runErr != nil {
 		s.t.Fatalf("Run() error = %v", runErr)
 	}
+}
+
+// load runs ch-loader over the topic until ctx ends, writing every block on
+// its own commit.
+func (s *marketSmoke) load(ctx context.Context, kafka source.KafkaOptions) <-chan error {
+	s.t.Helper()
+	loader, err := chloader.New(chloader.Options{ChainID: 1, Store: s.raw})
+	if err != nil {
+		s.t.Fatalf("chloader.New() error = %v", err)
+	}
+	loaderEngine, err := engine.New(engine.Options{
+		ChainID: 1, Chain: "eth", Handler: loader,
+		Open: func(start int64) (source.Source, error) { return source.NewKafka(kafka, start) },
+	})
+	if err != nil {
+		s.t.Fatalf("engine.New() error = %v", err)
+	}
+	done := make(chan error, 1)
+	go func() { done <- loaderEngine.Run(ctx) }()
+	return done
 }
 
 // memeTrades lists MEME trades newest first as height:log.
@@ -306,4 +340,71 @@ func (s *marketSmoke) wethTrades() string {
 		keys[index] = fmt.Sprintf("%s:%s:%t", trade.PoolID, trade.PriceUSD, trade.Outlier)
 	}
 	return strings.Join(keys, " ")
+}
+
+// TestSmokeBackfillThroughKafka runs ch-loader and market-engine over one
+// kfake topic into real ClickHouse and PostgreSQL. market-engine holds
+// nothing: when MEME's metadata lands, it reads MEME's earlier trades back
+// from ch-loader's raw_trades and recomputes them with MEME's prices and
+// candles. A reorg of that block removes them, and the fork recomputes
+// them again.
+func TestSmokeBackfillThroughKafka(t *testing.T) {
+	s := newMarketSmoke(t)
+	raw, err := chraw.Open(context.Background(), s.options)
+	if err != nil {
+		t.Fatalf("chraw.Open() error = %v", err)
+	}
+	t.Cleanup(func() {
+		if closeErr := raw.Close(); closeErr != nil {
+			t.Errorf("Close() error = %v", closeErr)
+		}
+	})
+	s.raw = raw
+	history := chraw.NewHistory(raw, 10*time.Second)
+	s.processor = func(t *testing.T) *Processor { return newBackfillProcessor(t, history, 0, 0) }
+	memePrices := func() string {
+		t.Helper()
+		prices, err := history.PriceHistory(context.Background(), 1, []string{meme}, 0, 1000)
+		if err != nil {
+			t.Fatalf("PriceHistory() error = %v", err)
+		}
+		heights := make([]string, len(prices[meme]))
+		for index, point := range prices[meme] {
+			heights[index] = fmt.Sprintf("%d:%s", point.Height, point.USD)
+		}
+		return strings.Join(heights, " ")
+	}
+
+	s.produce(
+		smokeRecord(100, "0xa100", "0xa099", false, wethSwap(), undecided(memeSell(), meme, 1)),
+		smokeRecord(101, "0xa101", "0xa100", false, undecided(memeSell(), meme, 2)),
+		smokeRecord(102, "0xa102", "0xa101", true),
+	)
+	s.run()
+	if got := s.memeTrades(); got != "101:2:0.03 100:1:0.03" {
+		t.Fatalf("after metadata trades = %s", got)
+	}
+	if got := s.memeCandleTrades(); got != 2 {
+		t.Fatalf("after metadata candle trades = %d, want 2", got)
+	}
+	if got := memePrices(); got != "100:0.03 101:0.03 102:0.03" {
+		t.Fatalf("after metadata MEME prices = %s", got)
+	}
+
+	s.produce(
+		&streamv1.StreamRecord{Payload: &streamv1.StreamRecord_Revert{Revert: &streamv1.BlockRevert{ChainId: 1, RollbackTo: 101}}},
+		smokeRecord(102, "0xb102", "0xa101", false),
+	)
+	s.run()
+	if got, prices := s.memeTrades(), memePrices(); got != "" || prices != "" {
+		t.Fatalf("after reorg trades = %q, prices = %q", got, prices)
+	}
+	s.produce(smokeRecord(103, "0xb103", "0xb102", true))
+	s.run()
+	if got := s.memeTrades(); got != "101:2:0.03 100:1:0.03" {
+		t.Fatalf("after fork trades = %s", got)
+	}
+	if got := memePrices(); got != "100:0.03 101:0.03 103:0.03" {
+		t.Fatalf("after fork MEME prices = %s", got)
+	}
 }
