@@ -1,4 +1,4 @@
-package storage
+package model
 
 // String returns the side's stable name, used by stores and the API.
 func (side Side) String() string {

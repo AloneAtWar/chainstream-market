@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/AloneAtWar/chainstream-market/internal/pkg/asset"
-	"github.com/AloneAtWar/chainstream-market/internal/storage"
+	"github.com/AloneAtWar/chainstream-market/internal/pkg/model"
 	streamv1 "github.com/AloneAtWar/chainstream-market/proto/stream/v1"
 	"github.com/shopspring/decimal"
 )
@@ -43,7 +43,7 @@ func thinSwap(price int64) *streamv1.Trade {
 	return trade
 }
 
-func tradeIn(t *testing.T, trades []storage.Trade, pool string) storage.Trade {
+func tradeIn(t *testing.T, trades []model.Trade, pool string) model.Trade {
 	t.Helper()
 	for _, trade := range trades {
 		if trade.PoolID == pool {
@@ -51,7 +51,7 @@ func tradeIn(t *testing.T, trades []storage.Trade, pool string) storage.Trade {
 		}
 	}
 	t.Fatalf("no trade in pool %s", pool)
-	return storage.Trade{}
+	return model.Trade{}
 }
 
 func TestOutlierSwapStaysOutOfTokenCandles(t *testing.T) {
@@ -81,7 +81,7 @@ func TestOutlierSwapStaysOutOfTokenCandles(t *testing.T) {
 			if thin.Outlier != test.outlier {
 				t.Fatalf("thin trade outlier = %v, want %v", thin.Outlier, test.outlier)
 			}
-			token := findCandle(t, output.Candles, storage.CandleSubjectToken, weth, time.Minute)
+			token := findCandle(t, output.Candles, model.CandleSubjectToken, weth, time.Minute)
 			wantTrades := uint32(2)
 			if test.outlier {
 				wantTrades = 1
@@ -92,7 +92,7 @@ func TestOutlierSwapStaysOutOfTokenCandles(t *testing.T) {
 				t.Fatalf("token candle trades = %d, want %d", token.Trades, wantTrades)
 			}
 			// The thin pool's own candle still shows its trade.
-			pool := findCandle(t, output.Candles, storage.CandleSubjectPool, thinWETH, time.Minute)
+			pool := findCandle(t, output.Candles, model.CandleSubjectPool, thinWETH, time.Minute)
 			assertDecimal(t, "thin pool candle close", pool.Close, decimal.NewFromInt(test.price).String())
 		})
 	}
@@ -127,7 +127,7 @@ func TestOutlierDecisionFollowsReorg(t *testing.T) {
 	if tradeIn(t, output.Trades, thinWETH).Outlier {
 		t.Fatal("thin trade is an outlier after the reorg moved the reference price")
 	}
-	token := findCandle(t, output.Candles, storage.CandleSubjectToken, weth, time.Minute)
+	token := findCandle(t, output.Candles, model.CandleSubjectToken, weth, time.Minute)
 	if token.Trades != 3 {
 		t.Fatalf("token candle trades = %d, want 3", token.Trades)
 	}

@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/AloneAtWar/chainstream-market/internal/storage"
+	"github.com/AloneAtWar/chainstream-market/internal/pkg/model"
 )
 
 // Partition is the only partition of a live topic, so a chain's updates stay
@@ -51,7 +51,7 @@ func NewPublisher(options PublisherOptions) (*Publisher, error) {
 	return &Publisher{sink: options.Sink, topics: options.Topics, maxLag: options.MaxLag, now: now}, nil
 }
 
-func (publisher *Publisher) NotifyBlock(ctx context.Context, output storage.BlockOutput, finalizedHeight int64) error {
+func (publisher *Publisher) NotifyBlock(ctx context.Context, output model.BlockOutput, finalizedHeight int64) error {
 	topic, ok := publisher.topics[output.ChainID]
 	if !ok || (publisher.maxLag >= 0 && publisher.now().Sub(output.BlockTime) > publisher.maxLag) {
 		return nil
@@ -59,7 +59,7 @@ func (publisher *Publisher) NotifyBlock(ctx context.Context, output storage.Bloc
 	return publisher.produce(ctx, topic, BlockUpdates(output, finalizedHeight))
 }
 
-func (publisher *Publisher) NotifyRevert(ctx context.Context, revert storage.Revert) error {
+func (publisher *Publisher) NotifyRevert(ctx context.Context, revert model.Revert) error {
 	topic, ok := publisher.topics[revert.ChainID]
 	if !ok {
 		return nil
@@ -87,7 +87,7 @@ func (publisher *Publisher) Close() {
 // BlockUpdates splits a block's output into live records. Every record
 // carries the block header, and the first one carries it even when the
 // block derived nothing, so clients still learn the chain head.
-func BlockUpdates(output storage.BlockOutput, finalizedHeight int64) []Update {
+func BlockUpdates(output model.BlockOutput, finalizedHeight int64) []Update {
 	header := Update{
 		Type: UpdateBlock, ChainID: output.ChainID, Height: output.Height,
 		BlockTime: output.BlockTime.Unix(), FinalizedHeight: finalizedHeight,
@@ -113,7 +113,7 @@ func BlockUpdates(output storage.BlockOutput, finalizedHeight int64) []Update {
 }
 
 // RevertUpdates splits a revert into live records.
-func RevertUpdates(revert storage.Revert) []Update {
+func RevertUpdates(revert model.Revert) []Update {
 	updates := []Update{{Type: UpdateRevert, ChainID: revert.ChainID, Height: revert.RollbackTo}}
 	for _, reset := range revert.Candles {
 		last := &updates[len(updates)-1]

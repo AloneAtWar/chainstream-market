@@ -5,6 +5,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/AloneAtWar/chainstream-market/internal/pkg/model"
 	"github.com/AloneAtWar/chainstream-market/internal/storage"
 	"github.com/shopspring/decimal"
 )
@@ -76,17 +77,17 @@ func (server *Server) tokenList(writer http.ResponseWriter, request *http.Reques
 	})
 }
 
-func tokenListQuery(request *http.Request) (storage.TokenListQuery, error) {
+func tokenListQuery(request *http.Request) (model.TokenListQuery, error) {
 	chain, err := chainID(request)
 	if err != nil {
-		return storage.TokenListQuery{}, err
+		return model.TokenListQuery{}, err
 	}
 	values := request.URL.Query()
-	query := storage.TokenListQuery{ChainID: chain, Search: strings.TrimSpace(values.Get("q"))}
+	query := model.TokenListQuery{ChainID: chain, Search: strings.TrimSpace(values.Get("q"))}
 	if raw := values.Get("sort"); raw != "" {
-		sort, ok := storage.ParseRankingSort(raw)
+		sort, ok := model.ParseRankingSort(raw)
 		if !ok {
-			return query, badRequest("sort must be one of " + strings.Join(storage.RankingSorts(), ", "))
+			return query, badRequest("sort must be one of " + strings.Join(model.RankingSorts(), ", "))
 		}
 		query.Sort = sort
 	}

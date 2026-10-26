@@ -8,8 +8,9 @@ import (
 	"slices"
 	"time"
 
+	"github.com/AloneAtWar/chainstream-market/internal/pkg/chdb"
+	"github.com/AloneAtWar/chainstream-market/internal/pkg/model"
 	"github.com/AloneAtWar/chainstream-market/internal/storage"
-	"github.com/AloneAtWar/chainstream-market/internal/storage/chstore"
 	"github.com/shopspring/decimal"
 )
 
@@ -39,7 +40,7 @@ func (store *Store) History(wait time.Duration) storage.History {
 
 // RawTrades reports ok false, without waiting, when ch-loader has never
 // stored the chain, and after wait when it is still behind through.
-func (history *History) RawTrades(ctx context.Context, chainID uint64, tokens []string, from, through int64) ([]storage.RawTradeAt, bool, error) {
+func (history *History) RawTrades(ctx context.Context, chainID uint64, tokens []string, from, through int64) ([]model.RawTradeAt, bool, error) {
 	if len(tokens) == 0 || through < from {
 		return nil, true, nil
 	}
@@ -68,14 +69,14 @@ func (history *History) RawTrades(ctx context.Context, chainID uint64, tokens []
 	return trades, err == nil, err
 }
 
-func (store *Store) rawTrades(ctx context.Context, chainID uint64, tokens []string, from, through int64) ([]storage.RawTradeAt, error) {
+func (store *Store) rawTrades(ctx context.Context, chainID uint64, tokens []string, from, through int64) ([]model.RawTradeAt, error) {
 	var rows []tradeRow
 	err := store.db.WithContext(ctx).Select(`block_height, block_time, transaction_hash, transaction_index,
 		log_index, operation_index, protocol, dex_address, pool_id, action, sender, trader, recipient,
 		amount_assets, amount_raw, amount_values, amount_decimals, amount_decimals_known,
 		reserves_after, sqrt_price_x96, liquidity, tick, active_bin_id`).
 		Where("chain_id = ? AND block_height >= ? AND block_height <= ? AND hasAny(amount_assets, ?)",
-			chainID, from, through, chstore.ArrayParam[string](tokens)).
+			chainID, from, through, chdb.ArrayParam[string](tokens)).
 		Order("block_height, log_index, operation_index").Find(&rows).Error
 	if err != nil {
 		return nil, fmt.Errorf("clickhouse raw store: query trades: %w", err)
@@ -83,23 +84,23 @@ func (store *Store) rawTrades(ctx context.Context, chainID uint64, tokens []stri
 	if len(rows) == 0 {
 		return nil, nil
 	}
-	trades := make([]storage.RawTradeAt, len(rows))
+	trades := make([]model.RawTradeAt, len(rows))
 	for index, row := range rows {
 		count := len(row.AmountAssets)
 		if len(row.AmountRaw) != count || len(row.AmountValues) != count || len(row.AmountDecimals) != count ||
 			len(row.AmountDecimalsKnown) != count {
 			return nil, errors.New("clickhouse raw store: trade amount arrays differ in length")
 		}
-		trade := storage.RawTradeAt{Height: row.BlockHeight, BlockTime: row.BlockTime.UTC()}
+		trade := model.RawTradeAt{Height: row.BlockHeight, BlockTime: row.BlockTime.UTC()}
 		trade.TransactionHash, trade.TransactionIndex = row.TransactionHash, row.TransactionIndex
 		trade.LogIndex, trade.OperationIndex = row.LogIndex, row.OperationIndex
 		trade.Protocol, trade.DexAddress, trade.PoolID, trade.Action = row.Protocol, row.DexAddress, row.PoolID, row.Action
 		trade.Sender, trade.Trader, trade.Recipient = row.Sender, row.Trader, row.Recipient
 		trade.ReservesAfter, trade.SqrtPriceX96, trade.Liquidity = row.ReservesAfter, row.SqrtPriceX96, row.Liquidity
 		trade.Tick, trade.ActiveBinID = row.Tick, row.ActiveBinID
-		trade.Amounts = make([]storage.RawAmount, count)
+		trade.Amounts = make([]model.RawAmount, count)
 		for amount := range count {
-			trade.Amounts[amount] = storage.RawAmount{
+			trade.Amounts[amount] = model.RawAmount{
 				Asset: row.AmountAssets[amount], Raw: row.AmountRaw[amount], Value: row.AmountValues[amount],
 				Decimals: row.AmountDecimals[amount], DecimalsKnown: row.AmountDecimalsKnown[amount],
 			}
@@ -112,7 +113,7 @@ func (store *Store) rawTrades(ctx context.Context, chainID uint64, tokens []stri
 // PriceHistory reads market-engine's token_prices: every row in range, and
 // the latest row below from through the (chain_id, token, block_height)
 // sort key.
-func (history *History) PriceHistory(ctx context.Context, chainID uint64, tokens []string, from, through int64) (map[string][]storage.PricePoint, error) {
+func (history *History) PriceHistory(ctx context.Context, chainID uint64, tokens []string, from, through int64) (map[string][]model.PricePoint, error) {
 	if len(tokens) == 0 {
 		return nil, nil
 	}
@@ -136,12 +137,12 @@ func (history *History) PriceHistory(ctx context.Context, chainID uint64, tokens
 	if err != nil {
 		return nil, fmt.Errorf("clickhouse raw store: query prices: %w", err)
 	}
-	prices := make(map[string][]storage.PricePoint)
+	prices := make(map[string][]model.PricePoint)
 	for _, row := range rows {
-		prices[row.Token] = append(prices[row.Token], storage.PricePoint{Height: row.BlockHeight, USD: row.PriceUSD, Hops: row.Hops})
+		prices[row.Token] = append(prices[row.Token], model.PricePoint{Height: row.BlockHeight, USD: row.PriceUSD, Hops: row.Hops})
 	}
 	for token, points := range prices {
-		slices.SortStableFunc(points, func(left, right storage.PricePoint) int {
+		slices.SortStableFunc(points, func(left, right model.PricePoint) int {
 			return cmp.Compare(left.Height, right.Height)
 		})
 		prices[token] = points

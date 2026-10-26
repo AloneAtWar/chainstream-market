@@ -10,20 +10,21 @@ import (
 	"testing"
 	"time"
 
+	"github.com/AloneAtWar/chainstream-market/internal/pkg/model"
 	"github.com/AloneAtWar/chainstream-market/internal/storage"
 )
 
 type fakeTransfers struct {
-	query storage.TransferQuery
+	query model.TransferQuery
 	err   error
 }
 
-func (fake *fakeTransfers) Transfers(_ context.Context, query storage.TransferQuery) ([]storage.Transfer, error) {
+func (fake *fakeTransfers) Transfers(_ context.Context, query model.TransferQuery) ([]model.Transfer, error) {
 	fake.query = query
-	transfer := storage.Transfer{BlockHeight: 101, BlockTime: time.Unix(1_700_000_000, 0), RawTransfer: storage.RawTransfer{
+	transfer := model.Transfer{BlockHeight: 101, BlockTime: time.Unix(1_700_000_000, 0), RawTransfer: model.RawTransfer{
 		TransactionHash: "0xtx", TransactionIndex: 4, LogIndex: 7, Token: "0xt", From: "0xa", To: "0xb", Amount: big.NewInt(5),
 	}}
-	return []storage.Transfer{transfer}, fake.err
+	return []model.Transfer{transfer}, fake.err
 }
 
 func serveTransfers(t *testing.T, transfers storage.TransferReader, path string) *httptest.ResponseRecorder {

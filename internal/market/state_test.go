@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"github.com/AloneAtWar/chainstream-market/internal/pkg/chainsync"
+	"github.com/AloneAtWar/chainstream-market/internal/pkg/model"
+	"github.com/AloneAtWar/chainstream-market/internal/pkg/pgdb"
 	"github.com/AloneAtWar/chainstream-market/internal/storage"
 	"github.com/AloneAtWar/chainstream-market/internal/storage/pgstore"
 	streamv1 "github.com/AloneAtWar/chainstream-market/proto/stream/v1"
@@ -27,7 +29,7 @@ func stateStores(t *testing.T) map[string]func(t *testing.T) storage.StateStore 
 	}
 	stores["postgres"] = func(t *testing.T) storage.StateStore {
 		t.Helper()
-		store, err := pgstore.Open(context.Background(), pgstore.Options{
+		store, err := pgstore.Open(context.Background(), pgdb.Options{
 			DSN: dsn, Schema: fmt.Sprintf("market_state_test_%d", time.Now().UnixNano()),
 		})
 		if err != nil {
@@ -256,7 +258,7 @@ func TestRestoreNeedsFreshProcessor(t *testing.T) {
 }
 
 func TestCandleKeyCodecRoundTrip(t *testing.T) {
-	key := candleKey{Subject: storage.CandleSubjectToken, Key: "0xab|cd", Interval: 4 * time.Hour}
+	key := candleKey{Subject: model.CandleSubjectToken, Key: "0xab|cd", Interval: 4 * time.Hour}
 	got, err := candleKeys.decode(candleKeys.encode(key))
 	if err != nil || got != key {
 		t.Fatalf("decode(encode()) = %+v, %v", got, err)

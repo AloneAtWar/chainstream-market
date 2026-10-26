@@ -11,6 +11,8 @@ import (
 	"time"
 
 	"github.com/AloneAtWar/chainstream-market/internal/conf"
+	"github.com/AloneAtWar/chainstream-market/internal/pkg/chdb"
+	"github.com/AloneAtWar/chainstream-market/internal/pkg/pgdb"
 	"github.com/AloneAtWar/chainstream-market/internal/storage"
 	"github.com/AloneAtWar/chainstream-market/internal/storage/chraw"
 	"github.com/AloneAtWar/chainstream-market/internal/storage/chstore"
@@ -128,7 +130,7 @@ func OptionalRole[Role any](backend Backend) Role {
 
 // retainer ages rows out by storage.clickhouse.retention.
 type retainer interface {
-	ApplyRetention(ctx context.Context, retention chstore.Retention) error
+	ApplyRetention(ctx context.Context, retention chdb.Retention) error
 }
 
 // retain applies storage.clickhouse.retention to store when it ages rows
@@ -257,9 +259,9 @@ func openMemoryState(context.Context, *conf.State, *slog.Logger) (any, func(), e
 }
 
 // clickHouseOptions turns storage.clickhouse into store options.
-func clickHouseOptions(config *conf.Storage, logger *slog.Logger) chstore.Options {
+func clickHouseOptions(config *conf.Storage, logger *slog.Logger) chdb.Options {
 	clickhouse := config.GetClickhouse()
-	return chstore.Options{
+	return chdb.Options{
 		Addr: clickhouse.GetAddr(), Database: clickhouse.GetDatabase(),
 		Username: clickhouse.GetUsername(), Password: clickhouse.GetPassword(),
 		DialTimeout: clickhouse.GetDialTimeout().AsDuration(), Logger: logger,
@@ -283,7 +285,7 @@ func openClickHouseRaw(ctx context.Context, config *conf.Storage, logger *slog.L
 }
 
 func openPostgres(ctx context.Context, config *conf.State, logger *slog.Logger) (any, func(), error) {
-	store, err := pgstore.Open(ctx, pgstore.Options{
+	store, err := pgstore.Open(ctx, pgdb.Options{
 		DSN: config.GetPostgres().GetDsn(), Schema: config.GetPostgres().GetSchema(), Logger: logger,
 	})
 	if err != nil {

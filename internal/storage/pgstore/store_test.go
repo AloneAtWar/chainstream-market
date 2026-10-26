@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/AloneAtWar/chainstream-market/internal/pkg/chainsync"
+	"github.com/AloneAtWar/chainstream-market/internal/pkg/pgdb"
 	"github.com/AloneAtWar/chainstream-market/internal/storage/storagetest"
 )
 
@@ -21,7 +22,7 @@ func openTestStore(t *testing.T) *Store {
 		t.Skip("POSTGRES_DSN not set")
 	}
 	schema := fmt.Sprintf("market_test_%d", time.Now().UnixNano())
-	store, err := Open(context.Background(), Options{DSN: dsn, Schema: schema})
+	store, err := Open(context.Background(), pgdb.Options{DSN: dsn, Schema: schema})
 	if err != nil {
 		t.Fatalf("Open() error = %v", err)
 	}
@@ -55,10 +56,10 @@ func TestCheckpointRoundTrip(t *testing.T) {
 }
 
 func TestOpenRejectsBadOptions(t *testing.T) {
-	if _, err := Open(context.Background(), Options{}); err == nil {
+	if _, err := Open(context.Background(), pgdb.Options{}); err == nil {
 		t.Fatal("Open() without dsn error = nil")
 	}
-	if _, err := Open(context.Background(), Options{DSN: "postgres://x", Schema: "bad;name"}); err == nil {
+	if _, err := Open(context.Background(), pgdb.Options{DSN: "postgres://x", Schema: "bad;name"}); err == nil {
 		t.Fatal("Open() with bad schema error = nil")
 	}
 }
@@ -81,7 +82,7 @@ func TestOpenConcurrent(t *testing.T) {
 	for range services {
 		wg.Go(func() {
 			<-start
-			store, err := Open(ctx, Options{DSN: dsn, Schema: schema})
+			store, err := Open(ctx, pgdb.Options{DSN: dsn, Schema: schema})
 			if err != nil {
 				errs <- err
 				return

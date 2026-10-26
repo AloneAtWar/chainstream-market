@@ -5,25 +5,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log/slog"
-	"regexp"
 	"sync"
 	"time"
 
+	"github.com/AloneAtWar/chainstream-market/internal/pkg/chdb"
+	"github.com/AloneAtWar/chainstream-market/internal/pkg/model"
 	"github.com/AloneAtWar/chainstream-market/internal/storage"
 	"gorm.io/gorm"
 )
-
-type Options struct {
-	Addr     []string
-	Database string
-	Username string
-	Password string
-	// DialTimeout bounds connecting; zero uses the driver default.
-	DialTimeout time.Duration
-	// Logger receives GORM's slow query and error log; nil discards it.
-	Logger *slog.Logger
-}
 
 // tables lists every output table with the column Rewind deletes by. A trade
 // or price recomputed after its token's decimals arrived keeps its own
@@ -34,8 +23,6 @@ var tables = []struct{ name, height string }{
 	{"token_prices", "revision_height"},
 	{"candles", "update_height"},
 }
-
-var identifier = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
 // Store writes each block's output as plain inserts through GORM. Rewriting
 // a height that may already exist, after a restart or a reorg, deletes it
@@ -50,28 +37,24 @@ type Store struct {
 
 // Open connects, creates the database and tables if needed, and loads the
 // highest stored height per chain.
-func Open(ctx context.Context, options Options) (*Store, error) {
-	db, err := Connect(ctx, options)
+func Open(ctx context.Context, options chdb.Options) (*Store, error) {
+	db, err := chdb.Connect(ctx, options)
 	if err != nil {
 		return nil, err
 	}
 	store := &Store{db: db, written: make(map[uint64]int64)}
 	if err := store.migrate(ctx); err != nil {
-		return nil, errors.Join(err, Close(db))
+		return nil, errors.Join(err, chdb.Close(db))
 	}
 	if err := store.loadWritten(ctx); err != nil {
-		return nil, errors.Join(err, Close(db))
+		return nil, errors.Join(err, chdb.Close(db))
 	}
 	return store, nil
 }
 
-// migrate runs the DDL in schema. ClickHouse table engines, sort keys,
-// partitions and skip indexes are not expressible as GORM model tags.
 func (store *Store) migrate(ctx context.Context) error {
-	for _, statement := range schema {
-		if err := store.db.WithContext(ctx).Exec(statement).Error; err != nil {
-			return fmt.Errorf("clickhouse store: migrate: %w", err)
-		}
+	if err := chdb.Migrate(ctx, store.db, chdb.MarketSchema); err != nil {
+		return fmt.Errorf("clickhouse store: migrate: %w", err)
 	}
 	return nil
 }
@@ -92,10 +75,10 @@ func (store *Store) loadWritten(ctx context.Context) error {
 }
 
 func (store *Store) Close() error {
-	return Close(store.db)
+	return chdb.Close(store.db)
 }
 
-func (store *Store) WriteBlock(ctx context.Context, block storage.BlockOutput) error {
+func (store *Store) WriteBlock(ctx context.Context, block model.BlockOutput) error {
 	if block.ChainID == 0 {
 		return errors.New("clickhouse store: block chain id is required")
 	}
@@ -150,7 +133,7 @@ func (store *Store) deleteFrom(ctx context.Context, chainID uint64, operator str
 	return nil
 }
 
-func (store *Store) insertTrades(ctx context.Context, block storage.BlockOutput) error {
+func (store *Store) insertTrades(ctx context.Context, block model.BlockOutput) error {
 	if len(block.Trades) == 0 {
 		return nil
 	}
@@ -170,7 +153,7 @@ func (store *Store) insertTrades(ctx context.Context, block storage.BlockOutput)
 	return store.insert(ctx, "trades", &rows)
 }
 
-func (store *Store) insertPrices(ctx context.Context, block storage.BlockOutput) error {
+func (store *Store) insertPrices(ctx context.Context, block model.BlockOutput) error {
 	if len(block.Prices) == 0 {
 		return nil
 	}
@@ -185,7 +168,7 @@ func (store *Store) insertPrices(ctx context.Context, block storage.BlockOutput)
 	return store.insert(ctx, "token_prices", &rows)
 }
 
-func (store *Store) insertCandles(ctx context.Context, block storage.BlockOutput) error {
+func (store *Store) insertCandles(ctx context.Context, block model.BlockOutput) error {
 	if len(block.Candles) == 0 {
 		return nil
 	}
@@ -203,10 +186,16 @@ func (store *Store) insertCandles(ctx context.Context, block storage.BlockOutput
 }
 
 func (store *Store) insert(ctx context.Context, table string, rows any) error {
-	if err := Insert(ctx, store.db, rows); err != nil {
+	if err := chdb.Insert(ctx, store.db, rows); err != nil {
 		return fmt.Errorf("clickhouse store: insert %s: %w", table, err)
 	}
 	return nil
 }
 
 var _ storage.Output = (*Store)(nil)
+
+// ApplyRetention sets the TTL of market-engine's tables. Only market-engine
+// calls it, so readers that open the store leave the TTL alone.
+func (store *Store) ApplyRetention(ctx context.Context, retention chdb.Retention) error {
+	return chdb.ApplyTTL(ctx, store.db, retention, retention.EngineTTL())
+}

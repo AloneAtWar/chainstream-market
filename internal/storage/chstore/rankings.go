@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/AloneAtWar/chainstream-market/internal/pkg/model"
 	"github.com/AloneAtWar/chainstream-market/internal/storage"
 	"github.com/shopspring/decimal"
 )
@@ -25,7 +26,7 @@ func (store *Store) ChainHead(ctx context.Context, chainID uint64) (time.Time, b
 // TokenActivity reads each bucket's current version first, then sums the
 // buckets per token. Buckets chain open to previous close, so the earliest
 // bucket's open is the price the window started at.
-func (store *Store) TokenActivity(ctx context.Context, chainID uint64, interval time.Duration, since time.Time) ([]storage.TokenActivity, error) {
+func (store *Store) TokenActivity(ctx context.Context, chainID uint64, interval time.Duration, since time.Time) ([]model.TokenActivity, error) {
 	if interval < time.Second {
 		return nil, fmt.Errorf("clickhouse store: activity interval %s is below one second", interval)
 	}
@@ -57,9 +58,9 @@ func (store *Store) TokenActivity(ctx context.Context, chainID uint64, interval 
 	if len(rows) == 0 {
 		return nil, nil
 	}
-	activity := make([]storage.TokenActivity, len(rows))
+	activity := make([]model.TokenActivity, len(rows))
 	for index, row := range rows {
-		activity[index] = storage.TokenActivity{
+		activity[index] = model.TokenActivity{
 			Token: row.Key, VolumeUSD: row.VolumeUSD, Trades: int64(row.Trades), Open: row.Open, Close: row.Close,
 		}
 	}
@@ -69,7 +70,7 @@ func (store *Store) TokenActivity(ctx context.Context, chainID uint64, interval 
 // LatestQuotes finds recently priced tokens by block_time, which the monthly
 // partitions and their min/max index narrow to recent parts, then reads each
 // one's latest row through the (chain_id, token) sort key.
-func (store *Store) LatestQuotes(ctx context.Context, chainID uint64, since time.Time, tokens []string) ([]storage.TokenQuote, error) {
+func (store *Store) LatestQuotes(ctx context.Context, chainID uint64, since time.Time, tokens []string) ([]model.TokenQuote, error) {
 	filter, args := "", []any{chainID}
 	if !since.IsZero() {
 		filter = ` AND (token IN (SELECT token FROM token_prices WHERE chain_id = ? AND block_time >= ?)`
@@ -96,9 +97,9 @@ func (store *Store) LatestQuotes(ctx context.Context, chainID uint64, since time
 	if len(rows) == 0 {
 		return nil, nil
 	}
-	quotes := make([]storage.TokenQuote, len(rows))
+	quotes := make([]model.TokenQuote, len(rows))
 	for index, row := range rows {
-		quotes[index] = storage.TokenQuote{
+		quotes[index] = model.TokenQuote{
 			Token: row.Token, PriceUSD: row.PriceUSD, LiquidityUSD: row.LiquidityUSD,
 			BlockHeight: row.BlockHeight, BlockTime: row.BlockTime.UTC(),
 		}

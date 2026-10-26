@@ -14,9 +14,9 @@ import (
 	"github.com/AloneAtWar/chainstream-market/internal/conf"
 	"github.com/AloneAtWar/chainstream-market/internal/live"
 	"github.com/AloneAtWar/chainstream-market/internal/market"
+	"github.com/AloneAtWar/chainstream-market/internal/pkg/chdb"
 	"github.com/AloneAtWar/chainstream-market/internal/pkg/source"
 	"github.com/AloneAtWar/chainstream-market/internal/storage"
-	"github.com/AloneAtWar/chainstream-market/internal/storage/chstore"
 	"github.com/google/wire"
 )
 
@@ -185,8 +185,8 @@ func NewHub(bootstrap *conf.Bootstrap, logger *slog.Logger) (*live.Hub, error) {
 }
 
 // Retention turns storage.clickhouse.retention into the store's retention.
-func Retention(retention *conf.Retention) chstore.Retention {
-	return chstore.Retention{
+func Retention(retention *conf.Retention) chdb.Retention {
+	return chdb.Retention{
 		StoragePolicy: retention.GetStoragePolicy(), ColdVolume: retention.GetColdVolume(),
 		ColdAfterDays: int(retention.GetColdAfterDays()), TradesDays: int(retention.GetTradesDays()),
 		TokenPriceRollupDays: int(retention.GetTokenPriceRollupDays()),

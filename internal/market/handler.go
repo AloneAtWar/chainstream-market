@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/AloneAtWar/chainstream-market/internal/pkg/chainsync"
+	"github.com/AloneAtWar/chainstream-market/internal/pkg/model"
 	"github.com/AloneAtWar/chainstream-market/internal/storage"
 	streamv1 "github.com/AloneAtWar/chainstream-market/proto/stream/v1"
 )
@@ -16,7 +17,7 @@ import (
 // height order, one chain per processor, and calls Revert before replacement
 // blocks after a reorg.
 type BlockProcessor interface {
-	Apply(ctx context.Context, block *streamv1.BlockEvent) (storage.BlockOutput, error)
+	Apply(ctx context.Context, block *streamv1.BlockEvent) (model.BlockOutput, error)
 	// Revert discards in-memory state derived from blocks above rollbackTo.
 	Revert(ctx context.Context, rollbackTo int64) error
 }
@@ -37,7 +38,7 @@ type Stateful interface {
 type CandleReverter interface {
 	BlockProcessor
 	// RevertedCandles is called before Revert with the same height.
-	RevertedCandles(rollbackTo int64) []storage.CandleReset
+	RevertedCandles(rollbackTo int64) []model.CandleReset
 }
 
 // Notifier pushes what each record changed to live clients. It is called
@@ -45,14 +46,14 @@ type CandleReverter interface {
 // committed, so a failure stops the engine and the record is applied and
 // notified again after a restart. Notifications are therefore at least once.
 type Notifier interface {
-	NotifyBlock(ctx context.Context, output storage.BlockOutput, finalizedHeight int64) error
-	NotifyRevert(ctx context.Context, revert storage.Revert) error
+	NotifyBlock(ctx context.Context, output model.BlockOutput, finalizedHeight int64) error
+	NotifyRevert(ctx context.Context, revert model.Revert) error
 }
 
 // NewBlockOutput returns an empty output carrying block's header.
-func NewBlockOutput(block *streamv1.BlockEvent) storage.BlockOutput {
+func NewBlockOutput(block *streamv1.BlockEvent) model.BlockOutput {
 	finalized := block.GetFinalizedHeight()
-	return storage.BlockOutput{
+	return model.BlockOutput{
 		ChainID:   block.GetChainId(),
 		Height:    block.GetBlockHeight(),
 		Hash:      block.GetBlockHash(),
@@ -145,7 +146,7 @@ func (handler *processorHandler) Apply(ctx context.Context, block *streamv1.Bloc
 }
 
 func (handler *processorHandler) Revert(ctx context.Context, rollbackTo int64) error {
-	revert := storage.Revert{ChainID: handler.chainID, RollbackTo: rollbackTo}
+	revert := model.Revert{ChainID: handler.chainID, RollbackTo: rollbackTo}
 	if reverter, ok := handler.processor.(CandleReverter); ok && handler.notifier != nil {
 		revert.Candles = reverter.RevertedCandles(rollbackTo)
 	}

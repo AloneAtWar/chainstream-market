@@ -10,8 +10,8 @@ import (
 	"time"
 
 	"github.com/AloneAtWar/chainstream-market/internal/pkg/chainsync"
-	"github.com/AloneAtWar/chainstream-market/internal/storage"
-	"github.com/AloneAtWar/chainstream-market/internal/storage/chstore"
+	"github.com/AloneAtWar/chainstream-market/internal/pkg/chdb"
+	"github.com/AloneAtWar/chainstream-market/internal/pkg/model"
 )
 
 const (
@@ -28,7 +28,7 @@ func openTestStore(t *testing.T) *Store {
 	if addr == "" {
 		t.Skip("CLICKHOUSE_ADDR not set")
 	}
-	options := chstore.Options{
+	options := chdb.Options{
 		Addr:     strings.Split(addr, ","),
 		Database: fmt.Sprintf("raw_test_%d", time.Now().UnixNano()),
 		Username: os.Getenv("CLICKHOUSE_USER"), Password: os.Getenv("CLICKHOUSE_PASSWORD"),
@@ -48,30 +48,30 @@ func openTestStore(t *testing.T) *Store {
 	return store
 }
 
-func testBlock(height int64) storage.RawBlock {
+func testBlock(height int64) model.RawBlock {
 	bin := uint32(8388608)
-	return storage.RawBlock{
+	return model.RawBlock{
 		ChainID: 1, Height: height, BlockTime: time.Unix(1_700_000_000+height*12, 0).UTC(),
-		Transfers: []storage.RawTransfer{
+		Transfers: []model.RawTransfer{
 			{TransactionHash: "0xt1", LogIndex: 1, Token: token, From: alice, To: bob, Amount: big.NewInt(height)},
 			{TransactionHash: "0xt2", LogIndex: 2, Token: token, From: bob, To: alice, Amount: new(big.Int).Lsh(big.NewInt(1), 255)},
 		},
-		Trades: []storage.RawTrade{{
+		Trades: []model.RawTrade{{
 			TransactionHash: "0xt3", LogIndex: 3, Protocol: "uniswap_v3", PoolID: "0xpool", Action: "swap",
-			Amounts: []storage.RawAmount{
+			Amounts: []model.RawAmount{
 				{Asset: token, Raw: "-100", Value: "-0.0001", Decimals: 6, DecimalsKnown: true},
 				{Asset: "0xweth", Raw: "5"},
 			},
 			SqrtPriceX96: "79228162514264337593543950336", Liquidity: "1", Tick: "0", ActiveBinID: &bin,
 		}},
-		Oracles: []storage.RawOracleUpdate{{
+		Oracles: []model.RawOracleUpdate{{
 			LogIndex: 4, Feed: "0xfeed", Answer: big.NewInt(-5), RoundID: big.NewInt(7), UpdatedAt: 1_700_000_000,
 		}},
-		Assets: []storage.RawAssetFact{{
+		Assets: []model.RawAssetFact{{
 			Address: token, Standard: "erc20", Recognition: "recognized", MetadataComplete: true, Type: "created",
 			SourceHeight: height, DeploymentHeight: height, MetadataJSON: `{"symbol":"TKN","decimals":6}`,
 		}},
-		Pools: []storage.RawPoolFact{{
+		Pools: []model.RawPoolFact{{
 			PoolID: "0xpool", Protocol: "uniswap_v3", TokenAddresses: []string{token, "0xweth"},
 			SourceHeight: height, Created: true,
 		}},
@@ -106,7 +106,7 @@ func TestStoreWritesDeletesAndCheckpoints(t *testing.T) {
 	if _, ok, err := store.LoadRawCheckpoint(ctx, 1); err != nil || ok {
 		t.Fatalf("empty LoadRawCheckpoint() = %v, %v", ok, err)
 	}
-	if err := store.WriteRaw(ctx, []storage.RawBlock{testBlock(100), testBlock(101), {ChainID: 1, Height: 102}}); err != nil {
+	if err := store.WriteRaw(ctx, []model.RawBlock{testBlock(100), testBlock(101), {ChainID: 1, Height: 102}}); err != nil {
 		t.Fatalf("WriteRaw() error = %v", err)
 	}
 	assertBlocks(t, store, 2)
@@ -116,7 +116,7 @@ func TestStoreWritesDeletesAndCheckpoints(t *testing.T) {
 		t.Fatalf("DeleteRawAbove() error = %v", err)
 	}
 	assertBlocks(t, store, 1)
-	if err := store.WriteRaw(ctx, []storage.RawBlock{testBlock(101)}); err != nil {
+	if err := store.WriteRaw(ctx, []model.RawBlock{testBlock(101)}); err != nil {
 		t.Fatalf("replay WriteRaw() error = %v", err)
 	}
 	assertBlocks(t, store, 2)
@@ -149,16 +149,16 @@ func TestStoreWritesDeletesAndCheckpoints(t *testing.T) {
 func TestTransfersPagesNewestFirst(t *testing.T) {
 	ctx := context.Background()
 	store := openTestStore(t)
-	if err := store.WriteRaw(ctx, []storage.RawBlock{testBlock(100), testBlock(101)}); err != nil {
+	if err := store.WriteRaw(ctx, []model.RawBlock{testBlock(100), testBlock(101)}); err != nil {
 		t.Fatalf("WriteRaw() error = %v", err)
 	}
 	other := testBlock(102)
-	other.Transfers = []storage.RawTransfer{{LogIndex: 0, Token: "0xother", From: alice, To: "0xcc", Amount: big.NewInt(1)}}
-	if err := store.WriteRaw(ctx, []storage.RawBlock{other}); err != nil {
+	other.Transfers = []model.RawTransfer{{LogIndex: 0, Token: "0xother", From: alice, To: "0xcc", Amount: big.NewInt(1)}}
+	if err := store.WriteRaw(ctx, []model.RawBlock{other}); err != nil {
 		t.Fatalf("WriteRaw() error = %v", err)
 	}
 
-	page := func(query storage.TransferQuery) string {
+	page := func(query model.TransferQuery) string {
 		t.Helper()
 		query.ChainID = 1
 		transfers, err := store.Transfers(ctx, query)
@@ -171,31 +171,31 @@ func TestTransfersPagesNewestFirst(t *testing.T) {
 		}
 		return strings.Join(keys, " ")
 	}
-	if got := page(storage.TransferQuery{Token: token, Limit: 3}); got != "101/2 101/1 100/2" {
+	if got := page(model.TransferQuery{Token: token, Limit: 3}); got != "101/2 101/1 100/2" {
 		t.Fatalf("token page = %s", got)
 	}
 	one := uint32(1)
-	if got := page(storage.TransferQuery{Token: token, BeforeHeight: 101, BeforeLogIndex: &one, Limit: 10}); got != "100/2 100/1" {
+	if got := page(model.TransferQuery{Token: token, BeforeHeight: 101, BeforeLogIndex: &one, Limit: 10}); got != "100/2 100/1" {
 		t.Fatalf("token page after 101/1 = %s", got)
 	}
-	if got := page(storage.TransferQuery{Token: token, BeforeHeight: 101, Limit: 10}); got != "100/2 100/1" {
+	if got := page(model.TransferQuery{Token: token, BeforeHeight: 101, Limit: 10}); got != "100/2 100/1" {
 		t.Fatalf("token page before 101 = %s", got)
 	}
-	if got := page(storage.TransferQuery{Holder: alice, Limit: 10}); got != "102/0 101/2 101/1 100/2 100/1" {
+	if got := page(model.TransferQuery{Holder: alice, Limit: 10}); got != "102/0 101/2 101/1 100/2 100/1" {
 		t.Fatalf("holder page = %s", got)
 	}
-	if got := page(storage.TransferQuery{Holder: "0xcc", Token: "0xother", Limit: 10}); got != "102/0" {
+	if got := page(model.TransferQuery{Holder: "0xcc", Token: "0xother", Limit: 10}); got != "102/0" {
 		t.Fatalf("holder and token page = %s", got)
 	}
 
-	transfers, err := store.Transfers(ctx, storage.TransferQuery{ChainID: 1, Token: token, Limit: 1})
+	transfers, err := store.Transfers(ctx, model.TransferQuery{ChainID: 1, Token: token, Limit: 1})
 	if err != nil || len(transfers) != 1 {
 		t.Fatalf("Transfers() = %v, %v", transfers, err)
 	}
 	if want := new(big.Int).Lsh(big.NewInt(1), 255); transfers[0].Amount.Cmp(want) != 0 || transfers[0].From != bob {
 		t.Fatalf("transfer = %+v", transfers[0])
 	}
-	if _, err := store.Transfers(ctx, storage.TransferQuery{ChainID: 1, Limit: 1}); err == nil {
+	if _, err := store.Transfers(ctx, model.TransferQuery{ChainID: 1, Limit: 1}); err == nil {
 		t.Fatal("Transfers() without token or holder error = nil")
 	}
 }
@@ -204,7 +204,7 @@ func TestTransfersPagesNewestFirst(t *testing.T) {
 func TestHolderFilterUsesPartyIndex(t *testing.T) {
 	ctx := context.Background()
 	store := openTestStore(t)
-	if err := store.WriteRaw(ctx, []storage.RawBlock{testBlock(100)}); err != nil {
+	if err := store.WriteRaw(ctx, []model.RawBlock{testBlock(100)}); err != nil {
 		t.Fatalf("WriteRaw() error = %v", err)
 	}
 	rows, err := store.db.WithContext(ctx).Raw(
@@ -231,13 +231,13 @@ func TestHolderFilterUsesPartyIndex(t *testing.T) {
 func TestRetentionDropsOldFacts(t *testing.T) {
 	ctx := context.Background()
 	store := openTestStore(t)
-	retention := chstore.Retention{RawTransfersDays: 30, RawTradesDays: 30}
+	retention := chdb.Retention{RawTransfersDays: 30, RawTradesDays: 30}
 	if err := store.ApplyRetention(ctx, retention); err != nil {
 		t.Fatalf("ApplyRetention() error = %v", err)
 	}
 	recent := testBlock(200)
 	recent.BlockTime = time.Now().UTC()
-	if err := store.WriteRaw(ctx, []storage.RawBlock{testBlock(100), recent}); err != nil {
+	if err := store.WriteRaw(ctx, []model.RawBlock{testBlock(100), recent}); err != nil {
 		t.Fatalf("WriteRaw() error = %v", err)
 	}
 	for _, table := range tables {

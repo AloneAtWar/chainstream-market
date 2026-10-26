@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/AloneAtWar/chainstream-market/internal/pkg/asset"
-	"github.com/AloneAtWar/chainstream-market/internal/storage"
+	"github.com/AloneAtWar/chainstream-market/internal/pkg/model"
 	streamv1 "github.com/AloneAtWar/chainstream-market/proto/stream/v1"
 	"github.com/shopspring/decimal"
 	"google.golang.org/protobuf/proto"
@@ -202,8 +202,8 @@ func (processor *Processor) seedPools(height int64, ready []readyTrade, touched 
 // A trade quoted in a token whose decimals just arrived is valued at that
 // token's recomputed price, and a swap of such a token is checked for
 // outliers against it.
-func (processor *Processor) replay(height int64, output *storage.BlockOutput, ready []readyTrade, past pastPrices, touched map[candleKey]struct{}) map[candleKey][]storage.Candle {
-	built := make(map[candleKey][]storage.Candle)
+func (processor *Processor) replay(height int64, output *model.BlockOutput, ready []readyTrade, past pastPrices, touched map[candleKey]struct{}) map[candleKey][]model.Candle {
+	built := make(map[candleKey][]model.Candle)
 	for _, item := range ready {
 		processor.late.remove(height, item.key)
 		processor.unindexLate(item.key, item.held.Waiting)
@@ -239,7 +239,7 @@ func (processor *Processor) replay(height int64, output *storage.BlockOutput, re
 					if _, exists := processor.candles.get(key); exists {
 						continue
 					}
-					built[key] = []storage.Candle{updateCandle(storage.Candle{}, false, trade, key, height)}
+					built[key] = []model.Candle{updateCandle(model.Candle{}, false, trade, key, height)}
 					continue
 				}
 				last := buckets[len(buckets)-1]

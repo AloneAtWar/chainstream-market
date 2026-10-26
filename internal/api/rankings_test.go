@@ -7,17 +7,17 @@ import (
 	"testing"
 	"time"
 
-	"github.com/AloneAtWar/chainstream-market/internal/storage"
+	"github.com/AloneAtWar/chainstream-market/internal/pkg/model"
 	"github.com/shopspring/decimal"
 )
 
 type fakeRankings struct {
-	query  storage.TokenListQuery
-	tokens []storage.RankedToken
+	query  model.TokenListQuery
+	tokens []model.RankedToken
 	err    error
 }
 
-func (fake *fakeRankings) TokenList(_ context.Context, query storage.TokenListQuery) ([]storage.RankedToken, error) {
+func (fake *fakeRankings) TokenList(_ context.Context, query model.TokenListQuery) ([]model.RankedToken, error) {
 	fake.query = query
 	return fake.tokens, fake.err
 }
@@ -25,7 +25,7 @@ func (fake *fakeRankings) TokenList(_ context.Context, query storage.TokenListQu
 func TestTokenList(t *testing.T) {
 	symbol, decimals, height, created := "PEPE", uint8(18), int64(120), int64(1_700_000_000)
 	price := decimal.RequireFromString("0.00012")
-	rankings := &fakeRankings{tokens: []storage.RankedToken{
+	rankings := &fakeRankings{tokens: []model.RankedToken{
 		{
 			Token: "0xaa", Symbol: &symbol, Decimals: &decimals, Ranked: true, PriceUSD: &price, PriceHeight: &height,
 			PriceChange24h: decimal.RequireFromString("-0.25"), Volume24hUSD: decimal.NewFromInt(1500), Trades24h: 9,
@@ -48,7 +48,7 @@ func TestTokenList(t *testing.T) {
 		t.Fatalf("GET tokens = %d %s", code, body)
 	}
 	query := rankings.query
-	if query.ChainID != 56 || query.Sort != storage.SortHolders || !query.Ascending || query.Search != "pe" ||
+	if query.ChainID != 56 || query.Sort != model.SortHolders || !query.Ascending || query.Search != "pe" ||
 		!query.MinLiquidityUSD.Equal(decimal.RequireFromString("1000.5")) || query.Limit != 20 || query.Offset != 40 {
 		t.Fatalf("query = %+v", query)
 	}
@@ -58,7 +58,7 @@ func TestTokenList(t *testing.T) {
 	if code != http.StatusOK || body != `{"chain_id":1,"order":"desc","refreshed_at":null,"sort":"volume_24h","tokens":[]}`+"\n" {
 		t.Fatalf("GET default tokens = %d %s", code, body)
 	}
-	if rankings.query.Sort != storage.SortVolume24h || rankings.query.Ascending || rankings.query.Limit != defaultLimit {
+	if rankings.query.Sort != model.SortVolume24h || rankings.query.Ascending || rankings.query.Limit != defaultLimit {
 		t.Fatalf("default query = %+v", rankings.query)
 	}
 }

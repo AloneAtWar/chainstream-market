@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/AloneAtWar/chainstream-market/internal/storage"
+	"github.com/AloneAtWar/chainstream-market/internal/pkg/model"
 	streamv1 "github.com/AloneAtWar/chainstream-market/proto/stream/v1"
 )
 
@@ -72,7 +72,7 @@ func TestRevertedCandlesMatchReplay(t *testing.T) {
 	}
 }
 
-func candlesEqual(left, right storage.Candle) bool {
+func candlesEqual(left, right model.Candle) bool {
 	return left.OpenTime.Equal(right.OpenTime) && left.Open.Equal(right.Open) && left.High.Equal(right.High) &&
 		left.Low.Equal(right.Low) && left.Close.Equal(right.Close) && left.VolumeUSD.Equal(right.VolumeUSD) &&
 		left.Trades == right.Trades && left.UpdateHeight == right.UpdateHeight

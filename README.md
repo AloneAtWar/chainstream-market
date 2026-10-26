@@ -20,15 +20,18 @@ Market data services built on the [chainstream-evm](https://github.com/AloneAtWa
 | `internal/rankings` | market-rankings' refresher: reads the ClickHouse output and commits one chain's rankings. |
 | `internal/live` | Realtime push: market-engine's live topic publisher and market-api's WebSocket hub, over a Kafka or Redis Pub/Sub transport. |
 | `internal/market` | Per-chain processor: pool state, base/quote orientation, the USD price graph and candles, and the `chainsync.Handler` that runs it and writes its output. |
-| `internal/storage` | Output models (oriented trades, token prices, candles), store interfaces and the in-memory backend. |
-| `internal/storage/chstore` | ClickHouse output store and schema, through GORM. |
-| `internal/storage/chraw` | ClickHouse raw fact store and schema for ch-loader, through GORM. |
-| `internal/storage/pgstore` | PostgreSQL (through GORM) checkpoints, market state, holder balances and the token and pool registry. |
+| `internal/storage` | Store interfaces, the roles the commands depend on, and the in-memory backend. |
+| `internal/storage/chstore` | market-engine's ClickHouse output store and its queries, through GORM. |
+| `internal/storage/chraw` | ch-loader's ClickHouse raw fact store and its queries, through GORM. |
+| `internal/storage/pgstore` | PostgreSQL (through GORM) queries over checkpoints, market state, holder balances and the token and pool registry. |
 | `internal/conf` | Configuration: the `Bootstrap` proto in `conf.proto`, loaded with Kratos config, plus defaults and validation. |
 | `internal/data` | wire providers for the stores, Kafka sources and live publisher, built from the config. Stores are opened by the driver the config names and provided by role; see [Storage backends](#storage-backends). |
 | `internal/biz` | wire providers for each command's handlers and the workers they run. |
 | `internal/service` | wire provider for market-api's HTTP handler. |
 | `internal/server` | Kratos transport servers: HTTP, metrics and the long-running workers. |
+| `internal/pkg/model` | The data the components exchange: block output (oriented trades, token prices, candles), holder balances, token and pool metadata, raw facts and rankings. |
+| `internal/pkg/chdb` | The shared ClickHouse connection, the DDL of every table in it and their retention TTLs. |
+| `internal/pkg/pgdb` | The shared PostgreSQL connection and the DDL of every table in it. Each service creates them all under an advisory lock, so services can start in any order. |
 | `internal/pkg/chainsync` | Per-chain ordered apply loop: reverts, continuity checks and checkpoints, driving a `Handler`. Shared by every command that consumes chain topics. |
 | `internal/pkg/source` | Chain topic readers: Kafka partition zero, or a followed file of protobuf JSON records. |
 | `internal/pkg/asset` | Token addresses every command shares: the per-chain catalog of USD anchors, quote preferences and aliases, and chainstream-evm's asset metadata. |

@@ -8,51 +8,12 @@ import (
 	"strings"
 	"time"
 
+	"github.com/AloneAtWar/chainstream-market/internal/pkg/model"
 	"github.com/AloneAtWar/chainstream-market/internal/storage"
 	"github.com/shopspring/decimal"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
-
-// rankingSchema creates the token rankings, a rollup that market-rankings
-// rewrites from the ClickHouse output, holder_counts and registry_tokens.
-// Each sort column has an index led by chain_id, so a page reads only the
-// rows it returns.
-var rankingSchema = []string{
-	`CREATE TABLE IF NOT EXISTS ranking_checkpoints (
-		chain_id     BIGINT PRIMARY KEY,
-		head_time    TIMESTAMPTZ NOT NULL,
-		refreshed_at TIMESTAMPTZ NOT NULL
-	)`,
-	// price_* are NULL for a token that traded in the window without a
-	// price of its own.
-	`CREATE TABLE IF NOT EXISTS token_rankings (
-		chain_id         BIGINT NOT NULL,
-		token            TEXT NOT NULL,
-		price_usd        NUMERIC,
-		price_height     BIGINT,
-		price_time       TIMESTAMPTZ,
-		liquidity_usd    NUMERIC NOT NULL DEFAULT 0,
-		volume_24h_usd   NUMERIC NOT NULL DEFAULT 0,
-		trades_24h       BIGINT NOT NULL DEFAULT 0,
-		price_change_24h NUMERIC NOT NULL DEFAULT 0,
-		holders          BIGINT NOT NULL DEFAULT 0,
-		created_height   BIGINT,
-		created_time     BIGINT,
-		PRIMARY KEY (chain_id, token)
-	)`,
-	`CREATE INDEX IF NOT EXISTS token_rankings_volume ON token_rankings (chain_id, volume_24h_usd, token)`,
-	`CREATE INDEX IF NOT EXISTS token_rankings_change ON token_rankings (chain_id, price_change_24h, token)`,
-	`CREATE INDEX IF NOT EXISTS token_rankings_liquidity ON token_rankings (chain_id, liquidity_usd, token)`,
-	`CREATE INDEX IF NOT EXISTS token_rankings_holders ON token_rankings (chain_id, holders, token)`,
-	`CREATE INDEX IF NOT EXISTS token_rankings_created ON token_rankings (chain_id, created_height, token)
-		WHERE created_height IS NOT NULL`,
-	`CREATE INDEX IF NOT EXISTS token_rankings_price_time ON token_rankings (chain_id, price_time)`,
-	// Symbol search matches by prefix, which a btree serves only with
-	// pattern ops under a non-C collation.
-	`CREATE INDEX IF NOT EXISTS registry_tokens_symbol_prefix
-		ON registry_tokens (chain_id, lower(symbol) text_pattern_ops)`,
-}
 
 func (store *Store) LoadRankingCursor(ctx context.Context, chainID uint64) (time.Time, bool, error) {
 	var row rankingCheckpointRow
@@ -78,7 +39,7 @@ func (store *Store) RankedSince(ctx context.Context, chainID uint64, since time.
 
 // CommitRankings applies refresh in one transaction. Updates skip rows
 // whose values did not change, so a refresh rewrites only what moved.
-func (store *Store) CommitRankings(ctx context.Context, refresh storage.RankingRefresh) error {
+func (store *Store) CommitRankings(ctx context.Context, refresh model.RankingRefresh) error {
 	if refresh.ChainID == 0 {
 		return errors.New("postgres store: ranking chain id is required")
 	}
@@ -125,7 +86,7 @@ func (store *Store) CommitRankings(ctx context.Context, refresh storage.RankingR
 	return nil
 }
 
-func queueQuotes(run *runner, chainID int64, refresh storage.RankingRefresh) {
+func queueQuotes(run *runner, chainID int64, refresh model.RankingRefresh) {
 	count := len(refresh.Quotes)
 	tokens, prices, liquidity := make([]string, count), make([]string, count), make([]string, count)
 	heights, times := make([]int64, count), make([]time.Time, count)
@@ -157,7 +118,7 @@ func queueQuotes(run *runner, chainID int64, refresh storage.RankingRefresh) {
 		map[string]any{"chain": chainID, "since": since, "tokens": array(tokens)})
 }
 
-func queueActivity(run *runner, chainID int64, activity []storage.TokenActivity) {
+func queueActivity(run *runner, chainID int64, activity []model.TokenActivity) {
 	count := len(activity)
 	tokens, volumes, changes := make([]string, count), make([]string, count), make([]string, count)
 	trades := make([]int64, count)
@@ -190,12 +151,12 @@ func priceChange(open, closePrice decimal.Decimal) decimal.Decimal {
 }
 
 var (
-	rankingColumns = map[storage.RankingSort]string{
-		storage.SortVolume24h:      "volume_24h_usd",
-		storage.SortPriceChange24h: "price_change_24h",
-		storage.SortLiquidity:      "liquidity_usd",
-		storage.SortHolders:        "holders",
-		storage.SortCreated:        "created_height",
+	rankingColumns = map[model.RankingSort]string{
+		model.SortVolume24h:      "volume_24h_usd",
+		model.SortPriceChange24h: "price_change_24h",
+		model.SortLiquidity:      "liquidity_usd",
+		model.SortHolders:        "holders",
+		model.SortCreated:        "created_height",
 	}
 	addressPattern = regexp.MustCompile(`^0x[0-9a-f]{40}$`)
 	likeEscaper    = strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`)
@@ -204,7 +165,7 @@ var (
 // TokenList reads a page of the rankings, joined with registry metadata. A
 // search starts from registry_tokens instead, so tokens without market data
 // are found too and list after the ranked ones.
-func (store *Store) TokenList(ctx context.Context, query storage.TokenListQuery) ([]storage.RankedToken, error) {
+func (store *Store) TokenList(ctx context.Context, query model.TokenListQuery) ([]model.RankedToken, error) {
 	column, ok := rankingColumns[query.Sort]
 	if !ok || query.Limit <= 0 || query.Offset < 0 {
 		return nil, errors.New("postgres store: token list needs a known sort, a limit and a non-negative offset")
@@ -223,7 +184,7 @@ func (store *Store) TokenList(ctx context.Context, query storage.TokenListQuery)
 	case search == "":
 		from = `token_rankings AS r LEFT JOIN registry_tokens AS t ON t.chain_id = r.chain_id AND t.address = r.token`
 		where = `r.chain_id = @chain AND r.liquidity_usd >= CAST(@min_liquidity AS numeric)`
-		if query.Sort == storage.SortCreated {
+		if query.Sort == model.SortCreated {
 			where += ` AND r.created_height IS NOT NULL`
 		}
 		order = fmt.Sprintf(`r.%s %s, r.token %s`, column, direction, direction)
@@ -256,7 +217,7 @@ func (store *Store) TokenList(ctx context.Context, query storage.TokenListQuery)
 	if err != nil {
 		return nil, fmt.Errorf("postgres store: token list: %w", err)
 	}
-	tokens := make([]storage.RankedToken, len(rows))
+	tokens := make([]model.RankedToken, len(rows))
 	for index, row := range rows {
 		if tokens[index], err = row.rankedToken(); err != nil {
 			return nil, fmt.Errorf("postgres store: read token list: %w", err)
@@ -284,8 +245,8 @@ type rankedTokenRow struct {
 	RefreshedAt    *time.Time
 }
 
-func (row rankedTokenRow) rankedToken() (storage.RankedToken, error) {
-	token := storage.RankedToken{
+func (row rankedTokenRow) rankedToken() (model.RankedToken, error) {
+	token := model.RankedToken{
 		Token: row.Token, Name: row.Name, Symbol: row.Symbol, Ranked: row.Ranked, PriceHeight: row.PriceHeight,
 		Trades24h: row.Trades24h, Holders: row.Holders, CreatedHeight: row.CreatedHeight, CreatedTime: row.CreatedTime,
 	}

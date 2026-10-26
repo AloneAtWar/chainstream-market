@@ -7,30 +7,31 @@ import (
 	"slices"
 	"time"
 
+	"github.com/AloneAtWar/chainstream-market/internal/pkg/model"
 	"github.com/AloneAtWar/chainstream-market/internal/storage"
 )
 
-func (store *Store) LatestPrice(ctx context.Context, chainID uint64, token string) (storage.TokenPrice, bool, error) {
+func (store *Store) LatestPrice(ctx context.Context, chainID uint64, token string) (model.TokenPrice, bool, error) {
 	var rows []priceRow
 	err := store.db.WithContext(ctx).
 		Select("block_height, block_time, price_usd, toString(source) AS source, hops, liquidity_usd").
 		Where("chain_id = ? AND token = ?", chainID, token).
 		Order("block_height DESC").Limit(1).Find(&rows).Error
 	if err != nil {
-		return storage.TokenPrice{}, false, fmt.Errorf("clickhouse store: query price: %w", err)
+		return model.TokenPrice{}, false, fmt.Errorf("clickhouse store: query price: %w", err)
 	}
 	if len(rows) == 0 {
-		return storage.TokenPrice{}, false, nil
+		return model.TokenPrice{}, false, nil
 	}
 	row := rows[0]
-	return storage.TokenPrice{
+	return model.TokenPrice{
 		ChainID: chainID, Token: token, BlockHeight: row.BlockHeight, BlockTime: row.BlockTime,
-		PriceUSD: row.PriceUSD, Source: storage.ParsePriceSource(row.Source), Hops: row.Hops,
+		PriceUSD: row.PriceUSD, Source: model.ParsePriceSource(row.Source), Hops: row.Hops,
 		LiquidityUSD: row.LiquidityUSD,
 	}, true, nil
 }
 
-func (store *Store) Candles(ctx context.Context, query storage.CandleQuery) ([]storage.Candle, error) {
+func (store *Store) Candles(ctx context.Context, query model.CandleQuery) ([]model.Candle, error) {
 	if query.Limit <= 0 || query.Interval < time.Second {
 		return nil, errors.New("clickhouse store: candle query needs a limit and an interval")
 	}
@@ -55,9 +56,9 @@ func (store *Store) Candles(ctx context.Context, query storage.CandleQuery) ([]s
 	if err != nil {
 		return nil, fmt.Errorf("clickhouse store: query candles: %w", err)
 	}
-	candles := make([]storage.Candle, len(rows))
+	candles := make([]model.Candle, len(rows))
 	for index, row := range rows {
-		candles[index] = storage.Candle{
+		candles[index] = model.Candle{
 			ChainID: query.ChainID, Subject: query.Subject, Key: query.Key, Interval: query.Interval,
 			OpenTime: row.OpenTime.UTC(), Open: row.Open, High: row.High, Low: row.Low, Close: row.Close,
 			VolumeBase: row.VolumeBase, VolumeUSD: row.VolumeUSD, Trades: row.Trades, UpdateHeight: row.UpdateHeight,
@@ -70,7 +71,7 @@ func (store *Store) Candles(ctx context.Context, query storage.CandleQuery) ([]s
 	return candles, nil
 }
 
-func (store *Store) Trades(ctx context.Context, query storage.TradeQuery) ([]storage.Trade, error) {
+func (store *Store) Trades(ctx context.Context, query model.TradeQuery) ([]model.Trade, error) {
 	if query.Limit <= 0 || (query.BaseToken == "") == (query.PoolID == "") {
 		return nil, errors.New("clickhouse store: trade query needs a limit and exactly one of base token or pool")
 	}
@@ -94,13 +95,13 @@ func (store *Store) Trades(ctx context.Context, query storage.TradeQuery) ([]sto
 	if len(rows) == 0 {
 		return nil, nil
 	}
-	trades := make([]storage.Trade, len(rows))
+	trades := make([]model.Trade, len(rows))
 	for index, row := range rows {
-		trades[index] = storage.Trade{
+		trades[index] = model.Trade{
 			ChainID: query.ChainID, BlockHeight: row.BlockHeight, BlockTime: row.BlockTime.UTC(),
 			TransactionHash: row.TransactionHash, TransactionIndex: row.TransactionIndex,
 			LogIndex: row.LogIndex, OperationIndex: row.OperationIndex, Protocol: row.Protocol,
-			PoolID: row.PoolID, Trader: row.Trader, Side: storage.ParseSide(row.Side),
+			PoolID: row.PoolID, Trader: row.Trader, Side: model.ParseSide(row.Side),
 			BaseToken: row.BaseToken, QuoteToken: row.QuoteToken, BaseAmount: row.BaseAmount,
 			QuoteAmount: row.QuoteAmount, PriceQuote: row.PriceQuote, PriceUSD: row.PriceUSD,
 			ValueUSD: row.ValueUSD, Outlier: row.Outlier,

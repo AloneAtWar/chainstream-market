@@ -11,10 +11,10 @@ import (
 	"time"
 
 	"github.com/AloneAtWar/chainstream-market/internal/pkg/chainsync"
+	"github.com/AloneAtWar/chainstream-market/internal/pkg/chdb"
+	"github.com/AloneAtWar/chainstream-market/internal/pkg/model"
 	"github.com/AloneAtWar/chainstream-market/internal/pkg/source"
-	"github.com/AloneAtWar/chainstream-market/internal/storage"
 	"github.com/AloneAtWar/chainstream-market/internal/storage/chraw"
-	"github.com/AloneAtWar/chainstream-market/internal/storage/chstore"
 	streamv1 "github.com/AloneAtWar/chainstream-market/proto/stream/v1"
 	"github.com/twmb/franz-go/pkg/kfake"
 	"github.com/twmb/franz-go/pkg/kgo"
@@ -31,7 +31,7 @@ type smoke struct {
 	t        *testing.T
 	cluster  *kfake.Cluster
 	producer *kgo.Client
-	options  chstore.Options
+	options  chdb.Options
 	store    *chraw.Store
 	offset   int64
 }
@@ -52,7 +52,7 @@ func newSmoke(t *testing.T) *smoke {
 		t.Fatalf("producer error = %v", err)
 	}
 	t.Cleanup(producer.Close)
-	options := chstore.Options{
+	options := chdb.Options{
 		Addr:     strings.Split(addr, ","),
 		Database: fmt.Sprintf("loader_test_%d", time.Now().UnixNano()),
 		Username: os.Getenv("CLICKHOUSE_USER"), Password: os.Getenv("CLICKHOUSE_PASSWORD"),
@@ -62,9 +62,9 @@ func newSmoke(t *testing.T) *smoke {
 		t.Fatalf("Open() error = %v", err)
 	}
 	t.Cleanup(func() {
-		db, connErr := chstore.Connect(context.Background(), options)
+		db, connErr := chdb.Connect(context.Background(), options)
 		if connErr == nil {
-			connErr = errors.Join(db.Exec("DROP DATABASE IF EXISTS "+options.Database).Error, chstore.Close(db))
+			connErr = errors.Join(db.Exec("DROP DATABASE IF EXISTS "+options.Database).Error, chdb.Close(db))
 		}
 		if connErr != nil {
 			t.Errorf("drop database: %v", connErr)
@@ -151,7 +151,7 @@ func (handler *observed) Commit(ctx context.Context, checkpoint chainsync.Checkp
 
 func (s *smoke) transfers() string {
 	s.t.Helper()
-	transfers, err := s.store.Transfers(context.Background(), storage.TransferQuery{ChainID: 1, Token: smokeToken, Limit: 100})
+	transfers, err := s.store.Transfers(context.Background(), model.TransferQuery{ChainID: 1, Token: smokeToken, Limit: 100})
 	if err != nil {
 		s.t.Fatalf("Transfers() error = %v", err)
 	}
@@ -200,7 +200,7 @@ func TestSmokeKafkaToClickHouse(t *testing.T) {
 	if err != nil {
 		t.Fatalf("convert() error = %v", err)
 	}
-	if err = s.store.WriteRaw(context.Background(), []storage.RawBlock{raw}); err != nil {
+	if err = s.store.WriteRaw(context.Background(), []model.RawBlock{raw}); err != nil {
 		t.Fatalf("WriteRaw() error = %v", err)
 	}
 	s.produce(&streamv1.StreamRecord{Payload: &streamv1.StreamRecord_Block{Block: partial}})

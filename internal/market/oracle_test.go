@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/AloneAtWar/chainstream-market/internal/pkg/asset"
-	"github.com/AloneAtWar/chainstream-market/internal/storage"
+	"github.com/AloneAtWar/chainstream-market/internal/pkg/model"
 	streamv1 "github.com/AloneAtWar/chainstream-market/proto/stream/v1"
 	"github.com/shopspring/decimal"
 )
@@ -63,10 +63,10 @@ func TestOracleGuardsGraphPrice(t *testing.T) {
 	tests := map[string]struct {
 		answer string
 		want   string
-		source storage.PriceSource
+		source model.PriceSource
 	}{
-		"within deviation keeps the graph price": {"301000000000", "3000", storage.PriceSourceGraph},
-		"beyond deviation uses the oracle":       {"250000000000", "2500", storage.PriceSourceAnchor},
+		"within deviation keeps the graph price": {"301000000000", "3000", model.PriceSourceGraph},
+		"beyond deviation uses the oracle":       {"250000000000", "2500", model.PriceSourceAnchor},
 	}
 	for name, test := range tests {
 		t.Run(name, func(t *testing.T) {
@@ -103,7 +103,7 @@ func TestOracleOnlyTokenAndUntrustedFeeds(t *testing.T) {
 		t.Fatalf("prices = %+v, want only WBTC", prices)
 	}
 	assertDecimal(t, "WBTC", prices[wbtc].PriceUSD, "65000")
-	if prices[wbtc].Source != storage.PriceSourceAnchor {
+	if prices[wbtc].Source != model.PriceSourceAnchor {
 		t.Fatalf("WBTC source = %d", prices[wbtc].Source)
 	}
 }

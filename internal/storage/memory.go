@@ -7,6 +7,7 @@ import (
 	"sync"
 
 	"github.com/AloneAtWar/chainstream-market/internal/pkg/chainsync"
+	"github.com/AloneAtWar/chainstream-market/internal/pkg/model"
 )
 
 // Memory keeps checkpoints, processor state and outputs in process memory.
@@ -14,14 +15,14 @@ import (
 type Memory struct {
 	mu          sync.RWMutex
 	checkpoints map[uint64]chainsync.Checkpoint
-	blocks      map[uint64]map[int64]BlockOutput
+	blocks      map[uint64]map[int64]model.BlockOutput
 	states      map[uint64]*memoryState
 }
 
 func NewMemory() *Memory {
 	return &Memory{
 		checkpoints: make(map[uint64]chainsync.Checkpoint),
-		blocks:      make(map[uint64]map[int64]BlockOutput),
+		blocks:      make(map[uint64]map[int64]model.BlockOutput),
 		states:      make(map[uint64]*memoryState),
 	}
 }
@@ -43,7 +44,7 @@ func (memory *Memory) Save(_ context.Context, checkpoint chainsync.Checkpoint) e
 	return nil
 }
 
-func (memory *Memory) WriteBlock(_ context.Context, block BlockOutput) error {
+func (memory *Memory) WriteBlock(_ context.Context, block model.BlockOutput) error {
 	if block.ChainID == 0 {
 		return errors.New("memory storage: block chain id is required")
 	}
@@ -51,7 +52,7 @@ func (memory *Memory) WriteBlock(_ context.Context, block BlockOutput) error {
 	defer memory.mu.Unlock()
 	chain := memory.blocks[block.ChainID]
 	if chain == nil {
-		chain = make(map[int64]BlockOutput)
+		chain = make(map[int64]model.BlockOutput)
 		memory.blocks[block.ChainID] = chain
 	}
 	chain[block.Height] = block
@@ -70,10 +71,10 @@ func (memory *Memory) Rewind(_ context.Context, chainID uint64, rollbackTo int64
 }
 
 // Blocks returns the stored outputs for chainID in height order.
-func (memory *Memory) Blocks(chainID uint64) []BlockOutput {
+func (memory *Memory) Blocks(chainID uint64) []model.BlockOutput {
 	memory.mu.RLock()
 	defer memory.mu.RUnlock()
-	blocks := make([]BlockOutput, 0, len(memory.blocks[chainID]))
+	blocks := make([]model.BlockOutput, 0, len(memory.blocks[chainID]))
 	for _, block := range memory.blocks[chainID] {
 		blocks = append(blocks, block)
 	}

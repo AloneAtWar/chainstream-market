@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/AloneAtWar/chainstream-market/internal/pkg/chainsync"
-	"github.com/AloneAtWar/chainstream-market/internal/storage"
+	"github.com/AloneAtWar/chainstream-market/internal/pkg/model"
 	"github.com/shopspring/decimal"
 )
 
@@ -22,20 +22,20 @@ var (
 	tokenEE = testAddress("e")
 )
 
-func registryToken(address, symbol string, deployment *storage.Deployment) storage.Token {
+func registryToken(address, symbol string, deployment *model.Deployment) model.Token {
 	name := symbol + " token"
-	return storage.Token{
+	return model.Token{
 		Address: address, Standard: "erc20", Recognition: "recognized", MetadataComplete: true,
 		Name: &name, Symbol: &symbol, Created: deployment != nil, Deployment: deployment, SourceHeight: 1,
 	}
 }
 
-func seedHolders(t *testing.T, store *Store, balances map[storage.HolderKey]int64) {
+func seedHolders(t *testing.T, store *Store, balances map[model.HolderKey]int64) {
 	t.Helper()
-	change := storage.HolderChange{Height: 1}
+	change := model.HolderChange{Height: 1}
 	for key, balance := range balances {
-		change.Created = append(change.Created, storage.HolderSeed{
-			Holding: storage.Holding{HolderKey: key, Balance: big.NewInt(balance)}, Verified: true,
+		change.Created = append(change.Created, model.HolderSeed{
+			Holding: model.Holding{HolderKey: key, Balance: big.NewInt(balance)}, Verified: true,
 		})
 	}
 	if err := store.CommitHolders(context.Background(), chainsync.Checkpoint{ChainID: 1, Height: 1}, change); err != nil {
@@ -43,21 +43,21 @@ func seedHolders(t *testing.T, store *Store, balances map[storage.HolderKey]int6
 	}
 }
 
-func quote(token, price, liquidity string, height int64, at time.Time) storage.TokenQuote {
-	return storage.TokenQuote{
+func quote(token, price, liquidity string, height int64, at time.Time) model.TokenQuote {
+	return model.TokenQuote{
 		Token: token, PriceUSD: decimal.RequireFromString(price), LiquidityUSD: decimal.RequireFromString(liquidity),
 		BlockHeight: height, BlockTime: at,
 	}
 }
 
-func activity(token, volume string, trades int64, open, closePrice string) storage.TokenActivity {
-	return storage.TokenActivity{
+func activity(token, volume string, trades int64, open, closePrice string) model.TokenActivity {
+	return model.TokenActivity{
 		Token: token, VolumeUSD: decimal.RequireFromString(volume), Trades: trades,
 		Open: decimal.RequireFromString(open), Close: decimal.RequireFromString(closePrice),
 	}
 }
 
-func listTokens(t *testing.T, store *Store, query storage.TokenListQuery) []storage.RankedToken {
+func listTokens(t *testing.T, store *Store, query model.TokenListQuery) []model.RankedToken {
 	t.Helper()
 	query.ChainID = 1
 	if query.Limit == 0 {
@@ -70,7 +70,7 @@ func listTokens(t *testing.T, store *Store, query storage.TokenListQuery) []stor
 	return tokens
 }
 
-func assertOrder(t *testing.T, tokens []storage.RankedToken, want ...string) {
+func assertOrder(t *testing.T, tokens []model.RankedToken, want ...string) {
 	t.Helper()
 	got := make([]string, len(tokens))
 	for index, token := range tokens {
@@ -87,18 +87,18 @@ func TestRankingsRefreshAndList(t *testing.T) {
 	if _, ok, err := store.LoadRankingCursor(ctx, 1); err != nil || ok {
 		t.Fatalf("empty LoadRankingCursor() = %v, %v", ok, err)
 	}
-	if err := store.CommitRegistry(ctx, chainsync.Checkpoint{ChainID: 1, Height: 1}, storage.RegistryChange{
+	if err := store.CommitRegistry(ctx, chainsync.Checkpoint{ChainID: 1, Height: 1}, model.RegistryChange{
 		Height: 1,
-		Tokens: []storage.Token{
-			registryToken(tokenAA, "USDC", &storage.Deployment{BlockHeight: 5, BlockTime: 50}),
+		Tokens: []model.Token{
+			registryToken(tokenAA, "USDC", &model.Deployment{BlockHeight: 5, BlockTime: 50}),
 			registryToken(tokenBB, "PEPE", nil),
-			registryToken(tokenCC, "pepe2", &storage.Deployment{BlockHeight: 9, BlockTime: 90}),
+			registryToken(tokenCC, "pepe2", &model.Deployment{BlockHeight: 9, BlockTime: 90}),
 			registryToken(tokenDD, "USDT", nil),
 		},
 	}); err != nil {
 		t.Fatalf("CommitRegistry() error = %v", err)
 	}
-	seedHolders(t, store, map[storage.HolderKey]int64{
+	seedHolders(t, store, map[model.HolderKey]int64{
 		{Token: tokenAA, Holder: "0x1"}: 10, {Token: tokenAA, Holder: "0x2"}: 20,
 		{Token: tokenAA, Holder: "0x3"}: 30, {Token: tokenAA, Holder: "0x4"}: 0,
 		{Token: tokenBB, Holder: "0x1"}: 5,
@@ -106,14 +106,14 @@ func TestRankingsRefreshAndList(t *testing.T) {
 
 	day := time.Date(2026, 3, 10, 0, 0, 0, 0, time.UTC)
 	refreshedAt := day.Add(time.Minute)
-	if err := store.CommitRankings(ctx, storage.RankingRefresh{
+	if err := store.CommitRankings(ctx, model.RankingRefresh{
 		ChainID: 1, Head: day, RefreshedAt: refreshedAt,
-		Quotes: []storage.TokenQuote{
+		Quotes: []model.TokenQuote{
 			quote(tokenAA, "1", "5000", 100, day),
 			quote(tokenBB, "0.001", "200", 101, day),
 			quote(tokenCC, "2", "50", 99, day.Add(-2*time.Hour)),
 		},
-		Activity: []storage.TokenActivity{
+		Activity: []model.TokenActivity{
 			activity(tokenAA, "1000", 10, "1", "1.1"),
 			activity(tokenBB, "50", 4, "0.002", "0.001"),
 			activity(tokenEE, "5", 1, "3", "3"),
@@ -122,7 +122,7 @@ func TestRankingsRefreshAndList(t *testing.T) {
 		t.Fatalf("CommitRankings() error = %v", err)
 	}
 
-	byVolume := listTokens(t, store, storage.TokenListQuery{Sort: storage.SortVolume24h})
+	byVolume := listTokens(t, store, model.TokenListQuery{Sort: model.SortVolume24h})
 	assertOrder(t, byVolume, tokenAA, tokenBB, tokenEE, tokenCC)
 	top := byVolume[0]
 	if !top.Ranked || top.Symbol == nil || *top.Symbol != "USDC" || top.Holders != 3 || top.Trades24h != 10 ||
@@ -138,27 +138,27 @@ func TestRankingsRefreshAndList(t *testing.T) {
 	}
 	assertDecimalString(t, byVolume[1].PriceChange24h, "-0.5")
 
-	assertOrder(t, listTokens(t, store, storage.TokenListQuery{Sort: storage.SortPriceChange24h, Ascending: true}),
+	assertOrder(t, listTokens(t, store, model.TokenListQuery{Sort: model.SortPriceChange24h, Ascending: true}),
 		tokenBB, tokenCC, tokenEE, tokenAA)
-	assertOrder(t, listTokens(t, store, storage.TokenListQuery{Sort: storage.SortLiquidity, Limit: 2, Offset: 1}),
+	assertOrder(t, listTokens(t, store, model.TokenListQuery{Sort: model.SortLiquidity, Limit: 2, Offset: 1}),
 		tokenBB, tokenCC)
-	assertOrder(t, listTokens(t, store, storage.TokenListQuery{Sort: storage.SortHolders, Limit: 2}), tokenAA, tokenBB)
-	assertOrder(t, listTokens(t, store, storage.TokenListQuery{Sort: storage.SortCreated}), tokenCC, tokenAA)
-	assertOrder(t, listTokens(t, store, storage.TokenListQuery{MinLiquidityUSD: decimal.NewFromInt(100)}), tokenAA, tokenBB)
+	assertOrder(t, listTokens(t, store, model.TokenListQuery{Sort: model.SortHolders, Limit: 2}), tokenAA, tokenBB)
+	assertOrder(t, listTokens(t, store, model.TokenListQuery{Sort: model.SortCreated}), tokenCC, tokenAA)
+	assertOrder(t, listTokens(t, store, model.TokenListQuery{MinLiquidityUSD: decimal.NewFromInt(100)}), tokenAA, tokenBB)
 
 	// Symbol search is a case-insensitive prefix match with exact matches
 	// first, then ranked tokens, then the sort.
-	assertOrder(t, listTokens(t, store, storage.TokenListQuery{Search: "Pepe"}), tokenBB, tokenCC)
-	assertOrder(t, listTokens(t, store, storage.TokenListQuery{Search: "pepe2"}), tokenCC)
-	usd := listTokens(t, store, storage.TokenListQuery{Search: "usd"})
+	assertOrder(t, listTokens(t, store, model.TokenListQuery{Search: "Pepe"}), tokenBB, tokenCC)
+	assertOrder(t, listTokens(t, store, model.TokenListQuery{Search: "pepe2"}), tokenCC)
+	usd := listTokens(t, store, model.TokenListQuery{Search: "usd"})
 	assertOrder(t, usd, tokenAA, tokenDD)
 	if usd[1].Ranked || usd[1].Name == nil || usd[1].Holders != 0 {
 		t.Fatalf("unranked search result = %+v", usd[1])
 	}
-	assertOrder(t, listTokens(t, store, storage.TokenListQuery{Search: "%"}))
-	assertOrder(t, listTokens(t, store, storage.TokenListQuery{Search: strings.ToUpper(tokenDD)}), tokenDD)
-	assertOrder(t, listTokens(t, store, storage.TokenListQuery{Search: tokenEE}), tokenEE)
-	assertOrder(t, listTokens(t, store, storage.TokenListQuery{Search: testAddress("f")}))
+	assertOrder(t, listTokens(t, store, model.TokenListQuery{Search: "%"}))
+	assertOrder(t, listTokens(t, store, model.TokenListQuery{Search: strings.ToUpper(tokenDD)}), tokenDD)
+	assertOrder(t, listTokens(t, store, model.TokenListQuery{Search: tokenEE}), tokenEE)
+	assertOrder(t, listTokens(t, store, model.TokenListQuery{Search: testAddress("f")}))
 
 	head, ok, err := store.LoadRankingCursor(ctx, 1)
 	if err != nil || !ok || !head.Equal(day) {
@@ -172,14 +172,14 @@ func TestRankingsRefreshAndList(t *testing.T) {
 	// The next refresh rescans from an hour back: 0xbb's price was reorged
 	// away and it no longer trades, so it leaves; 0xcc's older price stays;
 	// 0xee no longer trades and has no price.
-	if err := store.CommitRankings(ctx, storage.RankingRefresh{
+	if err := store.CommitRankings(ctx, model.RankingRefresh{
 		ChainID: 1, Since: day.Add(-time.Hour), Head: day.Add(time.Minute), RefreshedAt: refreshedAt.Add(time.Minute),
-		Quotes:   []storage.TokenQuote{quote(tokenAA, "1.2", "6000", 105, day.Add(time.Minute))},
-		Activity: []storage.TokenActivity{activity(tokenAA, "1200", 12, "1", "1.2")},
+		Quotes:   []model.TokenQuote{quote(tokenAA, "1.2", "6000", 105, day.Add(time.Minute))},
+		Activity: []model.TokenActivity{activity(tokenAA, "1200", 12, "1", "1.2")},
 	}); err != nil {
 		t.Fatalf("second CommitRankings() error = %v", err)
 	}
-	after := listTokens(t, store, storage.TokenListQuery{Sort: storage.SortLiquidity})
+	after := listTokens(t, store, model.TokenListQuery{Sort: model.SortLiquidity})
 	assertOrder(t, after, tokenAA, tokenCC)
 	assertDecimalString(t, after[0].LiquidityUSD, "6000")
 	assertDecimalString(t, after[0].PriceChange24h, "0.2")
@@ -188,11 +188,11 @@ func TestRankingsRefreshAndList(t *testing.T) {
 	}
 
 	// A full scan (zero Since) drops every price it did not return.
-	if err := store.CommitRankings(ctx, storage.RankingRefresh{ChainID: 1, Head: day.Add(2 * time.Minute)}); err != nil {
+	if err := store.CommitRankings(ctx, model.RankingRefresh{ChainID: 1, Head: day.Add(2 * time.Minute)}); err != nil {
 		t.Fatalf("empty CommitRankings() error = %v", err)
 	}
-	assertOrder(t, listTokens(t, store, storage.TokenListQuery{}))
-	if _, err := store.TokenList(ctx, storage.TokenListQuery{ChainID: 1}); err == nil {
+	assertOrder(t, listTokens(t, store, model.TokenListQuery{}))
+	if _, err := store.TokenList(ctx, model.TokenListQuery{ChainID: 1}); err == nil {
 		t.Fatal("TokenList() without a limit error = nil")
 	}
 }

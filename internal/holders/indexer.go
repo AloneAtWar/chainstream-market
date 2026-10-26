@@ -25,6 +25,7 @@ import (
 	"strings"
 
 	"github.com/AloneAtWar/chainstream-market/internal/pkg/chainsync"
+	"github.com/AloneAtWar/chainstream-market/internal/pkg/model"
 	"github.com/AloneAtWar/chainstream-market/internal/pkg/rpc"
 	"github.com/AloneAtWar/chainstream-market/internal/storage"
 	streamv1 "github.com/AloneAtWar/chainstream-market/proto/stream/v1"
@@ -60,7 +61,7 @@ type Options struct {
 type Indexer struct {
 	options       Options
 	logger        *slog.Logger
-	pending       storage.HolderChange
+	pending       model.HolderChange
 	prunedThrough int64
 }
 
@@ -93,7 +94,7 @@ func (indexer *Indexer) Restore(ctx context.Context, chainID uint64) (chainsync.
 func (indexer *Indexer) Apply(ctx context.Context, block *streamv1.BlockEvent) error {
 	height, hash := block.GetBlockHeight(), block.GetBlockHash()
 	deltas := netTransfers(block.GetTransfers())
-	keys := make([]storage.HolderKey, 0, len(deltas))
+	keys := make([]model.HolderKey, 0, len(deltas))
 	for key := range deltas {
 		keys = append(keys, key)
 	}
@@ -103,16 +104,16 @@ func (indexer *Indexer) Apply(ctx context.Context, block *streamv1.BlockEvent) e
 	if err != nil {
 		return fmt.Errorf("load holdings: %w", err)
 	}
-	existing := make(map[storage.HolderKey]struct{}, len(known))
+	existing := make(map[model.HolderKey]struct{}, len(known))
 	for _, holding := range known {
 		existing[holding.HolderKey] = struct{}{}
 	}
-	change := storage.HolderChange{Height: height}
-	var fresh []storage.HolderKey
+	change := model.HolderChange{Height: height}
+	var fresh []model.HolderKey
 	for _, key := range keys {
 		if _, ok := existing[key]; ok {
 			if deltas[key].Sign() != 0 {
-				change.Deltas = append(change.Deltas, storage.HolderDelta{HolderKey: key, Delta: deltas[key]})
+				change.Deltas = append(change.Deltas, model.HolderDelta{HolderKey: key, Delta: deltas[key]})
 			}
 			continue
 		}
@@ -123,7 +124,7 @@ func (indexer *Indexer) Apply(ctx context.Context, block *streamv1.BlockEvent) e
 		return fmt.Errorf("seed holdings: %w", err)
 	}
 	for index, key := range fresh {
-		seed := storage.HolderSeed{Holding: storage.Holding{HolderKey: key, Balance: seeds[index]}, Verified: true}
+		seed := model.HolderSeed{Holding: model.Holding{HolderKey: key, Balance: seeds[index]}, Verified: true}
 		if seed.Balance == nil {
 			// balanceOf failed; the block's net transfers are the best guess.
 			seed.Balance, seed.Verified = deltas[key], false
@@ -150,17 +151,17 @@ func (indexer *Indexer) Apply(ctx context.Context, block *streamv1.BlockEvent) e
 
 // reconcile checks the least recently verified holdings that this block did
 // not touch and returns the corrections that make them match balanceOf.
-func (indexer *Indexer) reconcile(ctx context.Context, hash string, touched map[storage.HolderKey]*big.Int) ([]storage.HolderDelta, error) {
+func (indexer *Indexer) reconcile(ctx context.Context, hash string, touched map[model.HolderKey]*big.Int) ([]model.HolderDelta, error) {
 	stale, err := indexer.options.Store.StaleHoldings(ctx, indexer.options.ChainID, indexer.options.ReconcileBatch+len(touched))
 	if err != nil {
 		return nil, err
 	}
-	stale = slices.DeleteFunc(stale, func(holding storage.Holding) bool {
+	stale = slices.DeleteFunc(stale, func(holding model.Holding) bool {
 		_, ok := touched[holding.HolderKey]
 		return ok
 	})
 	stale = stale[:min(len(stale), indexer.options.ReconcileBatch)]
-	keys := make([]storage.HolderKey, len(stale))
+	keys := make([]model.HolderKey, len(stale))
 	for index, holding := range stale {
 		keys[index] = holding.HolderKey
 	}
@@ -168,10 +169,10 @@ func (indexer *Indexer) reconcile(ctx context.Context, hash string, touched map[
 	if err != nil {
 		return nil, err
 	}
-	corrections := make([]storage.HolderDelta, len(stale))
+	corrections := make([]model.HolderDelta, len(stale))
 	drifted := 0
 	for index, holding := range stale {
-		correction := storage.HolderDelta{HolderKey: holding.HolderKey, Delta: new(big.Int), Verified: true}
+		correction := model.HolderDelta{HolderKey: holding.HolderKey, Delta: new(big.Int), Verified: true}
 		if actual[index] != nil {
 			correction.Delta.Sub(actual[index], holding.Balance)
 		}
@@ -186,7 +187,7 @@ func (indexer *Indexer) reconcile(ctx context.Context, hash string, touched map[
 	return corrections, nil
 }
 
-func (indexer *Indexer) balances(ctx context.Context, hash string, keys []storage.HolderKey) ([]*big.Int, error) {
+func (indexer *Indexer) balances(ctx context.Context, hash string, keys []model.HolderKey) ([]*big.Int, error) {
 	if len(keys) == 0 {
 		return nil, nil
 	}
@@ -201,7 +202,7 @@ func (indexer *Indexer) Revert(_ context.Context, rollbackTo int64) error {
 	if rollbackTo < indexer.prunedThrough {
 		return fmt.Errorf("%w: rollback to %d, history starts after %d", ErrReorgTooDeep, rollbackTo, indexer.prunedThrough)
 	}
-	indexer.pending = storage.HolderChange{Reverted: true, RevertTo: rollbackTo}
+	indexer.pending = model.HolderChange{Reverted: true, RevertTo: rollbackTo}
 	return nil
 }
 
@@ -211,19 +212,19 @@ func (indexer *Indexer) Commit(ctx context.Context, checkpoint chainsync.Checkpo
 	if err := indexer.options.Store.CommitHolders(ctx, checkpoint, change); err != nil {
 		return err
 	}
-	indexer.pending = storage.HolderChange{}
+	indexer.pending = model.HolderChange{}
 	return nil
 }
 
 // netTransfers sums each holder's net change per token. Mints and burns move
 // balances to and from the zero address, which is not a holder.
-func netTransfers(transfers []*streamv1.TokenTransfer) map[storage.HolderKey]*big.Int {
-	deltas := make(map[storage.HolderKey]*big.Int)
+func netTransfers(transfers []*streamv1.TokenTransfer) map[model.HolderKey]*big.Int {
+	deltas := make(map[model.HolderKey]*big.Int)
 	add := func(token, holder string, amount *big.Int) {
 		if holder == zeroAddress || holder == "" {
 			return
 		}
-		key := storage.HolderKey{Token: token, Holder: holder}
+		key := model.HolderKey{Token: token, Holder: holder}
 		if deltas[key] == nil {
 			deltas[key] = new(big.Int)
 		}
@@ -245,7 +246,7 @@ func netTransfers(transfers []*streamv1.TokenTransfer) map[storage.HolderKey]*bi
 
 func normalize(address string) string { return strings.ToLower(strings.TrimSpace(address)) }
 
-func compareKeys(left, right storage.HolderKey) int {
+func compareKeys(left, right model.HolderKey) int {
 	return cmp.Or(cmp.Compare(left.Token, right.Token), cmp.Compare(left.Holder, right.Holder))
 }
 

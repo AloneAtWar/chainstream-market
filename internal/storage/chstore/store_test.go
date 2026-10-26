@@ -8,19 +8,20 @@ import (
 	"testing"
 	"time"
 
-	"github.com/AloneAtWar/chainstream-market/internal/storage"
+	"github.com/AloneAtWar/chainstream-market/internal/pkg/chdb"
+	"github.com/AloneAtWar/chainstream-market/internal/pkg/model"
 	"github.com/shopspring/decimal"
 )
 
 // openTestStore connects to CLICKHOUSE_ADDR (host:port, comma separated) in a
 // fresh database, or skips when it is unset.
-func openTestStore(t *testing.T) (*Store, Options) {
+func openTestStore(t *testing.T) (*Store, chdb.Options) {
 	t.Helper()
 	addr := os.Getenv("CLICKHOUSE_ADDR")
 	if addr == "" {
 		t.Skip("CLICKHOUSE_ADDR not set")
 	}
-	options := Options{
+	options := chdb.Options{
 		Addr:     strings.Split(addr, ","),
 		Database: fmt.Sprintf("market_test_%d", time.Now().UnixNano()),
 		Username: os.Getenv("CLICKHOUSE_USER"), Password: os.Getenv("CLICKHOUSE_PASSWORD"),
@@ -40,24 +41,24 @@ func openTestStore(t *testing.T) (*Store, Options) {
 	return store, options
 }
 
-func testOutput(height int64, closePrice string) storage.BlockOutput {
+func testOutput(height int64, closePrice string) model.BlockOutput {
 	blockTime := time.Unix(1_700_000_000+height*12, 0).UTC()
 	price := decimal.RequireFromString(closePrice)
-	return storage.BlockOutput{
+	return model.BlockOutput{
 		ChainID: 1, Height: height, Hash: fmt.Sprintf("0x%d", height), BlockTime: blockTime,
-		Trades: []storage.Trade{{
+		Trades: []model.Trade{{
 			ChainID: 1, BlockHeight: height, BlockTime: blockTime, TransactionHash: "0xtx",
-			LogIndex: 1, Protocol: "uniswap_v2", PoolID: "0xpool", Trader: "0xtrader", Side: storage.SideBuy,
+			LogIndex: 1, Protocol: "uniswap_v2", PoolID: "0xpool", Trader: "0xtrader", Side: model.SideBuy,
 			BaseToken: "0xmeme", QuoteToken: "0xweth", BaseAmount: decimal.NewFromInt(100),
 			QuoteAmount: decimal.RequireFromString("0.001"), PriceQuote: decimal.RequireFromString("0.00001"),
 			PriceUSD: price, ValueUSD: decimal.NewFromInt(3),
 		}},
-		Prices: []storage.TokenPrice{{
+		Prices: []model.TokenPrice{{
 			ChainID: 1, Token: "0xmeme", BlockHeight: height, BlockTime: blockTime, PriceUSD: price,
-			Source: storage.PriceSourceGraph, Hops: 2, LiquidityUSD: decimal.NewFromInt(30000),
+			Source: model.PriceSourceGraph, Hops: 2, LiquidityUSD: decimal.NewFromInt(30000),
 		}},
-		Candles: []storage.Candle{{
-			ChainID: 1, Subject: storage.CandleSubjectToken, Key: "0xmeme", Interval: time.Hour,
+		Candles: []model.Candle{{
+			ChainID: 1, Subject: model.CandleSubjectToken, Key: "0xmeme", Interval: time.Hour,
 			OpenTime: blockTime.Truncate(time.Hour), Open: decimal.RequireFromString("0.03"),
 			High: price, Low: decimal.RequireFromString("0.03"), Close: price,
 			VolumeBase: decimal.NewFromInt(100), VolumeUSD: decimal.NewFromInt(3), Trades: uint32(height - 99),
@@ -87,7 +88,7 @@ func assertCounts(t *testing.T, store *Store, want uint64) {
 func TestStoreWritesRewindsAndReplays(t *testing.T) {
 	ctx := context.Background()
 	store, options := openTestStore(t)
-	for _, block := range []storage.BlockOutput{testOutput(100, "0.03"), testOutput(101, "0.06")} {
+	for _, block := range []model.BlockOutput{testOutput(100, "0.03"), testOutput(101, "0.06")} {
 		if err := store.WriteBlock(ctx, block); err != nil {
 			t.Fatalf("WriteBlock(%d) error = %v", block.Height, err)
 		}
@@ -148,10 +149,10 @@ func TestStoreWritesRewindsAndReplays(t *testing.T) {
 
 func TestOpenValidatesOptions(t *testing.T) {
 	ctx := context.Background()
-	if _, err := Open(ctx, Options{Database: "market"}); err == nil {
+	if _, err := Open(ctx, chdb.Options{Database: "market"}); err == nil {
 		t.Fatal("Open() without address error = nil")
 	}
-	if _, err := Open(ctx, Options{Addr: []string{"127.0.0.1:9000"}, Database: "market; DROP"}); err == nil {
+	if _, err := Open(ctx, chdb.Options{Addr: []string{"127.0.0.1:9000"}, Database: "market; DROP"}); err == nil {
 		t.Fatal("Open() with invalid database error = nil")
 	}
 }
@@ -175,7 +176,7 @@ func TestReplayedTradesFollowTheirRevision(t *testing.T) {
 	recomputed := testOutput(100, "0.03").Prices[0]
 	recomputed.Token = "0xlate"
 	replaying.Prices = append(replaying.Prices, recomputed)
-	for _, block := range []storage.BlockOutput{testOutput(100, "0.03"), replaying, replaying} {
+	for _, block := range []model.BlockOutput{testOutput(100, "0.03"), replaying, replaying} {
 		if err := store.WriteBlock(ctx, block); err != nil {
 			t.Fatalf("WriteBlock(%d) error = %v", block.Height, err)
 		}

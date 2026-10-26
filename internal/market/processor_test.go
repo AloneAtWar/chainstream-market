@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/AloneAtWar/chainstream-market/internal/pkg/asset"
-	"github.com/AloneAtWar/chainstream-market/internal/storage"
+	"github.com/AloneAtWar/chainstream-market/internal/pkg/model"
 	streamv1 "github.com/AloneAtWar/chainstream-market/proto/stream/v1"
 	"github.com/shopspring/decimal"
 )
@@ -87,15 +87,15 @@ func memeSell() *streamv1.Trade {
 	)
 }
 
-func priceMap(prices []storage.TokenPrice) map[string]storage.TokenPrice {
-	result := make(map[string]storage.TokenPrice, len(prices))
+func priceMap(prices []model.TokenPrice) map[string]model.TokenPrice {
+	result := make(map[string]model.TokenPrice, len(prices))
 	for _, price := range prices {
 		result[price.Token] = price
 	}
 	return result
 }
 
-func findCandle(t *testing.T, candles []storage.Candle, subject storage.CandleSubject, key string, interval time.Duration) storage.Candle {
+func findCandle(t *testing.T, candles []model.Candle, subject model.CandleSubject, key string, interval time.Duration) model.Candle {
 	t.Helper()
 	for _, candle := range candles {
 		if candle.Subject == subject && candle.Key == key && candle.Interval == interval {
@@ -103,7 +103,7 @@ func findCandle(t *testing.T, candles []storage.Candle, subject storage.CandleSu
 		}
 	}
 	t.Fatalf("candle %d/%s/%s not found in %d candles", subject, key, interval, len(candles))
-	return storage.Candle{}
+	return model.Candle{}
 }
 
 func assertDecimal(t *testing.T, name string, got decimal.Decimal, want string) {
@@ -121,12 +121,12 @@ func TestProcessorPricesThroughGraphWithinOneBlock(t *testing.T) {
 		t.Fatalf("Apply() error = %v", err)
 	}
 	prices := priceMap(output.Prices)
-	if got := prices[usdc]; got.Source != storage.PriceSourceAnchor {
+	if got := prices[usdc]; got.Source != model.PriceSourceAnchor {
 		t.Fatalf("USDC price = %+v, want anchor", got)
 	}
 	wethPrice := prices[weth]
 	assertDecimal(t, "WETH price", wethPrice.PriceUSD, "3000")
-	if wethPrice.Hops != 1 || wethPrice.Source != storage.PriceSourceGraph {
+	if wethPrice.Hops != 1 || wethPrice.Source != model.PriceSourceGraph {
 		t.Fatalf("WETH price = %+v", wethPrice)
 	}
 	assertDecimal(t, "WETH liquidity", wethPrice.LiquidityUSD, "3000000")
@@ -140,7 +140,7 @@ func TestProcessorPricesThroughGraphWithinOneBlock(t *testing.T) {
 		t.Fatalf("trades = %d, want 2", len(output.Trades))
 	}
 	memeTrade := output.Trades[0]
-	if memeTrade.BaseToken != meme || memeTrade.QuoteToken != weth || memeTrade.Side != storage.SideSell {
+	if memeTrade.BaseToken != meme || memeTrade.QuoteToken != weth || memeTrade.Side != model.SideSell {
 		t.Fatalf("MEME trade orientation = %+v", memeTrade)
 	}
 	assertDecimal(t, "MEME trade base", memeTrade.BaseAmount, "100")
@@ -149,7 +149,7 @@ func TestProcessorPricesThroughGraphWithinOneBlock(t *testing.T) {
 	assertDecimal(t, "MEME trade value", memeTrade.ValueUSD, "3")
 
 	wethTrade := output.Trades[1]
-	if wethTrade.BaseToken != weth || wethTrade.QuoteToken != usdc || wethTrade.Side != storage.SideBuy {
+	if wethTrade.BaseToken != weth || wethTrade.QuoteToken != usdc || wethTrade.Side != model.SideBuy {
 		t.Fatalf("WETH trade orientation = %+v", wethTrade)
 	}
 	assertDecimal(t, "WETH trade USD price", wethTrade.PriceUSD, "3000")
@@ -170,14 +170,14 @@ func TestProcessorSkipsIlliquidPoolsForPricingAndTokenCandles(t *testing.T) {
 		t.Fatal("DUST was priced through an illiquid pool")
 	}
 	trade := output.Trades[1]
-	if trade.BaseToken != dust || trade.Side != storage.SideBuy {
+	if trade.BaseToken != dust || trade.Side != model.SideBuy {
 		t.Fatalf("DUST trade = %+v", trade)
 	}
 	// The trade is still valued through its quote token.
 	assertDecimal(t, "DUST trade value", trade.ValueUSD, "0.3")
-	findCandle(t, output.Candles, storage.CandleSubjectPool, dustWETH, time.Minute)
+	findCandle(t, output.Candles, model.CandleSubjectPool, dustWETH, time.Minute)
 	for _, candle := range output.Candles {
-		if candle.Subject == storage.CandleSubjectToken && candle.Key == dust {
+		if candle.Subject == model.CandleSubjectToken && candle.Key == dust {
 			t.Fatal("illiquid pool joined DUST's aggregated candles")
 		}
 	}
@@ -198,14 +198,14 @@ func TestProcessorCandlesOpenAtPreviousCloseAndRevert(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Apply(101) error = %v", err)
 	}
-	minute := findCandle(t, output.Candles, storage.CandleSubjectToken, meme, time.Minute)
+	minute := findCandle(t, output.Candles, model.CandleSubjectToken, meme, time.Minute)
 	assertDecimal(t, "1m open", minute.Open, "0.03")
 	assertDecimal(t, "1m close", minute.Close, "0.06")
 	assertDecimal(t, "1m low", minute.Low, "0.03")
 	if minute.Trades != 1 || !minute.OpenTime.Equal(time.Unix(startTime+60, 0).Truncate(time.Minute)) {
 		t.Fatalf("1m candle = %+v", minute)
 	}
-	fiveMinutes := findCandle(t, output.Candles, storage.CandleSubjectToken, meme, 5*time.Minute)
+	fiveMinutes := findCandle(t, output.Candles, model.CandleSubjectToken, meme, 5*time.Minute)
 	if fiveMinutes.Trades != 2 {
 		t.Fatalf("5m trades = %d, want 2", fiveMinutes.Trades)
 	}
@@ -216,7 +216,7 @@ func TestProcessorCandlesOpenAtPreviousCloseAndRevert(t *testing.T) {
 	}
 	price, _ := processor.priceOf(meme)
 	assertDecimal(t, "MEME price after revert", price.USD, "0.03")
-	candle, _ := processor.candles.get(candleKey{storage.CandleSubjectToken, meme, 5 * time.Minute})
+	candle, _ := processor.candles.get(candleKey{model.CandleSubjectToken, meme, 5 * time.Minute})
 	if candle.Trades != 1 {
 		t.Fatalf("5m trades after revert = %d, want 1", candle.Trades)
 	}

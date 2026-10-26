@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/AloneAtWar/chainstream-market/internal/pkg/chainsync"
+	"github.com/AloneAtWar/chainstream-market/internal/pkg/model"
 	"github.com/AloneAtWar/chainstream-market/internal/storage"
 	streamv1 "github.com/AloneAtWar/chainstream-market/proto/stream/v1"
 )
@@ -47,7 +48,7 @@ type Loader struct {
 	logger  *slog.Logger
 	now     func() time.Time
 
-	pending    []storage.RawBlock
+	pending    []model.RawBlock
 	rows       int
 	checkpoint chainsync.Checkpoint
 	dirty      bool
@@ -106,7 +107,7 @@ func (loader *Loader) Apply(ctx context.Context, block *streamv1.BlockEvent) err
 
 // Revert drops buffered blocks above rollbackTo and deletes stored ones.
 func (loader *Loader) Revert(ctx context.Context, rollbackTo int64) error {
-	loader.pending = slices.DeleteFunc(loader.pending, func(block storage.RawBlock) bool {
+	loader.pending = slices.DeleteFunc(loader.pending, func(block model.RawBlock) bool {
 		return block.Height > rollbackTo
 	})
 	loader.rows = 0
@@ -178,8 +179,8 @@ func (loader *Loader) Flush(ctx context.Context) error {
 	return nil
 }
 
-func convert(block *streamv1.BlockEvent) (storage.RawBlock, error) {
-	raw := storage.RawBlock{
+func convert(block *streamv1.BlockEvent) (model.RawBlock, error) {
+	raw := model.RawBlock{
 		ChainID: block.GetChainId(), Height: block.GetBlockHeight(),
 		BlockTime: time.Unix(block.GetBlockTime(), 0).UTC(),
 	}
@@ -188,7 +189,7 @@ func convert(block *streamv1.BlockEvent) (storage.RawBlock, error) {
 		if !ok || amount.Sign() < 0 {
 			return raw, fmt.Errorf("transfer %s log %d: invalid amount %q", transfer.GetTransactionHash(), transfer.GetLogIndex(), transfer.GetRawAmount())
 		}
-		raw.Transfers = append(raw.Transfers, storage.RawTransfer{
+		raw.Transfers = append(raw.Transfers, model.RawTransfer{
 			TransactionHash: transfer.GetTransactionHash(), TransactionIndex: transfer.GetTransactionIndex(),
 			LogIndex: transfer.GetLogIndex(), Token: lower(transfer.GetToken()),
 			From: lower(transfer.GetFrom()), To: lower(transfer.GetTo()), Amount: amount,
@@ -204,7 +205,7 @@ func convert(block *streamv1.BlockEvent) (storage.RawBlock, error) {
 			return raw, fmt.Errorf("oracle update %s log %d: invalid answer %q or round %q",
 				update.GetTransactionHash(), update.GetLogIndex(), update.GetAnswer(), update.GetRoundId())
 		}
-		raw.Oracles = append(raw.Oracles, storage.RawOracleUpdate{
+		raw.Oracles = append(raw.Oracles, model.RawOracleUpdate{
 			TransactionHash: update.GetTransactionHash(), TransactionIndex: update.GetTransactionIndex(),
 			LogIndex: update.GetLogIndex(), Feed: lower(update.GetFeed()), Answer: answer, RoundID: round,
 			UpdatedAt: update.GetUpdatedAt(),
@@ -212,7 +213,7 @@ func convert(block *streamv1.BlockEvent) (storage.RawBlock, error) {
 	}
 	for _, fact := range block.GetAssets() {
 		deployment := fact.GetDeployment()
-		raw.Assets = append(raw.Assets, storage.RawAssetFact{
+		raw.Assets = append(raw.Assets, model.RawAssetFact{
 			Address: lower(fact.GetAddress()), Standard: fact.GetStandard(), Recognition: fact.GetRecognition(),
 			MetadataComplete: fact.GetMetadataComplete(), Type: enumName(fact.GetType().String(), "ASSET_FACT_TYPE_"),
 			SourceHeight: fact.GetSourceHeight(), DeploymentHeight: deployment.GetBlockHeight(),
@@ -226,7 +227,7 @@ func convert(block *streamv1.BlockEvent) (storage.RawBlock, error) {
 		for index, token := range fact.GetTokenAddresses() {
 			tokens[index] = lower(token)
 		}
-		raw.Pools = append(raw.Pools, storage.RawPoolFact{
+		raw.Pools = append(raw.Pools, model.RawPoolFact{
 			PoolID: lower(fact.GetPoolId()), Protocol: fact.GetProtocol(), DexAddress: lower(fact.GetDexAddress()),
 			TokenAddresses: tokens, SourceHeight: fact.GetSourceHeight(), SourceTime: fact.GetSourceTime(),
 			Created: fact.GetCreated(), MetadataJSON: string(fact.GetMetadataJson()),
@@ -235,17 +236,17 @@ func convert(block *streamv1.BlockEvent) (storage.RawBlock, error) {
 	return raw, nil
 }
 
-func convertTrade(trade *streamv1.Trade) storage.RawTrade {
-	raw := storage.RawTrade{
+func convertTrade(trade *streamv1.Trade) model.RawTrade {
+	raw := model.RawTrade{
 		TransactionHash: trade.GetTransactionHash(), TransactionIndex: trade.GetTransactionIndex(),
 		LogIndex: trade.GetLogIndex(), OperationIndex: trade.GetOperationIndex(), Protocol: trade.GetProtocol(),
 		DexAddress: lower(trade.GetDexAddress()), PoolID: lower(trade.GetPoolId()),
 		Action: enumName(trade.GetAction().String(), "TRADE_ACTION_"),
 		Sender: lower(trade.GetSender()), Trader: lower(trade.GetTrader()), Recipient: lower(trade.GetRecipient()),
-		Amounts: make([]storage.RawAmount, len(trade.GetAmounts())),
+		Amounts: make([]model.RawAmount, len(trade.GetAmounts())),
 	}
 	for index, amount := range trade.GetAmounts() {
-		raw.Amounts[index] = storage.RawAmount{
+		raw.Amounts[index] = model.RawAmount{
 			Asset: lower(amount.GetAsset()), Raw: amount.GetRaw(), Value: amount.GetValue(),
 			Decimals: amount.GetDecimals(), DecimalsKnown: amount.GetDecimalsKnown(),
 		}
