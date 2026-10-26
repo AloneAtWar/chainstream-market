@@ -62,11 +62,6 @@ func (bootstrap *Bootstrap) Validate() error {
 			return err
 		}
 	}
-	holders := bootstrap.GetHolders()
-	if holders.GetHistoryDepth() < 0 || holders.GetReconcileBatch() < 0 ||
-		holders.GetRpcBatchSize() < 0 || holders.GetRpcTimeout().AsDuration() < 0 {
-		return errors.New("conf: holders settings must be positive")
-	}
 	rankings := bootstrap.GetRankings()
 	if rankings.GetRefreshInterval().AsDuration() < 0 || rankings.GetReorgWindow().AsDuration() < 0 {
 		return errors.New("conf: rankings durations must be positive")

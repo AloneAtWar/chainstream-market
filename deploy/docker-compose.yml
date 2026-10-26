@@ -127,7 +127,7 @@ services:
 
   holder-indexer:
     <<: *market
-    command: ["/usr/local/bin/holder-indexer", "-conf", "/etc/chainstream-market/config.yaml"]
+    command: ["/usr/local/bin/holder-indexer", "-conf", "/etc/chainstream-market/holder-indexer.yaml"]
 
   market-registry:
     <<: *market

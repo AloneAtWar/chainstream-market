@@ -8,10 +8,11 @@ package main
 
 import (
 	"context"
-	"github.com/AloneAtWar/chainstream-market/internal/biz"
-	"github.com/AloneAtWar/chainstream-market/internal/conf"
-	"github.com/AloneAtWar/chainstream-market/internal/data"
-	"github.com/AloneAtWar/chainstream-market/internal/server"
+	"github.com/AloneAtWar/chainstream-market/internal/app/holder/conf"
+	"github.com/AloneAtWar/chainstream-market/internal/app/holder/data"
+	"github.com/AloneAtWar/chainstream-market/internal/app/holder/server"
+	"github.com/AloneAtWar/chainstream-market/internal/pkg/pgdb"
+	"github.com/AloneAtWar/chainstream-market/internal/pkg/source"
 	"github.com/go-kratos/kratos/v2"
 	"log/slog"
 )
@@ -20,30 +21,26 @@ import (
 
 // wireApp initializes the Kratos application.
 func wireApp(contextContext context.Context, bootstrap *conf.Bootstrap, logger *slog.Logger) (*kratos.App, func(), error) {
-	metrics := bootstrap.Metrics
-	metricsServer := server.NewMetricsServer(metrics, logger)
 	v := bootstrap.Chains
 	holders := bootstrap.Holders
-	sources, err := data.NewSources(bootstrap)
+	metrics := bootstrap.Metrics
+	configSource := bootstrap.Source
+	kafka := bootstrap.Kafka
+	sources, err := source.NewSources(configSource, kafka)
 	if err != nil {
 		return nil, nil, err
 	}
-	state := conf.NewState(bootstrap)
-	stateBackend, cleanup, err := data.NewStateBackend(contextContext, state, logger)
+	postgres := bootstrap.Postgres
+	db, cleanup, err := pgdb.OpenConfig(contextContext, postgres, logger)
 	if err != nil {
 		return nil, nil, err
 	}
-	holderStore, err := data.NewHolderStore(stateBackend)
+	holderRepo := data.NewHolderRepo(db)
+	v2, err := server.NewServers(v, holders, metrics, sources, holderRepo, logger)
 	if err != nil {
 		cleanup()
 		return nil, nil, err
 	}
-	runners, err := biz.NewHolderEngines(v, holders, sources, holderStore, logger)
-	if err != nil {
-		cleanup()
-		return nil, nil, err
-	}
-	v2 := server.NewWorkerServers(metricsServer, runners)
 	app := newApp(v2)
 	return app, func() {
 		cleanup()

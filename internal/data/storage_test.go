@@ -31,7 +31,6 @@ var (
 	} = (*chraw.Store)(nil)
 	_ interface {
 		storage.StateStore
-		storage.HolderStore
 		storage.HolderReader
 		storage.RegistryReader
 		storage.RankingStore
@@ -87,7 +86,6 @@ func TestMemoryStateBackend(t *testing.T) {
 		t.Fatalf("NewStateReaders() = %+v, want none", readers)
 	}
 	for name, provide := range map[string]func(*StateBackend) error{
-		"storage.HolderStore":  func(backend *StateBackend) error { _, err := NewHolderStore(backend); return err },
 		"storage.RankingStore": func(backend *StateBackend) error { _, err := NewRankingStore(backend); return err },
 	} {
 		if err := provide(backend); err == nil || err.Error() != `state.driver "memory" does not provide `+name {

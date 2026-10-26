@@ -32,7 +32,6 @@ var ProviderSet = wire.NewSet(
 	NewTransferReader,
 	NewHistory,
 	NewStateStore,
-	NewHolderStore,
 	NewRankingStore,
 	NewStateReaders,
 	NewMemory,

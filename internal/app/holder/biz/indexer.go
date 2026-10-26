@@ -1,4 +1,4 @@
-// Package holders tracks ERC-20 balances per holder from a chain topic's
+// Package biz is holder-indexer's business layer: it tracks ERC-20 balances per holder from a chain topic's
 // transfers.
 //
 // A holding is seeded with balanceOf the first time it appears, read at the
@@ -12,7 +12,7 @@
 // Balances live only in the store, never in memory, and every change is
 // stored as an undoable delta, so a reorg subtracts what the reverted blocks
 // added.
-package holders
+package biz
 
 import (
 	"cmp"
@@ -27,7 +27,6 @@ import (
 	"github.com/AloneAtWar/chainstream-market/internal/pkg/chainsync"
 	"github.com/AloneAtWar/chainstream-market/internal/pkg/model"
 	"github.com/AloneAtWar/chainstream-market/internal/pkg/rpc"
-	"github.com/AloneAtWar/chainstream-market/internal/storage"
 	streamv1 "github.com/AloneAtWar/chainstream-market/proto/stream/v1"
 )
 
@@ -41,9 +40,23 @@ type Balances interface {
 	BalancesAt(ctx context.Context, blockHash string, queries []rpc.BalanceQuery) ([]*big.Int, error)
 }
 
+// HolderRepo persists holder balances. CommitHolders applies a change and
+// saves the checkpoint atomically.
+type HolderRepo interface {
+	// LoadHolderCheckpoint returns the last committed checkpoint and the
+	// highest height whose undo history was pruned.
+	LoadHolderCheckpoint(ctx context.Context, chainID uint64) (chainsync.Checkpoint, int64, bool, error)
+	// Holdings returns the stored holdings among keys.
+	Holdings(ctx context.Context, chainID uint64, keys []model.HolderKey) ([]model.Holding, error)
+	// StaleHoldings returns up to limit holdings, least recently verified
+	// first.
+	StaleHoldings(ctx context.Context, chainID uint64, limit int) ([]model.Holding, error)
+	CommitHolders(ctx context.Context, checkpoint chainsync.Checkpoint, change model.HolderChange) error
+}
+
 type Options struct {
 	ChainID  uint64
-	Store    storage.HolderStore
+	Repo     HolderRepo
 	Balances Balances
 	// HistoryDepth is how many blocks of undo history to keep in addition
 	// to everything above the finalized height.
@@ -66,8 +79,8 @@ type Indexer struct {
 }
 
 func New(options Options) (*Indexer, error) {
-	if options.ChainID == 0 || options.Store == nil || options.Balances == nil {
-		return nil, errors.New("holders: chain id, store and balances are required")
+	if options.ChainID == 0 || options.Repo == nil || options.Balances == nil {
+		return nil, errors.New("holders: chain id, repo and balances are required")
 	}
 	if options.HistoryDepth <= 0 {
 		return nil, errors.New("holders: history depth must be positive")
@@ -83,7 +96,7 @@ func New(options Options) (*Indexer, error) {
 }
 
 func (indexer *Indexer) Restore(ctx context.Context, chainID uint64) (chainsync.Checkpoint, bool, error) {
-	checkpoint, prunedThrough, ok, err := indexer.options.Store.LoadHolderCheckpoint(ctx, chainID)
+	checkpoint, prunedThrough, ok, err := indexer.options.Repo.LoadHolderCheckpoint(ctx, chainID)
 	if err != nil || !ok {
 		return chainsync.Checkpoint{}, false, err
 	}
@@ -100,7 +113,7 @@ func (indexer *Indexer) Apply(ctx context.Context, block *streamv1.BlockEvent) e
 	}
 	slices.SortFunc(keys, compareKeys)
 
-	known, err := indexer.options.Store.Holdings(ctx, indexer.options.ChainID, keys)
+	known, err := indexer.options.Repo.Holdings(ctx, indexer.options.ChainID, keys)
 	if err != nil {
 		return fmt.Errorf("load holdings: %w", err)
 	}
@@ -152,7 +165,7 @@ func (indexer *Indexer) Apply(ctx context.Context, block *streamv1.BlockEvent) e
 // reconcile checks the least recently verified holdings that this block did
 // not touch and returns the corrections that make them match balanceOf.
 func (indexer *Indexer) reconcile(ctx context.Context, hash string, touched map[model.HolderKey]*big.Int) ([]model.HolderDelta, error) {
-	stale, err := indexer.options.Store.StaleHoldings(ctx, indexer.options.ChainID, indexer.options.ReconcileBatch+len(touched))
+	stale, err := indexer.options.Repo.StaleHoldings(ctx, indexer.options.ChainID, indexer.options.ReconcileBatch+len(touched))
 	if err != nil {
 		return nil, err
 	}
@@ -209,7 +222,7 @@ func (indexer *Indexer) Revert(_ context.Context, rollbackTo int64) error {
 func (indexer *Indexer) Commit(ctx context.Context, checkpoint chainsync.Checkpoint) error {
 	change := indexer.pending
 	change.PrunedThrough = indexer.prunedThrough
-	if err := indexer.options.Store.CommitHolders(ctx, checkpoint, change); err != nil {
+	if err := indexer.options.Repo.CommitHolders(ctx, checkpoint, change); err != nil {
 		return err
 	}
 	indexer.pending = model.HolderChange{}

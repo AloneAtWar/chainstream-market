@@ -33,7 +33,6 @@ type Bootstrap struct {
 	State    *config.State          `protobuf:"bytes,3,opt,name=state,proto3" json:"state,omitempty"`
 	Market   *Market                `protobuf:"bytes,4,opt,name=market,proto3" json:"market,omitempty"`
 	Api      *API                   `protobuf:"bytes,5,opt,name=api,proto3" json:"api,omitempty"`
-	Holders  *Holders               `protobuf:"bytes,6,opt,name=holders,proto3" json:"holders,omitempty"`
 	Rankings *Rankings              `protobuf:"bytes,8,opt,name=rankings,proto3" json:"rankings,omitempty"`
 	// ch_loader is named after the ch-loader command.
 	ChLoader      *ChLoader       `protobuf:"bytes,9,opt,name=ch_loader,json=chLoader,proto3" json:"ch_loader,omitempty"`
@@ -106,13 +105,6 @@ func (x *Bootstrap) GetMarket() *Market {
 func (x *Bootstrap) GetApi() *API {
 	if x != nil {
 		return x.Api
-	}
-	return nil
-}
-
-func (x *Bootstrap) GetHolders() *Holders {
-	if x != nil {
-		return x.Holders
 	}
 	return nil
 }
@@ -349,89 +341,6 @@ func (x *API) GetAddr() string {
 	return ""
 }
 
-// Holders tunes holder-indexer, which keeps ERC-20 balances per holder in the
-// state.postgres database.
-type Holders struct {
-	state protoimpl.MessageState `protogen:"open.v1"`
-	// history_depth is how many recent blocks stay revertible in addition to
-	// everything above the finalized height.
-	HistoryDepth int64 `protobuf:"varint,1,opt,name=history_depth,json=historyDepth,proto3" json:"history_depth,omitempty"`
-	// reconcile_every is how often, in blocks, the least recently verified
-	// holdings are checked against balanceOf. Negative disables it.
-	ReconcileEvery int64 `protobuf:"varint,2,opt,name=reconcile_every,json=reconcileEvery,proto3" json:"reconcile_every,omitempty"`
-	ReconcileBatch int32 `protobuf:"varint,3,opt,name=reconcile_batch,json=reconcileBatch,proto3" json:"reconcile_batch,omitempty"`
-	// rpc_batch_size caps the balanceOf calls in one JSON-RPC batch.
-	RpcBatchSize  int32                `protobuf:"varint,4,opt,name=rpc_batch_size,json=rpcBatchSize,proto3" json:"rpc_batch_size,omitempty"`
-	RpcTimeout    *durationpb.Duration `protobuf:"bytes,5,opt,name=rpc_timeout,json=rpcTimeout,proto3" json:"rpc_timeout,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *Holders) Reset() {
-	*x = Holders{}
-	mi := &file_conf_conf_proto_msgTypes[3]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *Holders) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*Holders) ProtoMessage() {}
-
-func (x *Holders) ProtoReflect() protoreflect.Message {
-	mi := &file_conf_conf_proto_msgTypes[3]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use Holders.ProtoReflect.Descriptor instead.
-func (*Holders) Descriptor() ([]byte, []int) {
-	return file_conf_conf_proto_rawDescGZIP(), []int{3}
-}
-
-func (x *Holders) GetHistoryDepth() int64 {
-	if x != nil {
-		return x.HistoryDepth
-	}
-	return 0
-}
-
-func (x *Holders) GetReconcileEvery() int64 {
-	if x != nil {
-		return x.ReconcileEvery
-	}
-	return 0
-}
-
-func (x *Holders) GetReconcileBatch() int32 {
-	if x != nil {
-		return x.ReconcileBatch
-	}
-	return 0
-}
-
-func (x *Holders) GetRpcBatchSize() int32 {
-	if x != nil {
-		return x.RpcBatchSize
-	}
-	return 0
-}
-
-func (x *Holders) GetRpcTimeout() *durationpb.Duration {
-	if x != nil {
-		return x.RpcTimeout
-	}
-	return nil
-}
-
 // Rankings tunes market-rankings, which rolls market-engine's ClickHouse
 // output, holder counts and registry metadata into the token_rankings table
 // that market-api lists.
@@ -450,7 +359,7 @@ type Rankings struct {
 
 func (x *Rankings) Reset() {
 	*x = Rankings{}
-	mi := &file_conf_conf_proto_msgTypes[4]
+	mi := &file_conf_conf_proto_msgTypes[3]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -462,7 +371,7 @@ func (x *Rankings) String() string {
 func (*Rankings) ProtoMessage() {}
 
 func (x *Rankings) ProtoReflect() protoreflect.Message {
-	mi := &file_conf_conf_proto_msgTypes[4]
+	mi := &file_conf_conf_proto_msgTypes[3]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -475,7 +384,7 @@ func (x *Rankings) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Rankings.ProtoReflect.Descriptor instead.
 func (*Rankings) Descriptor() ([]byte, []int) {
-	return file_conf_conf_proto_rawDescGZIP(), []int{4}
+	return file_conf_conf_proto_rawDescGZIP(), []int{3}
 }
 
 func (x *Rankings) GetRefreshInterval() *durationpb.Duration {
@@ -514,7 +423,7 @@ type ChLoader struct {
 
 func (x *ChLoader) Reset() {
 	*x = ChLoader{}
-	mi := &file_conf_conf_proto_msgTypes[5]
+	mi := &file_conf_conf_proto_msgTypes[4]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -526,7 +435,7 @@ func (x *ChLoader) String() string {
 func (*ChLoader) ProtoMessage() {}
 
 func (x *ChLoader) ProtoReflect() protoreflect.Message {
-	mi := &file_conf_conf_proto_msgTypes[5]
+	mi := &file_conf_conf_proto_msgTypes[4]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -539,7 +448,7 @@ func (x *ChLoader) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ChLoader.ProtoReflect.Descriptor instead.
 func (*ChLoader) Descriptor() ([]byte, []int) {
-	return file_conf_conf_proto_rawDescGZIP(), []int{5}
+	return file_conf_conf_proto_rawDescGZIP(), []int{4}
 }
 
 func (x *ChLoader) GetBatchLag() *durationpb.Duration {
@@ -567,14 +476,13 @@ var File_conf_conf_proto protoreflect.FileDescriptor
 
 const file_conf_conf_proto_rawDesc = "" +
 	"\n" +
-	"\x0fconf/conf.proto\x12\x04conf\x1a\x1egoogle/protobuf/duration.proto\x1a\x17pkg/config/common.proto\"\xfd\x03\n" +
+	"\x0fconf/conf.proto\x12\x04conf\x1a\x1egoogle/protobuf/duration.proto\x1a\x17pkg/config/common.proto\"\xd4\x03\n" +
 	"\tBootstrap\x12'\n" +
 	"\x05kafka\x18\x01 \x01(\v2\x11.pkg.config.KafkaR\x05kafka\x12-\n" +
 	"\astorage\x18\x02 \x01(\v2\x13.pkg.config.StorageR\astorage\x12'\n" +
 	"\x05state\x18\x03 \x01(\v2\x11.pkg.config.StateR\x05state\x12$\n" +
 	"\x06market\x18\x04 \x01(\v2\f.conf.MarketR\x06market\x12\x1b\n" +
-	"\x03api\x18\x05 \x01(\v2\t.conf.APIR\x03api\x12'\n" +
-	"\aholders\x18\x06 \x01(\v2\r.conf.HoldersR\aholders\x12*\n" +
+	"\x03api\x18\x05 \x01(\v2\t.conf.APIR\x03api\x12*\n" +
 	"\brankings\x18\b \x01(\v2\x0e.conf.RankingsR\brankings\x12+\n" +
 	"\tch_loader\x18\t \x01(\v2\x0e.conf.ChLoaderR\bchLoader\x12$\n" +
 	"\x04live\x18\n" +
@@ -596,14 +504,7 @@ const file_conf_conf_proto_rawDesc = "" +
 	" \x01(\x03R\x0ebackfillBlocks\x12>\n" +
 	"\rbackfill_wait\x18\v \x01(\v2\x19.google.protobuf.DurationR\fbackfillWait\"\x19\n" +
 	"\x03API\x12\x12\n" +
-	"\x04addr\x18\x01 \x01(\tR\x04addr\"\xe2\x01\n" +
-	"\aHolders\x12#\n" +
-	"\rhistory_depth\x18\x01 \x01(\x03R\fhistoryDepth\x12'\n" +
-	"\x0freconcile_every\x18\x02 \x01(\x03R\x0ereconcileEvery\x12'\n" +
-	"\x0freconcile_batch\x18\x03 \x01(\x05R\x0ereconcileBatch\x12$\n" +
-	"\x0erpc_batch_size\x18\x04 \x01(\x05R\frpcBatchSize\x12:\n" +
-	"\vrpc_timeout\x18\x05 \x01(\v2\x19.google.protobuf.DurationR\n" +
-	"rpcTimeout\"\xd2\x01\n" +
+	"\x04addr\x18\x01 \x01(\tR\x04addr\"\xd2\x01\n" +
 	"\bRankings\x12D\n" +
 	"\x10refresh_interval\x18\x01 \x01(\v2\x19.google.protobuf.DurationR\x0frefreshInterval\x12B\n" +
 	"\x0fcandle_interval\x18\x02 \x01(\v2\x19.google.protobuf.DurationR\x0ecandleInterval\x12<\n" +
@@ -626,49 +527,46 @@ func file_conf_conf_proto_rawDescGZIP() []byte {
 	return file_conf_conf_proto_rawDescData
 }
 
-var file_conf_conf_proto_msgTypes = make([]protoimpl.MessageInfo, 6)
+var file_conf_conf_proto_msgTypes = make([]protoimpl.MessageInfo, 5)
 var file_conf_conf_proto_goTypes = []any{
 	(*Bootstrap)(nil),           // 0: conf.Bootstrap
 	(*Market)(nil),              // 1: conf.Market
 	(*API)(nil),                 // 2: conf.API
-	(*Holders)(nil),             // 3: conf.Holders
-	(*Rankings)(nil),            // 4: conf.Rankings
-	(*ChLoader)(nil),            // 5: conf.ChLoader
-	(*config.Kafka)(nil),        // 6: pkg.config.Kafka
-	(*config.Storage)(nil),      // 7: pkg.config.Storage
-	(*config.State)(nil),        // 8: pkg.config.State
-	(*config.Live)(nil),         // 9: pkg.config.Live
-	(*config.Metrics)(nil),      // 10: pkg.config.Metrics
-	(*config.Chain)(nil),        // 11: pkg.config.Chain
-	(*config.Source)(nil),       // 12: pkg.config.Source
-	(*durationpb.Duration)(nil), // 13: google.protobuf.Duration
+	(*Rankings)(nil),            // 3: conf.Rankings
+	(*ChLoader)(nil),            // 4: conf.ChLoader
+	(*config.Kafka)(nil),        // 5: pkg.config.Kafka
+	(*config.Storage)(nil),      // 6: pkg.config.Storage
+	(*config.State)(nil),        // 7: pkg.config.State
+	(*config.Live)(nil),         // 8: pkg.config.Live
+	(*config.Metrics)(nil),      // 9: pkg.config.Metrics
+	(*config.Chain)(nil),        // 10: pkg.config.Chain
+	(*config.Source)(nil),       // 11: pkg.config.Source
+	(*durationpb.Duration)(nil), // 12: google.protobuf.Duration
 }
 var file_conf_conf_proto_depIdxs = []int32{
-	6,  // 0: conf.Bootstrap.kafka:type_name -> pkg.config.Kafka
-	7,  // 1: conf.Bootstrap.storage:type_name -> pkg.config.Storage
-	8,  // 2: conf.Bootstrap.state:type_name -> pkg.config.State
+	5,  // 0: conf.Bootstrap.kafka:type_name -> pkg.config.Kafka
+	6,  // 1: conf.Bootstrap.storage:type_name -> pkg.config.Storage
+	7,  // 2: conf.Bootstrap.state:type_name -> pkg.config.State
 	1,  // 3: conf.Bootstrap.market:type_name -> conf.Market
 	2,  // 4: conf.Bootstrap.api:type_name -> conf.API
-	3,  // 5: conf.Bootstrap.holders:type_name -> conf.Holders
-	4,  // 6: conf.Bootstrap.rankings:type_name -> conf.Rankings
-	5,  // 7: conf.Bootstrap.ch_loader:type_name -> conf.ChLoader
-	9,  // 8: conf.Bootstrap.live:type_name -> pkg.config.Live
-	10, // 9: conf.Bootstrap.metrics:type_name -> pkg.config.Metrics
-	11, // 10: conf.Bootstrap.chains:type_name -> pkg.config.Chain
-	12, // 11: conf.Bootstrap.source:type_name -> pkg.config.Source
-	13, // 12: conf.Market.intervals:type_name -> google.protobuf.Duration
-	13, // 13: conf.Market.backfill_wait:type_name -> google.protobuf.Duration
-	13, // 14: conf.Holders.rpc_timeout:type_name -> google.protobuf.Duration
-	13, // 15: conf.Rankings.refresh_interval:type_name -> google.protobuf.Duration
-	13, // 16: conf.Rankings.candle_interval:type_name -> google.protobuf.Duration
-	13, // 17: conf.Rankings.reorg_window:type_name -> google.protobuf.Duration
-	13, // 18: conf.ChLoader.batch_lag:type_name -> google.protobuf.Duration
-	13, // 19: conf.ChLoader.flush_interval:type_name -> google.protobuf.Duration
-	20, // [20:20] is the sub-list for method output_type
-	20, // [20:20] is the sub-list for method input_type
-	20, // [20:20] is the sub-list for extension type_name
-	20, // [20:20] is the sub-list for extension extendee
-	0,  // [0:20] is the sub-list for field type_name
+	3,  // 5: conf.Bootstrap.rankings:type_name -> conf.Rankings
+	4,  // 6: conf.Bootstrap.ch_loader:type_name -> conf.ChLoader
+	8,  // 7: conf.Bootstrap.live:type_name -> pkg.config.Live
+	9,  // 8: conf.Bootstrap.metrics:type_name -> pkg.config.Metrics
+	10, // 9: conf.Bootstrap.chains:type_name -> pkg.config.Chain
+	11, // 10: conf.Bootstrap.source:type_name -> pkg.config.Source
+	12, // 11: conf.Market.intervals:type_name -> google.protobuf.Duration
+	12, // 12: conf.Market.backfill_wait:type_name -> google.protobuf.Duration
+	12, // 13: conf.Rankings.refresh_interval:type_name -> google.protobuf.Duration
+	12, // 14: conf.Rankings.candle_interval:type_name -> google.protobuf.Duration
+	12, // 15: conf.Rankings.reorg_window:type_name -> google.protobuf.Duration
+	12, // 16: conf.ChLoader.batch_lag:type_name -> google.protobuf.Duration
+	12, // 17: conf.ChLoader.flush_interval:type_name -> google.protobuf.Duration
+	18, // [18:18] is the sub-list for method output_type
+	18, // [18:18] is the sub-list for method input_type
+	18, // [18:18] is the sub-list for extension type_name
+	18, // [18:18] is the sub-list for extension extendee
+	0,  // [0:18] is the sub-list for field type_name
 }
 
 func init() { file_conf_conf_proto_init() }
@@ -682,7 +580,7 @@ func file_conf_conf_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_conf_conf_proto_rawDesc), len(file_conf_conf_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   6,
+			NumMessages:   5,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

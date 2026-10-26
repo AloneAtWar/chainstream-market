@@ -190,7 +190,7 @@ Browsers on another origin must be listed in `live.allowed_origins`, for example
 ## holder-indexer
 
 ```sh
-go run ./cmd/holder-indexer -conf configs/config.yaml   # needs state.driver: postgres and chains[].rpc_url
+go run ./cmd/holder-indexer -conf configs/holder-indexer.yaml   # needs postgres.dsn and chains[].rpc_url
 ```
 
 holder-indexer reads each chain topic on its own checkpoint and keeps every ERC-20 holding it has seen.

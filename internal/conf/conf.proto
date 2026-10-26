@@ -16,7 +16,6 @@ message Bootstrap {
   pkg.config.State state = 3;
   Market market = 4;
   API api = 5;
-  Holders holders = 6;
   Rankings rankings = 8;
   // ch_loader is named after the ch-loader command.
   ChLoader ch_loader = 9;
@@ -64,21 +63,6 @@ message Market {
 // API configures market-api, which reads the ClickHouse store.
 message API {
   string addr = 1;
-}
-
-// Holders tunes holder-indexer, which keeps ERC-20 balances per holder in the
-// state.postgres database.
-message Holders {
-  // history_depth is how many recent blocks stay revertible in addition to
-  // everything above the finalized height.
-  int64 history_depth = 1;
-  // reconcile_every is how often, in blocks, the least recently verified
-  // holdings are checked against balanceOf. Negative disables it.
-  int64 reconcile_every = 2;
-  int32 reconcile_batch = 3;
-  // rpc_batch_size caps the balanceOf calls in one JSON-RPC batch.
-  int32 rpc_batch_size = 4;
-  google.protobuf.Duration rpc_timeout = 5;
 }
 
 // Rankings tunes market-rankings, which rolls market-engine's ClickHouse

@@ -3,12 +3,10 @@ package pgstore
 import (
 	"context"
 	"encoding/json"
-	"math/big"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/AloneAtWar/chainstream-market/internal/pkg/chainsync"
 	"github.com/AloneAtWar/chainstream-market/internal/pkg/model"
 	"github.com/AloneAtWar/chainstream-market/internal/pkg/pgdb"
 	"github.com/shopspring/decimal"
@@ -56,14 +54,21 @@ func seedTokens(t *testing.T, store *Store, tokens ...model.Token) {
 
 func seedHolders(t *testing.T, store *Store, balances map[model.HolderKey]int64) {
 	t.Helper()
-	change := model.HolderChange{Height: 1}
+	// holder-indexer keeps holder_counts with the balances.
+	counts := make(map[string]int64)
 	for key, balance := range balances {
-		change.Created = append(change.Created, model.HolderSeed{
-			Holding: model.Holding{HolderKey: key, Balance: big.NewInt(balance)}, Verified: true,
-		})
+		if err := store.db.Exec(`INSERT INTO holder_balances (chain_id, token, holder, balance, verified_height)
+			VALUES (1, ?, ?, ?, 1)`, key.Token, key.Holder, balance).Error; err != nil {
+			t.Fatalf("seed holding: %v", err)
+		}
+		if balance > 0 {
+			counts[key.Token]++
+		}
 	}
-	if err := store.CommitHolders(context.Background(), chainsync.Checkpoint{ChainID: 1, Height: 1}, change); err != nil {
-		t.Fatalf("CommitHolders() error = %v", err)
+	for token, count := range counts {
+		if err := store.db.Exec(`INSERT INTO holder_counts (chain_id, token, holders) VALUES (1, ?, ?)`, token, count).Error; err != nil {
+			t.Fatalf("seed holder count: %v", err)
+		}
 	}
 }
 

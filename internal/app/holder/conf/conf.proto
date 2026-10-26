@@ -1,0 +1,36 @@
+syntax = "proto3";
+
+package app.holder.conf;
+
+option go_package = "github.com/AloneAtWar/chainstream-market/internal/app/holder/conf;conf";
+
+import "google/protobuf/duration.proto";
+import "pkg/config/common.proto";
+
+// Bootstrap is holder-indexer's configuration; configs/holder-indexer.yaml
+// documents every setting. Durations may be written as Go durations such as
+// 500ms or 5m.
+message Bootstrap {
+  pkg.config.Source source = 1;
+  pkg.config.Kafka kafka = 2;
+  // postgres is the database the holder tables live in.
+  pkg.config.Postgres postgres = 3;
+  pkg.config.Metrics metrics = 4;
+  // chains each need an rpc_url, which balanceOf is read over.
+  repeated pkg.config.Chain chains = 5;
+  Holders holders = 6;
+}
+
+// Holders tunes how holder-indexer keeps ERC-20 balances per holder.
+message Holders {
+  // history_depth is how many recent blocks stay revertible in addition to
+  // everything above the finalized height.
+  int64 history_depth = 1;
+  // reconcile_every is how often, in blocks, the least recently verified
+  // holdings are checked against balanceOf. Negative disables it.
+  int64 reconcile_every = 2;
+  int32 reconcile_batch = 3;
+  // rpc_batch_size caps the balanceOf calls in one JSON-RPC batch.
+  int32 rpc_batch_size = 4;
+  google.protobuf.Duration rpc_timeout = 5;
+}

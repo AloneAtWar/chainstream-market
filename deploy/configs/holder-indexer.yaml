@@ -1,0 +1,17 @@
+# holder-indexer for the docker-compose stack; configs/holder-indexer.yaml
+# documents each setting.
+kafka:
+  brokers: [kafka:9092]
+  client_id: holder-indexer
+
+postgres:
+  dsn: postgres://market:market@postgres:5432/market
+
+metrics:
+  addr: ":9100"
+
+chains:
+  - name: eth
+    chain_id: 1
+    topic: chainstream-eth
+    rpc_url: ${ETH_RPC_URL:http://host.docker.internal:8545}

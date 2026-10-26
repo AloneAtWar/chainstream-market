@@ -23,8 +23,8 @@ import (
 // Storage backends are chosen by name in the config. storage.driver opens
 // the market backend, which market-engine writes and market-api and
 // market-rankings read, and the raw backend ch-loader writes; state.driver
-// opens the state backend, which keeps market-engine's state and the tables
-// of holder-indexer and market-rankings.
+// opens the state backend, which keeps market-engine's state and
+// market-rankings' tables.
 //
 // A backend serves every storage role, such as storage.Output or
 // storage.HolderStore, that it implements, and the commands depend on roles
@@ -215,11 +215,6 @@ func NewHistory(ctx context.Context, config *config.Storage, market *conf.Market
 // state.driver keeps state in memory.
 func NewStateStore(backend *StateBackend) storage.StateStore {
 	return OptionalRole[storage.StateStore](backend.Backend)
-}
-
-// NewHolderStore returns holder-indexer's store.
-func NewHolderStore(backend *StateBackend) (storage.HolderStore, error) {
-	return Role[storage.HolderStore](backend.Backend)
 }
 
 // NewRankingStore returns market-rankings' store.

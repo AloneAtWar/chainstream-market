@@ -29,10 +29,6 @@ chains:
 	if bootstrap.Source.Driver != config.SourceKafka || bootstrap.Live.Driver != config.LiveKafka {
 		t.Fatalf("source driver = %q, live driver = %q", bootstrap.Source.Driver, bootstrap.Live.Driver)
 	}
-	if bootstrap.Holders.ReconcileEvery != defaultHoldersReconcileEvery || bootstrap.Holders.RpcBatchSize != defaultRPCBatchSize ||
-		bootstrap.Holders.HistoryDepth != defaultHistoryDepth {
-		t.Fatalf("holders defaults = %+v", bootstrap.Holders)
-	}
 	if bootstrap.ChLoader.BatchLag.AsDuration() != defaultLoaderBatchLag || bootstrap.ChLoader.FlushRows != defaultLoaderFlushRows ||
 		bootstrap.ChLoader.FlushInterval.AsDuration() != defaultLoaderFlushInterval {
 		t.Fatalf("ch_loader defaults = %+v", bootstrap.ChLoader)
@@ -71,7 +67,6 @@ func TestParseRejectsInvalidConfig(t *testing.T) {
 		"unknown driver":         "kafka: {brokers: [b]}\nstorage: {driver: postgres}\nchains: [{name: eth, chain_id: 1, topic: a}]",
 		"postgres no dsn":        "kafka: {brokers: [b]}\nstate: {driver: postgres}\nchains: [{name: eth, chain_id: 1, topic: a}]",
 		"unknown state":          "kafka: {brokers: [b]}\nstate: {driver: redis}\nchains: [{name: eth, chain_id: 1, topic: a}]",
-		"negative holders":       "kafka: {brokers: [b]}\nholders: {rpc_batch_size: -1}\nchains: [{name: eth, chain_id: 1, topic: a}]",
 		"negative rankings":      "kafka: {brokers: [b]}\nrankings: {refresh_interval: -1s}\nchains: [{name: eth, chain_id: 1, topic: a}]",
 		"unknown candle":         "kafka: {brokers: [b]}\nrankings: {candle_interval: 2m}\nchains: [{name: eth, chain_id: 1, topic: a}]",
 		"negative ch_loader":     "kafka: {brokers: [b]}\nch_loader: {flush_rows: -1}\nchains: [{name: eth, chain_id: 1, topic: a}]",

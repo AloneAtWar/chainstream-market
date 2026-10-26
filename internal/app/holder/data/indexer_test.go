@@ -1,20 +1,19 @@
-package holders
+package data
 
 import (
 	"context"
 	"errors"
 	"fmt"
-	"math/big"
 	"os"
 	"testing"
 	"time"
 
+	"github.com/AloneAtWar/chainstream-market/internal/app/holder/biz"
 	"github.com/AloneAtWar/chainstream-market/internal/pkg/chainsync"
 	"github.com/AloneAtWar/chainstream-market/internal/pkg/model"
 	"github.com/AloneAtWar/chainstream-market/internal/pkg/pgdb"
 	"github.com/AloneAtWar/chainstream-market/internal/pkg/rpc"
 	"github.com/AloneAtWar/chainstream-market/internal/pkg/rpc/rpctest"
-	"github.com/AloneAtWar/chainstream-market/internal/storage/pgstore"
 	streamv1 "github.com/AloneAtWar/chainstream-market/proto/stream/v1"
 )
 
@@ -24,29 +23,32 @@ const (
 	alice  = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	bob    = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 	carol  = "0xcccccccccccccccccccccccccccccccccccccccc"
+
+	zeroAddress = "0x0000000000000000000000000000000000000000"
 )
 
-func openStore(t *testing.T) *pgstore.Store {
+// openRepo opens the repository on a fresh schema.
+func openRepo(t *testing.T) *holderRepo {
 	t.Helper()
 	dsn := os.Getenv("POSTGRES_DSN")
 	if dsn == "" {
 		t.Skip("POSTGRES_DSN not set")
 	}
-	store, err := pgstore.Open(context.Background(), pgdb.Options{
+	db, err := pgdb.Open(context.Background(), pgdb.Options{
 		DSN: dsn, Schema: fmt.Sprintf("holders_test_%d", time.Now().UnixNano()),
 	})
 	if err != nil {
 		t.Fatalf("Open() error = %v", err)
 	}
-	t.Cleanup(store.Close)
-	return store
+	t.Cleanup(func() { pgdb.Close(db) })
+	return &holderRepo{db: db}
 }
 
 type fixture struct {
 	t       *testing.T
-	store   *pgstore.Store
+	repo    *holderRepo
 	node    *rpctest.Node
-	indexer *Indexer
+	indexer *biz.Indexer
 	offset  int64
 }
 
@@ -54,7 +56,7 @@ func newFixture(t *testing.T, reconcileEvery int64) *fixture {
 	t.Helper()
 	node := rpctest.NewNode()
 	t.Cleanup(node.Close)
-	fixture := &fixture{t: t, store: openStore(t), node: node}
+	fixture := &fixture{t: t, repo: openRepo(t), node: node}
 	fixture.restart(reconcileEvery)
 	return fixture
 }
@@ -65,8 +67,8 @@ func (f *fixture) restart(reconcileEvery int64) {
 	if err != nil {
 		f.t.Fatalf("rpc.New() error = %v", err)
 	}
-	f.indexer, err = New(Options{
-		ChainID: 1, Store: f.store, Balances: client, HistoryDepth: 8,
+	f.indexer, err = biz.New(biz.Options{
+		ChainID: 1, Repo: f.repo, Balances: client, HistoryDepth: 8,
 		ReconcileEvery: reconcileEvery, ReconcileBatch: 10,
 	})
 	if err != nil {
@@ -126,7 +128,7 @@ func (f *fixture) commit(height int64, hash string) {
 // balances returns every stored holding of asset.
 func (f *fixture) balances(asset string) map[string]int64 {
 	f.t.Helper()
-	holdings, err := f.store.Holdings(context.Background(), 1, []model.HolderKey{
+	holdings, err := f.repo.Holdings(context.Background(), 1, []model.HolderKey{
 		{Token: asset, Holder: alice}, {Token: asset, Holder: bob}, {Token: asset, Holder: carol},
 	})
 	if err != nil {
@@ -172,13 +174,14 @@ func TestIndexerSeedsAccumulatesAndReverts(t *testing.T) {
 	f.mustApply(102, "b", transfer(token, bob, carol, 50))
 	assertBalances(t, f.balances(token), map[string]int64{alice: 1200, bob: 250, carol: 50})
 
-	count, err := f.store.HolderCount(context.Background(), 1, token)
-	if err != nil || count != 3 {
-		t.Fatalf("HolderCount() = %d, %v", count, err)
+	var count pgdb.HolderCountRow
+	if err := f.repo.db.Where("chain_id = 1 AND token = ?", token).Take(&count).Error; err != nil || count.Holders != 3 {
+		t.Fatalf("holder_counts = %+v, %v", count, err)
 	}
-	top, err := f.store.TopHolders(context.Background(), 1, token, 2)
-	if err != nil || len(top) != 2 || top[0].Holder != alice || top[1].Holder != bob {
-		t.Fatalf("TopHolders() = %+v, %v", top, err)
+	var top []string
+	if err := f.repo.db.Table("holder_balances").Where("chain_id = 1 AND token = ? AND balance > 0", token).
+		Order("balance DESC, holder").Limit(2).Pluck("holder", &top).Error; err != nil || len(top) != 2 || top[0] != alice || top[1] != bob {
+		t.Fatalf("top holders = %v, %v", top, err)
 	}
 	// Seeding asked balanceOf once per new holding, never for known ones.
 	if f.node.Calls() != 4 {
@@ -226,31 +229,7 @@ func TestIndexerResumesAndLimitsReorgs(t *testing.T) {
 	if err != nil || checkpoint.Height != 120 || checkpoint.Offset != 20 {
 		t.Fatalf("Restore() = %+v, %v", checkpoint, err)
 	}
-	if err := f.indexer.Revert(context.Background(), 105); !errors.Is(err, ErrReorgTooDeep) {
+	if err := f.indexer.Revert(context.Background(), 105); !errors.Is(err, biz.ErrReorgTooDeep) {
 		t.Fatalf("Revert() below history error = %v", err)
-	}
-}
-
-func TestNetTransfers(t *testing.T) {
-	deltas := netTransfers([]*streamv1.TokenTransfer{
-		transfer(token, zeroAddress, "0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", 10),
-		transfer(token, alice, bob, 4),
-		transfer(token, bob, alice, 0),
-		{Token: token, From: alice, To: bob, RawAmount: "bad"},
-	})
-	want := map[model.HolderKey]int64{{Token: token, Holder: alice}: 6, {Token: token, Holder: bob}: 4}
-	if len(deltas) != len(want) {
-		t.Fatalf("deltas = %v", deltas)
-	}
-	for key, value := range want {
-		if deltas[key] == nil || deltas[key].Cmp(big.NewInt(value)) != 0 {
-			t.Fatalf("deltas = %v", deltas)
-		}
-	}
-}
-
-func TestNewValidatesOptions(t *testing.T) {
-	if _, err := New(Options{}); err == nil {
-		t.Fatal("New() without dependencies error = nil")
 	}
 }

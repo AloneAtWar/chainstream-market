@@ -1,5 +1,5 @@
 // Package biz assembles each command's per-chain work: the engines that
-// apply chain topics through a market, holder or ch-loader
+// apply chain topics through a market or ch-loader
 // handler, and the rankings refreshers. Each command wires one of the sets
 // below; they all produce Runners.
 package biz
@@ -13,7 +13,6 @@ import (
 
 	"github.com/AloneAtWar/chainstream-market/internal/chloader"
 	"github.com/AloneAtWar/chainstream-market/internal/conf"
-	"github.com/AloneAtWar/chainstream-market/internal/holders"
 	"github.com/AloneAtWar/chainstream-market/internal/market"
 	"github.com/AloneAtWar/chainstream-market/internal/pkg/asset"
 	"github.com/AloneAtWar/chainstream-market/internal/pkg/chainlink"
@@ -30,7 +29,6 @@ import (
 // The provider sets of the commands that consume chain topics.
 var (
 	MarketSet  = wire.NewSet(NewMarketEngines)
-	HolderSet  = wire.NewSet(NewHolderEngines)
 	LoaderSet  = wire.NewSet(NewLoaderEngines)
 	RankingSet = wire.NewSet(NewRefreshers)
 )
@@ -149,43 +147,6 @@ func ResolveFeeds(ctx context.Context, chain *config.Chain, logger *slog.Logger)
 		}
 	}
 	return feeds, nil
-}
-
-// NewHolderEngines builds holder-indexer's balanceOf client, indexer and
-// engine per chain.
-func NewHolderEngines(chains []*config.Chain, holderConfig *conf.Holders, sources *source.Sources, store storage.HolderStore, logger *slog.Logger) (Runners, error) {
-	runners := make(Runners, 0, len(chains))
-	for _, chain := range chains {
-		if strings.TrimSpace(chain.GetRpcUrl()) == "" {
-			return nil, fmt.Errorf("chain %s: rpc_url is required", chain.GetName())
-		}
-		client, err := rpc.New(rpc.Options{
-			URL: chain.GetRpcUrl(), ChainID: chain.GetChainId(), Chain: chain.GetName(),
-			BatchSize: int(holderConfig.GetRpcBatchSize()), Timeout: holderConfig.GetRpcTimeout().AsDuration(),
-			Logger: logger.With("chain", chain.GetName()),
-		})
-		if err != nil {
-			return nil, fmt.Errorf("chain %s: %w", chain.GetName(), err)
-		}
-		indexer, err := holders.New(holders.Options{
-			ChainID: chain.GetChainId(), Store: store, Balances: client,
-			HistoryDepth: holderConfig.GetHistoryDepth(), ReconcileEvery: max(holderConfig.GetReconcileEvery(), 0),
-			ReconcileBatch: int(holderConfig.GetReconcileBatch()),
-			Logger:         logger.With("chain", chain.GetName()),
-		})
-		if err != nil {
-			return nil, fmt.Errorf("chain %s: %w", chain.GetName(), err)
-		}
-		chainEngine, err := chainsync.New(chainsync.Options{
-			ChainID: chain.GetChainId(), Chain: chain.GetName(), Handler: indexer, Logger: logger,
-			Open: sources.Opener(chain.GetTopic()),
-		})
-		if err != nil {
-			return nil, fmt.Errorf("chain %s: %w", chain.GetName(), err)
-		}
-		runners = append(runners, engineRunner(chain, chainEngine))
-	}
-	return runners, nil
 }
 
 // NewLoaderEngines builds ch-loader's loader and engine per chain. A chain that stops cleanly writes its buffered batch, so

@@ -23,22 +23,6 @@ type stateUndoRow struct {
 
 func (stateUndoRow) TableName() string { return "engine_state_undo" }
 
-// holdingRow is a holder_balances row read with balance as text.
-type holdingRow struct {
-	Token   string
-	Holder  string
-	Balance string
-}
-
-// holderCountRow is a holder_counts row.
-type holderCountRow struct {
-	ChainID int64 `gorm:"primaryKey;autoIncrement:false"`
-	Token   string
-	Holders int64
-}
-
-func (holderCountRow) TableName() string { return "holder_counts" }
-
 // rankingCheckpointRow is a ranking_checkpoints row.
 type rankingCheckpointRow struct {
 	ChainID     int64 `gorm:"primaryKey;autoIncrement:false"`

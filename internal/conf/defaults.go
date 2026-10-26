@@ -23,11 +23,6 @@ const (
 	defaultBackfillBlocks        = 50400
 	defaultBackfillWait          = 30 * time.Second
 
-	defaultHoldersReconcileEvery = 100
-	defaultHoldersReconcileBatch = 200
-	defaultRPCBatchSize          = 100
-	defaultRPCTimeout            = 30 * time.Second
-
 	defaultRankingsRefreshInterval = time.Minute
 	defaultRankingsCandleInterval  = 5 * time.Minute
 	defaultRankingsReorgWindow     = time.Hour
@@ -66,9 +61,6 @@ func (bootstrap *Bootstrap) ApplyDefaults() {
 	}
 	if bootstrap.Api == nil {
 		bootstrap.Api = &API{}
-	}
-	if bootstrap.Holders == nil {
-		bootstrap.Holders = &Holders{}
 	}
 	if bootstrap.Rankings == nil {
 		bootstrap.Rankings = &Rankings{}
@@ -123,21 +115,6 @@ func (bootstrap *Bootstrap) ApplyDefaults() {
 		market.BackfillBlocks = defaultBackfillBlocks
 	}
 	config.DefaultDuration(&market.BackfillWait, defaultBackfillWait)
-
-	holders := bootstrap.Holders
-	if holders.HistoryDepth == 0 {
-		holders.HistoryDepth = defaultHistoryDepth
-	}
-	if holders.ReconcileEvery == 0 {
-		holders.ReconcileEvery = defaultHoldersReconcileEvery
-	}
-	if holders.ReconcileBatch == 0 {
-		holders.ReconcileBatch = defaultHoldersReconcileBatch
-	}
-	if holders.RpcBatchSize == 0 {
-		holders.RpcBatchSize = defaultRPCBatchSize
-	}
-	config.DefaultDuration(&holders.RpcTimeout, defaultRPCTimeout)
 
 	rankings := bootstrap.Rankings
 	config.DefaultDuration(&rankings.RefreshInterval, defaultRankingsRefreshInterval)
