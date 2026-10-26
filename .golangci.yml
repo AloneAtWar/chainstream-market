@@ -8,6 +8,7 @@ linters:
   default: none
   enable:
     - bodyclose
+    - depguard
     - errcheck
     - errorlint
     - exhaustive
@@ -21,6 +22,95 @@ linters:
     - unconvert
     - unused
   settings:
+    depguard:
+      # Components in internal/app never import each other, and the shared
+      # code in internal/pkg never imports a component. A table one
+      # component writes and another reads is reached through
+      # internal/pkg/chdb or internal/pkg/pgdb.
+      rules:
+        pkg:
+          files: ["**/internal/pkg/**"]
+          deny:
+            - pkg: "github.com/AloneAtWar/chainstream-market/internal/app"
+              desc: internal/pkg is shared by every component and must not import one
+        api:
+          files: ["**/internal/app/api/**", "**/cmd/market-api/**"]
+          deny:
+            - pkg: "github.com/AloneAtWar/chainstream-market/internal/app/engine"
+              desc: components must not import each other
+            - pkg: "github.com/AloneAtWar/chainstream-market/internal/app/holder"
+              desc: components must not import each other
+            - pkg: "github.com/AloneAtWar/chainstream-market/internal/app/loader"
+              desc: components must not import each other
+            - pkg: "github.com/AloneAtWar/chainstream-market/internal/app/rankings"
+              desc: components must not import each other
+            - pkg: "github.com/AloneAtWar/chainstream-market/internal/app/registry"
+              desc: components must not import each other
+        engine:
+          files: ["**/internal/app/engine/**", "**/cmd/market-engine/**"]
+          deny:
+            - pkg: "github.com/AloneAtWar/chainstream-market/internal/app/api"
+              desc: components must not import each other
+            - pkg: "github.com/AloneAtWar/chainstream-market/internal/app/holder"
+              desc: components must not import each other
+            - pkg: "github.com/AloneAtWar/chainstream-market/internal/app/loader"
+              desc: components must not import each other
+            - pkg: "github.com/AloneAtWar/chainstream-market/internal/app/rankings"
+              desc: components must not import each other
+            - pkg: "github.com/AloneAtWar/chainstream-market/internal/app/registry"
+              desc: components must not import each other
+        holder:
+          files: ["**/internal/app/holder/**", "**/cmd/holder-indexer/**"]
+          deny:
+            - pkg: "github.com/AloneAtWar/chainstream-market/internal/app/api"
+              desc: components must not import each other
+            - pkg: "github.com/AloneAtWar/chainstream-market/internal/app/engine"
+              desc: components must not import each other
+            - pkg: "github.com/AloneAtWar/chainstream-market/internal/app/loader"
+              desc: components must not import each other
+            - pkg: "github.com/AloneAtWar/chainstream-market/internal/app/rankings"
+              desc: components must not import each other
+            - pkg: "github.com/AloneAtWar/chainstream-market/internal/app/registry"
+              desc: components must not import each other
+        loader:
+          files: ["**/internal/app/loader/**", "**/cmd/ch-loader/**"]
+          deny:
+            - pkg: "github.com/AloneAtWar/chainstream-market/internal/app/api"
+              desc: components must not import each other
+            - pkg: "github.com/AloneAtWar/chainstream-market/internal/app/engine"
+              desc: components must not import each other
+            - pkg: "github.com/AloneAtWar/chainstream-market/internal/app/holder"
+              desc: components must not import each other
+            - pkg: "github.com/AloneAtWar/chainstream-market/internal/app/rankings"
+              desc: components must not import each other
+            - pkg: "github.com/AloneAtWar/chainstream-market/internal/app/registry"
+              desc: components must not import each other
+        rankings:
+          files: ["**/internal/app/rankings/**", "**/cmd/market-rankings/**"]
+          deny:
+            - pkg: "github.com/AloneAtWar/chainstream-market/internal/app/api"
+              desc: components must not import each other
+            - pkg: "github.com/AloneAtWar/chainstream-market/internal/app/engine"
+              desc: components must not import each other
+            - pkg: "github.com/AloneAtWar/chainstream-market/internal/app/holder"
+              desc: components must not import each other
+            - pkg: "github.com/AloneAtWar/chainstream-market/internal/app/loader"
+              desc: components must not import each other
+            - pkg: "github.com/AloneAtWar/chainstream-market/internal/app/registry"
+              desc: components must not import each other
+        registry:
+          files: ["**/internal/app/registry/**", "**/cmd/market-registry/**"]
+          deny:
+            - pkg: "github.com/AloneAtWar/chainstream-market/internal/app/api"
+              desc: components must not import each other
+            - pkg: "github.com/AloneAtWar/chainstream-market/internal/app/engine"
+              desc: components must not import each other
+            - pkg: "github.com/AloneAtWar/chainstream-market/internal/app/holder"
+              desc: components must not import each other
+            - pkg: "github.com/AloneAtWar/chainstream-market/internal/app/loader"
+              desc: components must not import each other
+            - pkg: "github.com/AloneAtWar/chainstream-market/internal/app/rankings"
+              desc: components must not import each other
     govet:
       enable-all: true
       disable:
