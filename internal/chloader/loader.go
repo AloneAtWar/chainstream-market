@@ -22,7 +22,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/AloneAtWar/chainstream-market/internal/engine"
+	"github.com/AloneAtWar/chainstream-market/internal/pkg/chainsync"
 	"github.com/AloneAtWar/chainstream-market/internal/storage"
 	streamv1 "github.com/AloneAtWar/chainstream-market/proto/stream/v1"
 )
@@ -40,7 +40,7 @@ type Options struct {
 	Now           func() time.Time
 }
 
-// Loader is an engine.Handler for one chain. It is not safe for concurrent
+// Loader is an chainsync.Handler for one chain. It is not safe for concurrent
 // use.
 type Loader struct {
 	options Options
@@ -49,7 +49,7 @@ type Loader struct {
 
 	pending    []storage.RawBlock
 	rows       int
-	checkpoint storage.Checkpoint
+	checkpoint chainsync.Checkpoint
 	dirty      bool
 	lastFlush  time.Time
 	// recovering is true until the first block or revert after Restore has
@@ -79,10 +79,10 @@ func New(options Options) (*Loader, error) {
 	return &Loader{options: options, logger: logger, now: now, recovering: true, lastFlush: now()}, nil
 }
 
-func (loader *Loader) Restore(ctx context.Context, chainID uint64) (storage.Checkpoint, bool, error) {
+func (loader *Loader) Restore(ctx context.Context, chainID uint64) (chainsync.Checkpoint, bool, error) {
 	checkpoint, ok, err := loader.options.Store.LoadRawCheckpoint(ctx, chainID)
 	if err != nil || !ok {
-		return storage.Checkpoint{}, false, err
+		return chainsync.Checkpoint{}, false, err
 	}
 	loader.stored = checkpoint.Height
 	return checkpoint, true, nil
@@ -125,7 +125,7 @@ func (loader *Loader) Revert(ctx context.Context, rollbackTo int64) error {
 
 // Commit writes the buffered facts and then checkpoint, unless the batch
 // may still grow.
-func (loader *Loader) Commit(ctx context.Context, checkpoint storage.Checkpoint) error {
+func (loader *Loader) Commit(ctx context.Context, checkpoint chainsync.Checkpoint) error {
 	loader.checkpoint, loader.dirty = checkpoint, true
 	if !loader.due() {
 		return nil
@@ -268,4 +268,4 @@ func enumName(name, prefix string) string {
 
 func lower(address string) string { return strings.ToLower(strings.TrimSpace(address)) }
 
-var _ engine.Handler = (*Loader)(nil)
+var _ chainsync.Handler = (*Loader)(nil)

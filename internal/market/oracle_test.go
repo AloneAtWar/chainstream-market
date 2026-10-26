@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/AloneAtWar/chainstream-market/internal/pkg/asset"
 	"github.com/AloneAtWar/chainstream-market/internal/storage"
 	streamv1 "github.com/AloneAtWar/chainstream-market/proto/stream/v1"
 	"github.com/shopspring/decimal"
@@ -21,7 +22,7 @@ const (
 func newOracleProcessor(t *testing.T) *Processor {
 	t.Helper()
 	processor, err := NewProcessor(Options{
-		Catalog:               DefaultCatalog(1),
+		Catalog:               asset.DefaultCatalog(1),
 		MinLiquidityUSD:       decimal.NewFromInt(1000),
 		CandleMinLiquidityUSD: decimal.NewFromInt(10000),
 		MaxHops:               3,
@@ -30,7 +31,7 @@ func newOracleProcessor(t *testing.T) *Processor {
 		OracleDeviation:       decimal.RequireFromString("0.02"),
 		Feeds: []Feed{
 			{Address: usdcFeed, Token: usdc, Decimals: 8},
-			{Address: ethFeed, Token: NativeAddress, Decimals: 8},
+			{Address: ethFeed, Token: asset.NativeAddress, Decimals: 8},
 			{Address: btcFeed, Token: wbtc, Decimals: 8},
 		},
 	})
@@ -129,9 +130,9 @@ func TestOracleAnswersRevert(t *testing.T) {
 func TestNewProcessorRejectsBadFeeds(t *testing.T) {
 	base := Options{MaxHops: 3, Intervals: []time.Duration{time.Minute}, HistoryDepth: 1}
 	duplicate := base
-	duplicate.Catalog = DefaultCatalog(1)
+	duplicate.Catalog = asset.DefaultCatalog(1)
 	// The native pseudo-address is an alias of WETH.
-	duplicate.Feeds = []Feed{{Address: ethFeed, Token: weth}, {Address: ethFeed, Token: NativeAddress}}
+	duplicate.Feeds = []Feed{{Address: ethFeed, Token: weth}, {Address: ethFeed, Token: asset.NativeAddress}}
 	missing := base
 	missing.Feeds = []Feed{{Address: ethFeed}}
 	negative := base
@@ -150,7 +151,7 @@ func TestNewProcessorRejectsBadFeeds(t *testing.T) {
 func TestOneFeedPricesSeveralTokens(t *testing.T) {
 	const bridgedUSDC = "0x3333333333333333333333333333333333333333"
 	processor, err := NewProcessor(Options{
-		Catalog: NewCatalog(CatalogSpec{Anchors: []string{usdc, bridgedUSDC}}), MaxHops: 3,
+		Catalog: asset.NewCatalog(asset.CatalogSpec{Anchors: []string{usdc, bridgedUSDC}}), MaxHops: 3,
 		Intervals: []time.Duration{time.Minute}, HistoryDepth: 16,
 		Feeds: []Feed{{Address: usdcFeed, Token: usdc, Decimals: 8}, {Address: usdcFeed, Token: bridgedUSDC, Decimals: 8}},
 	})

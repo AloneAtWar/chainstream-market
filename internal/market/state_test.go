@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/AloneAtWar/chainstream-market/internal/pkg/chainsync"
 	"github.com/AloneAtWar/chainstream-market/internal/storage"
 	"github.com/AloneAtWar/chainstream-market/internal/storage/pgstore"
 	streamv1 "github.com/AloneAtWar/chainstream-market/proto/stream/v1"
@@ -95,7 +96,7 @@ func (h *harness) commit(height int64, hash string) {
 	if err != nil {
 		h.t.Fatalf("TakeDelta() error = %v", err)
 	}
-	checkpoint := storage.Checkpoint{ChainID: 1, Offset: h.offset, Height: height, Hash: hash}
+	checkpoint := chainsync.Checkpoint{ChainID: 1, Offset: h.offset, Height: height, Hash: hash}
 	if err := h.store.Commit(context.Background(), checkpoint, delta); err != nil {
 		h.t.Fatalf("Commit() error = %v", err)
 	}

@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/AloneAtWar/chainstream-market/internal/rpc"
+	"github.com/AloneAtWar/chainstream-market/internal/pkg/rpc"
 )
 
 const (

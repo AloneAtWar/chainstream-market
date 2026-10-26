@@ -8,7 +8,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/AloneAtWar/chainstream-market/internal/rpc/rpctest"
+	"github.com/AloneAtWar/chainstream-market/internal/pkg/rpc/rpctest"
 )
 
 const (

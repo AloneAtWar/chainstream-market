@@ -17,7 +17,8 @@ import (
 	"log/slog"
 	"strings"
 
-	"github.com/AloneAtWar/chainstream-market/internal/engine"
+	"github.com/AloneAtWar/chainstream-market/internal/pkg/asset"
+	"github.com/AloneAtWar/chainstream-market/internal/pkg/chainsync"
 	"github.com/AloneAtWar/chainstream-market/internal/storage"
 	streamv1 "github.com/AloneAtWar/chainstream-market/proto/stream/v1"
 )
@@ -34,7 +35,7 @@ type Options struct {
 	Logger       *slog.Logger
 }
 
-// Registry is an engine.Handler for one chain. It is not safe for concurrent
+// Registry is an chainsync.Handler for one chain. It is not safe for concurrent
 // use.
 type Registry struct {
 	options       Options
@@ -57,10 +58,10 @@ func New(options Options) (*Registry, error) {
 	return &Registry{options: options, logger: logger}, nil
 }
 
-func (registry *Registry) Restore(ctx context.Context, chainID uint64) (storage.Checkpoint, bool, error) {
+func (registry *Registry) Restore(ctx context.Context, chainID uint64) (chainsync.Checkpoint, bool, error) {
 	checkpoint, prunedThrough, ok, err := registry.options.Store.LoadRegistryCheckpoint(ctx, chainID)
 	if err != nil || !ok {
-		return storage.Checkpoint{}, false, err
+		return chainsync.Checkpoint{}, false, err
 	}
 	registry.prunedThrough = prunedThrough
 	return checkpoint, true, nil
@@ -113,7 +114,7 @@ func (registry *Registry) Revert(_ context.Context, rollbackTo int64) error {
 	return nil
 }
 
-func (registry *Registry) Commit(ctx context.Context, checkpoint storage.Checkpoint) error {
+func (registry *Registry) Commit(ctx context.Context, checkpoint chainsync.Checkpoint) error {
 	change := registry.pending
 	change.PrunedThrough = registry.prunedThrough
 	if err := registry.options.Store.CommitRegistry(ctx, checkpoint, change); err != nil {
@@ -143,7 +144,7 @@ func (registry *Registry) token(fact *streamv1.AssetFact, height int64) (storage
 		}
 	}
 	token.Metadata = registry.cleanJSON(fact.GetMetadataJson(), "asset", address)
-	token.Name, token.Symbol, token.Decimals = ParseMetadata(token.Metadata)
+	token.Name, token.Symbol, token.Decimals = asset.ParseMetadata(token.Metadata)
 	return token, true
 }
 
@@ -206,46 +207,6 @@ func stripNUL(value any) any {
 	return value
 }
 
-// ParseMetadata reads name, symbol and decimals from chainstream-evm's
-// asset.Info JSON. ERC-20 and ERC-721 fields are {"Value": v, "Known": b}
-// and only known values count; native assets use plain values.
-func ParseMetadata(raw []byte) (name, symbol *string, decimals *uint8) {
-	var fields map[string]json.RawMessage
-	if len(raw) == 0 || json.Unmarshal(raw, &fields) != nil {
-		return nil, nil, nil
-	}
-	var nameValue, symbolValue string
-	var decimalsValue uint8
-	if field(fields["Name"], &nameValue) {
-		name = &nameValue
-	}
-	if field(fields["Symbol"], &symbolValue) {
-		symbol = &symbolValue
-	}
-	if field(fields["Decimals"], &decimalsValue) {
-		decimals = &decimalsValue
-	}
-	return name, symbol, decimals
-}
-
-func field[T any](raw json.RawMessage, target *T) bool {
-	raw = bytes.TrimSpace(raw)
-	if len(raw) == 0 || string(raw) == "null" {
-		return false
-	}
-	if raw[0] != '{' {
-		return json.Unmarshal(raw, target) == nil
-	}
-	var optional struct {
-		Value json.RawMessage
-		Known bool
-	}
-	if json.Unmarshal(raw, &optional) != nil || !optional.Known {
-		return false
-	}
-	return json.Unmarshal(optional.Value, target) == nil
-}
-
 // mergeTokens combines two facts about one address in a block: the later
 // metadata wins unless it was read at a lower height, and a deployment from
 // either is kept.
@@ -289,4 +250,4 @@ func sourceHeight(source, height int64) int64 {
 
 func normalize(address string) string { return strings.ToLower(strings.TrimSpace(address)) }
 
-var _ engine.Handler = (*Registry)(nil)
+var _ chainsync.Handler = (*Registry)(nil)

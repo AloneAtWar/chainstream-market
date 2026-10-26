@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/AloneAtWar/chainstream-market/internal/pkg/asset"
 	"github.com/AloneAtWar/chainstream-market/internal/storage"
 	streamv1 "github.com/AloneAtWar/chainstream-market/proto/stream/v1"
 	"github.com/shopspring/decimal"
@@ -27,7 +28,7 @@ const (
 func newTestProcessor(t *testing.T) *Processor {
 	t.Helper()
 	processor, err := NewProcessor(Options{
-		Catalog:               DefaultCatalog(1),
+		Catalog:               asset.DefaultCatalog(1),
 		MinLiquidityUSD:       decimal.NewFromInt(1000),
 		CandleMinLiquidityUSD: decimal.NewFromInt(10000),
 		MaxHops:               3,
@@ -265,13 +266,13 @@ func TestOrientationFixesOnceAQuoteIsKnown(t *testing.T) {
 func TestNativeAliasSharesWrappedPrice(t *testing.T) {
 	processor := newTestProcessor(t)
 	nativeSwap := swap("0xpool-eth-usdc",
-		leg{NativeAddress, "-1000000000000000000", "1000000000000000000000", 18},
+		leg{asset.NativeAddress, "-1000000000000000000", "1000000000000000000000", 18},
 		leg{usdc, "3000000000", "3000000000000", 6},
 	)
 	if _, err := processor.Apply(context.Background(), testBlock(100, 0, nativeSwap)); err != nil {
 		t.Fatalf("Apply() error = %v", err)
 	}
-	price, ok := processor.priceOf(NativeAddress)
+	price, ok := processor.priceOf(asset.NativeAddress)
 	if !ok {
 		t.Fatal("native coin not priced")
 	}

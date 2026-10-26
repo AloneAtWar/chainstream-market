@@ -3,6 +3,7 @@ package market
 import (
 	"math/big"
 
+	"github.com/AloneAtWar/chainstream-market/internal/pkg/asset"
 	streamv1 "github.com/AloneAtWar/chainstream-market/proto/stream/v1"
 	"github.com/shopspring/decimal"
 )
@@ -97,7 +98,7 @@ func concentratedState(sqrtPriceX96, liquidity string, d0, d1 uint32) ([2]decima
 }
 
 // index returns token's position in the pool after canonicalization.
-func (p pool) index(catalog Catalog, token string) (int, bool) {
+func (p pool) index(catalog asset.Catalog, token string) (int, bool) {
 	for position, member := range p.Tokens {
 		if catalog.Canonical(member) == token {
 			return position, true
@@ -133,3 +134,5 @@ func rawSign(amount *streamv1.Amount) int {
 	}
 	return raw.Sign()
 }
+
+func normalize(address string) string { return asset.Normalize(address) }

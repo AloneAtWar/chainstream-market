@@ -11,8 +11,9 @@ import (
 	"time"
 
 	"github.com/AloneAtWar/chainstream-market/internal/chloader"
-	"github.com/AloneAtWar/chainstream-market/internal/engine"
-	"github.com/AloneAtWar/chainstream-market/internal/source"
+	"github.com/AloneAtWar/chainstream-market/internal/pkg/asset"
+	"github.com/AloneAtWar/chainstream-market/internal/pkg/chainsync"
+	"github.com/AloneAtWar/chainstream-market/internal/pkg/source"
 	"github.com/AloneAtWar/chainstream-market/internal/storage"
 	"github.com/AloneAtWar/chainstream-market/internal/storage/chraw"
 	"github.com/AloneAtWar/chainstream-market/internal/storage/chstore"
@@ -32,7 +33,7 @@ type countingState struct {
 	committed atomic.Int64
 }
 
-func (state *countingState) Commit(ctx context.Context, checkpoint storage.Checkpoint, delta storage.StateDelta) error {
+func (state *countingState) Commit(ctx context.Context, checkpoint chainsync.Checkpoint, delta storage.StateDelta) error {
 	if err := state.StateStore.Commit(ctx, checkpoint, delta); err != nil {
 		return err
 	}
@@ -128,12 +129,16 @@ func (s *marketSmoke) run() {
 	kafka := source.KafkaOptions{
 		Brokers: s.cluster.ListenAddrs(), Topic: smokeTopic, FetchMaxBytes: 1 << 20, FetchMaxWait: 50 * time.Millisecond,
 	}
-	chainEngine, err := engine.New(engine.Options{
-		ChainID: 1, Chain: "eth", Processor: processor, Output: s.output, State: s.state,
+	handler, err := NewHandler(HandlerOptions{ChainID: 1, Processor: processor, Output: s.output, State: s.state})
+	if err != nil {
+		s.t.Fatalf("NewHandler() error = %v", err)
+	}
+	chainEngine, err := chainsync.New(chainsync.Options{
+		ChainID: 1, Chain: "eth", Handler: handler,
 		Open: func(start int64) (source.Source, error) { return source.NewKafka(kafka, start) },
 	})
 	if err != nil {
-		s.t.Fatalf("engine.New() error = %v", err)
+		s.t.Fatalf("chainsync.New() error = %v", err)
 	}
 	ctx, cancel := context.WithCancel(s.t.Context())
 	if s.raw != nil {
@@ -173,12 +178,12 @@ func (s *marketSmoke) load(ctx context.Context, kafka source.KafkaOptions) <-cha
 	if err != nil {
 		s.t.Fatalf("chloader.New() error = %v", err)
 	}
-	loaderEngine, err := engine.New(engine.Options{
+	loaderEngine, err := chainsync.New(chainsync.Options{
 		ChainID: 1, Chain: "eth", Handler: loader,
 		Open: func(start int64) (source.Source, error) { return source.NewKafka(kafka, start) },
 	})
 	if err != nil {
-		s.t.Fatalf("engine.New() error = %v", err)
+		s.t.Fatalf("chainsync.New() error = %v", err)
 	}
 	done := make(chan error, 1)
 	go func() { done <- loaderEngine.Run(ctx) }()
@@ -289,10 +294,10 @@ func TestSmokeOutliersThroughKafka(t *testing.T) {
 	s.processor = func(t *testing.T) *Processor {
 		t.Helper()
 		processor, err := NewProcessor(Options{
-			Catalog: DefaultCatalog(1), MinLiquidityUSD: decimal.NewFromInt(1000),
+			Catalog: asset.DefaultCatalog(1), MinLiquidityUSD: decimal.NewFromInt(1000),
 			CandleMinLiquidityUSD: decimal.NewFromInt(10000), MaxHops: 3,
 			Intervals: []time.Duration{5 * time.Minute}, HistoryDepth: 16,
-			Feeds:            []Feed{{Address: ethFeed, Token: NativeAddress, Decimals: 8}},
+			Feeds:            []Feed{{Address: ethFeed, Token: asset.NativeAddress, Decimals: 8}},
 			OracleDeviation:  decimal.RequireFromString("0.02"),
 			OutlierDeviation: decimal.RequireFromString("0.5"),
 		})

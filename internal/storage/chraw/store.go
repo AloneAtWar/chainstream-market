@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/AloneAtWar/chainstream-market/internal/pkg/chainsync"
 	"github.com/AloneAtWar/chainstream-market/internal/storage"
 	"github.com/AloneAtWar/chainstream-market/internal/storage/chstore"
 	"gorm.io/gorm"
@@ -41,24 +42,24 @@ func (store *Store) Close() error {
 	return chstore.Close(store.db)
 }
 
-func (store *Store) LoadRawCheckpoint(ctx context.Context, chainID uint64) (storage.Checkpoint, bool, error) {
+func (store *Store) LoadRawCheckpoint(ctx context.Context, chainID uint64) (chainsync.Checkpoint, bool, error) {
 	var rows []checkpointRow
 	err := store.db.WithContext(ctx).Select("kafka_offset, block_height, block_hash, updated_at").
 		Where("chain_id = ?", chainID).Order("kafka_offset DESC").Limit(1).Find(&rows).Error
 	if err != nil {
-		return storage.Checkpoint{}, false, fmt.Errorf("clickhouse raw store: load checkpoint: %w", err)
+		return chainsync.Checkpoint{}, false, fmt.Errorf("clickhouse raw store: load checkpoint: %w", err)
 	}
 	if len(rows) == 0 {
-		return storage.Checkpoint{}, false, nil
+		return chainsync.Checkpoint{}, false, nil
 	}
 	row := rows[0]
-	return storage.Checkpoint{
+	return chainsync.Checkpoint{
 		ChainID: chainID, Offset: row.KafkaOffset, Height: row.BlockHeight, Hash: row.BlockHash,
 		UpdatedAt: row.UpdatedAt.UTC(),
 	}, true, nil
 }
 
-func (store *Store) SaveRawCheckpoint(ctx context.Context, checkpoint storage.Checkpoint) error {
+func (store *Store) SaveRawCheckpoint(ctx context.Context, checkpoint chainsync.Checkpoint) error {
 	if checkpoint.ChainID == 0 {
 		return errors.New("clickhouse raw store: checkpoint chain id is required")
 	}

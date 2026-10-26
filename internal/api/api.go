@@ -12,7 +12,7 @@ import (
 	"time"
 
 	"github.com/AloneAtWar/chainstream-market/internal/live"
-	"github.com/AloneAtWar/chainstream-market/internal/market"
+	"github.com/AloneAtWar/chainstream-market/internal/pkg/asset"
 	"github.com/AloneAtWar/chainstream-market/internal/storage"
 )
 
@@ -126,7 +126,7 @@ func address(request *http.Request, name string, chain uint64) (string, error) {
 		return "", badRequest(name + " is required")
 	}
 	if name == "token" {
-		value = market.DefaultCatalog(chain).Canonical(value)
+		value = asset.DefaultCatalog(chain).Canonical(value)
 	}
 	return value, nil
 }

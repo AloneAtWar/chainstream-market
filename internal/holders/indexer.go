@@ -24,8 +24,8 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/AloneAtWar/chainstream-market/internal/engine"
-	"github.com/AloneAtWar/chainstream-market/internal/rpc"
+	"github.com/AloneAtWar/chainstream-market/internal/pkg/chainsync"
+	"github.com/AloneAtWar/chainstream-market/internal/pkg/rpc"
 	"github.com/AloneAtWar/chainstream-market/internal/storage"
 	streamv1 "github.com/AloneAtWar/chainstream-market/proto/stream/v1"
 )
@@ -55,7 +55,7 @@ type Options struct {
 	Logger         *slog.Logger
 }
 
-// Indexer is an engine.Handler for one chain. It is not safe for concurrent
+// Indexer is an chainsync.Handler for one chain. It is not safe for concurrent
 // use.
 type Indexer struct {
 	options       Options
@@ -81,10 +81,10 @@ func New(options Options) (*Indexer, error) {
 	return &Indexer{options: options, logger: logger}, nil
 }
 
-func (indexer *Indexer) Restore(ctx context.Context, chainID uint64) (storage.Checkpoint, bool, error) {
+func (indexer *Indexer) Restore(ctx context.Context, chainID uint64) (chainsync.Checkpoint, bool, error) {
 	checkpoint, prunedThrough, ok, err := indexer.options.Store.LoadHolderCheckpoint(ctx, chainID)
 	if err != nil || !ok {
-		return storage.Checkpoint{}, false, err
+		return chainsync.Checkpoint{}, false, err
 	}
 	indexer.prunedThrough = prunedThrough
 	return checkpoint, true, nil
@@ -205,7 +205,7 @@ func (indexer *Indexer) Revert(_ context.Context, rollbackTo int64) error {
 	return nil
 }
 
-func (indexer *Indexer) Commit(ctx context.Context, checkpoint storage.Checkpoint) error {
+func (indexer *Indexer) Commit(ctx context.Context, checkpoint chainsync.Checkpoint) error {
 	change := indexer.pending
 	change.PrunedThrough = indexer.prunedThrough
 	if err := indexer.options.Store.CommitHolders(ctx, checkpoint, change); err != nil {
@@ -249,4 +249,4 @@ func compareKeys(left, right storage.HolderKey) int {
 	return cmp.Or(cmp.Compare(left.Token, right.Token), cmp.Compare(left.Holder, right.Holder))
 }
 
-var _ engine.Handler = (*Indexer)(nil)
+var _ chainsync.Handler = (*Indexer)(nil)

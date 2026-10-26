@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/AloneAtWar/chainstream-market/internal/pkg/chainsync"
 	"github.com/AloneAtWar/chainstream-market/internal/storage"
 	"gorm.io/gorm"
 )
@@ -72,12 +73,12 @@ const (
 	undoPool  = "pool"
 )
 
-func (store *Store) LoadRegistryCheckpoint(ctx context.Context, chainID uint64) (storage.Checkpoint, int64, bool, error) {
+func (store *Store) LoadRegistryCheckpoint(ctx context.Context, chainID uint64) (chainsync.Checkpoint, int64, bool, error) {
 	return loadCheckpoint(store.db.WithContext(ctx), registryCheckpoints, chainID)
 }
 
 // CommitRegistry applies change and saves checkpoint in one transaction.
-func (store *Store) CommitRegistry(ctx context.Context, checkpoint storage.Checkpoint, change storage.RegistryChange) error {
+func (store *Store) CommitRegistry(ctx context.Context, checkpoint chainsync.Checkpoint, change storage.RegistryChange) error {
 	if checkpoint.ChainID == 0 {
 		return errors.New("postgres store: checkpoint chain id is required")
 	}

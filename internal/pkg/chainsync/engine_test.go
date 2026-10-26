@@ -1,13 +1,11 @@
-package engine
+package chainsync
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"testing"
 
-	"github.com/AloneAtWar/chainstream-market/internal/source"
-	"github.com/AloneAtWar/chainstream-market/internal/storage"
+	"github.com/AloneAtWar/chainstream-market/internal/pkg/source"
 	streamv1 "github.com/AloneAtWar/chainstream-market/proto/stream/v1"
 	"google.golang.org/protobuf/proto"
 )
@@ -59,20 +57,61 @@ func encode(t *testing.T, first int64, records ...*streamv1.StreamRecord) []sour
 	return messages
 }
 
-type run struct {
-	memory *storage.Memory
-	start  int64
-	err    error
+// headerHandler keeps the hash of each applied block and the last
+// checkpoint, as a store would.
+type headerHandler struct {
+	blocks     map[int64]appliedBlock
+	checkpoint Checkpoint
+	committed  bool
 }
 
-func runEngine(t *testing.T, memory *storage.Memory, messages []source.Message) run {
+type appliedBlock struct {
+	hash      string
+	finalized bool
+}
+
+func newHeaderHandler() *headerHandler {
+	return &headerHandler{blocks: make(map[int64]appliedBlock)}
+}
+
+func (handler *headerHandler) Restore(context.Context, uint64) (Checkpoint, bool, error) {
+	return handler.checkpoint, handler.committed, nil
+}
+
+func (handler *headerHandler) Apply(_ context.Context, block *streamv1.BlockEvent) error {
+	finalized := block.GetFinalizedHeight()
+	handler.blocks[block.GetBlockHeight()] = appliedBlock{
+		hash: block.GetBlockHash(), finalized: finalized > 0 && block.GetBlockHeight() <= finalized,
+	}
+	return nil
+}
+
+func (handler *headerHandler) Revert(_ context.Context, rollbackTo int64) error {
+	for height := range handler.blocks {
+		if height > rollbackTo {
+			delete(handler.blocks, height)
+		}
+	}
+	return nil
+}
+
+func (handler *headerHandler) Commit(_ context.Context, checkpoint Checkpoint) error {
+	handler.checkpoint, handler.committed = checkpoint, true
+	return nil
+}
+
+type run struct {
+	start int64
+	err   error
+}
+
+func runEngine(t *testing.T, handler *headerHandler, messages []source.Message) run {
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	result := run{memory: memory, start: -1}
+	result := run{start: -1}
 	engine, err := New(Options{
-		ChainID: testChainID, Chain: "eth", Processor: HeaderProcessor{},
-		Output: memory, Checkpoints: memory,
+		ChainID: testChainID, Chain: "eth", Handler: handler,
 		Open: func(start int64) (source.Source, error) {
 			result.start = start
 			var remaining []source.Message
@@ -91,17 +130,17 @@ func runEngine(t *testing.T, memory *storage.Memory, messages []source.Message) 
 	return result
 }
 
-func heights(blocks []storage.BlockOutput) map[int64]string {
-	got := make(map[int64]string, len(blocks))
-	for _, block := range blocks {
-		got[block.Height] = block.Hash
+func heights(handler *headerHandler) map[int64]string {
+	got := make(map[int64]string, len(handler.blocks))
+	for height, block := range handler.blocks {
+		got[height] = block.hash
 	}
 	return got
 }
 
 func TestEngineAppliesBlocksAndReorgs(t *testing.T) {
-	memory := storage.NewMemory()
-	result := runEngine(t, memory, encode(t, 0,
+	handler := newHeaderHandler()
+	result := runEngine(t, handler, encode(t, 0,
 		block(100, "a100", "a99"),
 		block(101, "a101", "a100"),
 		block(102, "a102", "a101"),
@@ -115,7 +154,7 @@ func TestEngineAppliesBlocksAndReorgs(t *testing.T) {
 	if result.start != 0 {
 		t.Fatalf("start offset = %d, want 0", result.start)
 	}
-	got := heights(memory.Blocks(testChainID))
+	got := heights(handler)
 	want := map[int64]string{100: "a100", 101: "b101", 102: "b102"}
 	if len(got) != len(want) {
 		t.Fatalf("blocks = %v, want %v", got, want)
@@ -125,40 +164,35 @@ func TestEngineAppliesBlocksAndReorgs(t *testing.T) {
 			t.Fatalf("blocks = %v, want %v", got, want)
 		}
 	}
-	blocks := memory.Blocks(testChainID)
-	if !blocks[1].Finalized || blocks[2].Finalized {
-		t.Fatalf("finalized flags = %v %v", blocks[1].Finalized, blocks[2].Finalized)
+	if !handler.blocks[101].finalized || handler.blocks[102].finalized {
+		t.Fatalf("finalized flags = %v %v", handler.blocks[101].finalized, handler.blocks[102].finalized)
 	}
-	checkpoint, ok, err := memory.Load(context.Background(), testChainID)
-	if err != nil || !ok {
-		t.Fatalf("Load() = %v, %v", ok, err)
-	}
+	checkpoint := handler.checkpoint
 	if checkpoint.Offset != 5 || checkpoint.Height != 102 || checkpoint.Hash != "b102" {
 		t.Fatalf("checkpoint = %+v", checkpoint)
 	}
 }
 
 func TestEngineResumesAfterCheckpoint(t *testing.T) {
-	memory := storage.NewMemory()
+	handler := newHeaderHandler()
 	messages := encode(t, 0, block(100, "a100", "a99"), block(101, "a101", "a100"), block(102, "a102", "a101"))
-	if err := memory.Save(context.Background(), storage.Checkpoint{ChainID: testChainID, Offset: 1, Height: 101, Hash: "a101"}); err != nil {
-		t.Fatalf("Save() error = %v", err)
-	}
-	result := runEngine(t, memory, messages)
+	handler.checkpoint = Checkpoint{ChainID: testChainID, Offset: 1, Height: 101, Hash: "a101"}
+	handler.committed = true
+	result := runEngine(t, handler, messages)
 	if result.err != nil {
 		t.Fatalf("Run() error = %v", result.err)
 	}
 	if result.start != 2 {
 		t.Fatalf("start offset = %d, want 2", result.start)
 	}
-	if got := heights(memory.Blocks(testChainID)); len(got) != 1 || got[102] != "a102" {
+	if got := heights(handler); len(got) != 1 || got[102] != "a102" {
 		t.Fatalf("blocks = %v", got)
 	}
 }
 
 func TestEngineSkipsRedeliveredRecords(t *testing.T) {
-	memory := storage.NewMemory()
-	result := runEngine(t, memory, encode(t, 0,
+	handler := newHeaderHandler()
+	result := runEngine(t, handler, encode(t, 0,
 		revert(99), // nothing applied yet
 		block(100, "a100", "a99"),
 		block(101, "a101", "a100"),
@@ -170,7 +204,7 @@ func TestEngineSkipsRedeliveredRecords(t *testing.T) {
 	if result.err != nil {
 		t.Fatalf("Run() error = %v", result.err)
 	}
-	if got := heights(memory.Blocks(testChainID)); len(got) != 3 || got[102] != "a102" {
+	if got := heights(handler); len(got) != 3 || got[102] != "a102" {
 		t.Fatalf("blocks = %v", got)
 	}
 }
@@ -188,13 +222,12 @@ func TestEngineRejectsInconsistentStream(t *testing.T) {
 	}
 	for name, test := range tests {
 		t.Run(name, func(t *testing.T) {
-			memory := storage.NewMemory()
-			result := runEngine(t, memory, encode(t, 0, test.records...))
+			handler := newHeaderHandler()
+			result := runEngine(t, handler, encode(t, 0, test.records...))
 			if !errors.Is(result.err, test.want) {
 				t.Fatalf("Run() error = %v, want %v", result.err, test.want)
 			}
-			checkpoint, _, _ := memory.Load(context.Background(), testChainID)
-			if checkpoint.Offset != 0 {
+			if checkpoint := handler.checkpoint; checkpoint.Offset != 0 {
 				t.Fatalf("checkpoint offset = %d, want 0", checkpoint.Offset)
 			}
 		})
@@ -202,8 +235,8 @@ func TestEngineRejectsInconsistentStream(t *testing.T) {
 }
 
 func TestEngineAcceptsParentAfterRevert(t *testing.T) {
-	memory := storage.NewMemory()
-	result := runEngine(t, memory, encode(t, 0,
+	handler := newHeaderHandler()
+	result := runEngine(t, handler, encode(t, 0,
 		block(100, "a100", "a99"),
 		block(101, "a101", "a100"),
 		revert(100),
@@ -219,89 +252,8 @@ func TestNewRequiresDependencies(t *testing.T) {
 	if _, err := New(Options{ChainID: testChainID}); err == nil {
 		t.Fatal("New() error = nil")
 	}
-}
-
-// countingProcessor persists how many blocks it applied.
-type countingProcessor struct {
-	HeaderProcessor
-	applied  int
-	restored bool
-}
-
-func (counter *countingProcessor) Apply(ctx context.Context, block *streamv1.BlockEvent) (storage.BlockOutput, error) {
-	counter.applied++
-	return counter.HeaderProcessor.Apply(ctx, block)
-}
-
-func (counter *countingProcessor) Restore(state storage.State) error {
-	counter.restored = true
-	for _, entry := range state.Entries {
-		if entry.Kind == "count" {
-			return json.Unmarshal(entry.Value, &counter.applied)
-		}
-	}
-	return nil
-}
-
-func (counter *countingProcessor) TakeDelta() (storage.StateDelta, error) {
-	raw, err := json.Marshal(counter.applied)
-	return storage.StateDelta{Entries: []storage.StateEntry{{Kind: "count", Key: "applied", Value: raw}}}, err
-}
-
-func runStateful(t *testing.T, memory *storage.Memory, processor *countingProcessor, messages []source.Message) int64 {
-	t.Helper()
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	start := int64(-1)
-	engine, err := New(Options{
-		ChainID: testChainID, Chain: "eth", Processor: processor, Output: memory, State: memory,
-		Open: func(offset int64) (source.Source, error) {
-			start = offset
-			return &fakeSource{messages: messages[offset:], cancel: cancel}, nil
-		},
-	})
-	if err != nil {
-		t.Fatalf("New() error = %v", err)
-	}
-	if err := engine.Run(ctx); err != nil {
-		t.Fatalf("Run() error = %v", err)
-	}
-	return start
-}
-
-func TestEngineRestoresPersistedState(t *testing.T) {
-	memory := storage.NewMemory()
-	messages := encode(t, 0,
-		block(100, "a100", "a99"), block(101, "a101", "a100"), block(102, "a102", "a101"),
-		block(103, "a103", "a102"), block(104, "a104", "a103"),
-	)
-	first := &countingProcessor{}
-	if start := runStateful(t, memory, first, messages[:3]); start != 0 || first.restored {
-		t.Fatalf("first run start = %d, restored = %v", start, first.restored)
-	}
-	second := &countingProcessor{}
-	if start := runStateful(t, memory, second, messages); start != 3 || !second.restored {
-		t.Fatalf("second run start = %d, restored = %v", start, second.restored)
-	}
-	if second.applied != 5 {
-		t.Fatalf("applied = %d, want 5", second.applied)
-	}
-	state, ok, err := memory.LoadState(context.Background(), testChainID)
-	if err != nil || !ok || state.Checkpoint.Offset != 4 || state.Checkpoint.Hash != "a104" {
-		t.Fatalf("LoadState() = %+v, %v, %v", state.Checkpoint, ok, err)
-	}
-	if len(state.Entries) != 1 || string(state.Entries[0].Value) != "5" {
-		t.Fatalf("entries = %+v", state.Entries)
-	}
-}
-
-func TestNewRequiresStatefulProcessorForState(t *testing.T) {
-	memory := storage.NewMemory()
-	_, err := New(Options{
-		ChainID: testChainID, Processor: HeaderProcessor{}, Output: memory, State: memory,
-		Open: func(int64) (source.Source, error) { return nil, errors.New("unused") },
-	})
-	if err == nil {
-		t.Fatal("New() with a stateless processor and a state store error = nil")
+	open := func(int64) (source.Source, error) { return nil, errors.New("unused") }
+	if _, err := New(Options{ChainID: testChainID, Open: open}); err == nil {
+		t.Fatal("New() without a handler error = nil")
 	}
 }

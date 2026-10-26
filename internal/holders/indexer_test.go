@@ -9,8 +9,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/AloneAtWar/chainstream-market/internal/rpc"
-	"github.com/AloneAtWar/chainstream-market/internal/rpc/rpctest"
+	"github.com/AloneAtWar/chainstream-market/internal/pkg/chainsync"
+	"github.com/AloneAtWar/chainstream-market/internal/pkg/rpc"
+	"github.com/AloneAtWar/chainstream-market/internal/pkg/rpc/rpctest"
 	"github.com/AloneAtWar/chainstream-market/internal/storage"
 	"github.com/AloneAtWar/chainstream-market/internal/storage/pgstore"
 	streamv1 "github.com/AloneAtWar/chainstream-market/proto/stream/v1"
@@ -111,7 +112,7 @@ func (f *fixture) revert(rollbackTo int64) {
 
 func (f *fixture) commit(height int64, hash string) {
 	f.t.Helper()
-	checkpoint := storage.Checkpoint{ChainID: 1, Offset: f.offset, Height: height, Hash: hash}
+	checkpoint := chainsync.Checkpoint{ChainID: 1, Offset: f.offset, Height: height, Hash: hash}
 	if err := f.indexer.Commit(context.Background(), checkpoint); err != nil {
 		f.t.Fatalf("Commit() error = %v", err)
 	}

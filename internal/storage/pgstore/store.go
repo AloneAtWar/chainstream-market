@@ -13,6 +13,7 @@ import (
 	"runtime"
 	"time"
 
+	"github.com/AloneAtWar/chainstream-market/internal/pkg/chainsync"
 	"github.com/AloneAtWar/chainstream-market/internal/storage"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/stdlib"
@@ -153,13 +154,13 @@ func (store *Store) Close() {
 	}
 }
 
-func (store *Store) Load(ctx context.Context, chainID uint64) (storage.Checkpoint, bool, error) {
+func (store *Store) Load(ctx context.Context, chainID uint64) (chainsync.Checkpoint, bool, error) {
 	checkpoint, _, ok, err := loadCheckpoint(store.db.WithContext(ctx), engineCheckpoints, chainID)
 	return checkpoint, ok, err
 }
 
 // Save stores a checkpoint without state changes.
-func (store *Store) Save(ctx context.Context, checkpoint storage.Checkpoint) error {
+func (store *Store) Save(ctx context.Context, checkpoint chainsync.Checkpoint) error {
 	return store.Commit(ctx, checkpoint, storage.StateDelta{})
 }
 
@@ -204,7 +205,7 @@ func (store *Store) LoadState(ctx context.Context, chainID uint64) (state storag
 }
 
 // Commit applies delta and saves checkpoint in one transaction.
-func (store *Store) Commit(ctx context.Context, checkpoint storage.Checkpoint, delta storage.StateDelta) error {
+func (store *Store) Commit(ctx context.Context, checkpoint chainsync.Checkpoint, delta storage.StateDelta) error {
 	if checkpoint.ChainID == 0 {
 		return errors.New("postgres store: checkpoint chain id is required")
 	}

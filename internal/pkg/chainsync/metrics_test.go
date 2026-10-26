@@ -1,13 +1,12 @@
-package engine
+package chainsync
 
 import (
 	"context"
 	"testing"
 	"time"
 
-	"github.com/AloneAtWar/chainstream-market/internal/metrics"
-	"github.com/AloneAtWar/chainstream-market/internal/source"
-	"github.com/AloneAtWar/chainstream-market/internal/storage"
+	"github.com/AloneAtWar/chainstream-market/internal/pkg/metrics"
+	"github.com/AloneAtWar/chainstream-market/internal/pkg/source"
 	"github.com/prometheus/client_golang/prometheus/testutil"
 )
 
@@ -31,11 +30,9 @@ func TestEngineExportsMetrics(t *testing.T) {
 	)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	memory := storage.NewMemory()
 	now := time.Unix(1_700_000_000+101+30, 0)
 	engine, err := New(Options{
-		ChainID: testChainID, Chain: chain, Processor: HeaderProcessor{},
-		Output: memory, Checkpoints: memory, Now: func() time.Time { return now },
+		ChainID: testChainID, Chain: chain, Handler: newHeaderHandler(), Now: func() time.Time { return now },
 		Open: func(int64) (source.Source, error) {
 			return &laggingSource{fakeSource: fakeSource{messages: messages, cancel: cancel}, end: 8}, nil
 		},

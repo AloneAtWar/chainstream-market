@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/AloneAtWar/chainstream-market/internal/engine"
-	"github.com/AloneAtWar/chainstream-market/internal/source"
+	"github.com/AloneAtWar/chainstream-market/internal/pkg/chainsync"
+	"github.com/AloneAtWar/chainstream-market/internal/pkg/source"
 	"github.com/AloneAtWar/chainstream-market/internal/storage"
 	"github.com/AloneAtWar/chainstream-market/internal/storage/chraw"
 	"github.com/AloneAtWar/chainstream-market/internal/storage/chstore"
@@ -103,12 +103,12 @@ func (s *smoke) run(options Options) {
 		Brokers: s.cluster.ListenAddrs(), Topic: smokeTopic, FetchMaxBytes: 1 << 20, FetchMaxWait: 50 * time.Millisecond,
 	}
 	handler := &observed{Loader: loader}
-	chainEngine, err := engine.New(engine.Options{
+	chainEngine, err := chainsync.New(chainsync.Options{
 		ChainID: 1, Chain: "eth", Handler: handler,
 		Open: func(start int64) (source.Source, error) { return source.NewKafka(kafka, start) },
 	})
 	if err != nil {
-		s.t.Fatalf("engine.New() error = %v", err)
+		s.t.Fatalf("chainsync.New() error = %v", err)
 	}
 	ctx, cancel := context.WithCancel(s.t.Context())
 	done := make(chan error, 1)
@@ -141,7 +141,7 @@ type observed struct {
 	committed atomic.Int64
 }
 
-func (handler *observed) Commit(ctx context.Context, checkpoint storage.Checkpoint) error {
+func (handler *observed) Commit(ctx context.Context, checkpoint chainsync.Checkpoint) error {
 	if err := handler.Loader.Commit(ctx, checkpoint); err != nil {
 		return err
 	}

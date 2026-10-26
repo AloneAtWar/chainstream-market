@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/AloneAtWar/chainstream-market/internal/storage"
+	"github.com/AloneAtWar/chainstream-market/internal/pkg/chainsync"
 	"github.com/jackc/pgx/v5/pgtype"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -151,23 +151,23 @@ func (run *runner) exec(statement string, values ...any) {
 	}
 }
 
-func loadCheckpoint(db *gorm.DB, table string, chainID uint64) (storage.Checkpoint, int64, bool, error) {
+func loadCheckpoint(db *gorm.DB, table string, chainID uint64) (chainsync.Checkpoint, int64, bool, error) {
 	var row checkpointRow
 	err := db.Table(table).Where("chain_id = ?", int64(chainID)).Take(&row).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return storage.Checkpoint{}, 0, false, nil
+		return chainsync.Checkpoint{}, 0, false, nil
 	}
 	if err != nil {
-		return storage.Checkpoint{}, 0, false, fmt.Errorf("postgres store: load %s: %w", table, err)
+		return chainsync.Checkpoint{}, 0, false, fmt.Errorf("postgres store: load %s: %w", table, err)
 	}
-	return storage.Checkpoint{
+	return chainsync.Checkpoint{
 		ChainID: chainID, Offset: row.KafkaOffset, Height: row.BlockHeight, Hash: row.BlockHash,
 		UpdatedAt: row.UpdatedAt.UTC(),
 	}, row.PrunedThrough, true, nil
 }
 
 // saveCheckpoint upserts a checkpoint. pruned_through never moves back.
-func saveCheckpoint(tx *gorm.DB, table string, checkpoint storage.Checkpoint, prunedThrough int64) error {
+func saveCheckpoint(tx *gorm.DB, table string, checkpoint chainsync.Checkpoint, prunedThrough int64) error {
 	updatedAt := checkpoint.UpdatedAt
 	if updatedAt.IsZero() {
 		updatedAt = time.Now()

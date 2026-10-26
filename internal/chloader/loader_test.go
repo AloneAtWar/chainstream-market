@@ -9,21 +9,22 @@ import (
 	"testing"
 	"time"
 
+	"github.com/AloneAtWar/chainstream-market/internal/pkg/chainsync"
 	"github.com/AloneAtWar/chainstream-market/internal/storage"
 	streamv1 "github.com/AloneAtWar/chainstream-market/proto/stream/v1"
 )
 
 // fakeStore records every call in order.
 type fakeStore struct {
-	checkpoint *storage.Checkpoint
+	checkpoint *chainsync.Checkpoint
 	calls      []string
 	// failWrite fails the next WriteRaw after recording it.
 	failWrite bool
 }
 
-func (fake *fakeStore) LoadRawCheckpoint(context.Context, uint64) (storage.Checkpoint, bool, error) {
+func (fake *fakeStore) LoadRawCheckpoint(context.Context, uint64) (chainsync.Checkpoint, bool, error) {
 	if fake.checkpoint == nil {
-		return storage.Checkpoint{}, false, nil
+		return chainsync.Checkpoint{}, false, nil
 	}
 	return *fake.checkpoint, true, nil
 }
@@ -46,7 +47,7 @@ func (fake *fakeStore) DeleteRawAbove(_ context.Context, _ uint64, height int64)
 	return nil
 }
 
-func (fake *fakeStore) SaveRawCheckpoint(_ context.Context, checkpoint storage.Checkpoint) error {
+func (fake *fakeStore) SaveRawCheckpoint(_ context.Context, checkpoint chainsync.Checkpoint) error {
 	fake.calls = append(fake.calls, fmt.Sprintf("checkpoint %d", checkpoint.Offset))
 	return nil
 }
@@ -87,14 +88,14 @@ func step(t *testing.T, loader *Loader, offset int64, block *streamv1.BlockEvent
 	if err := loader.Apply(ctx, block); err != nil {
 		t.Fatalf("Apply() error = %v", err)
 	}
-	checkpoint := storage.Checkpoint{ChainID: 1, Offset: offset, Height: block.GetBlockHeight()}
+	checkpoint := chainsync.Checkpoint{ChainID: 1, Offset: offset, Height: block.GetBlockHeight()}
 	if err := loader.Commit(ctx, checkpoint); err != nil {
 		t.Fatalf("Commit() error = %v", err)
 	}
 }
 
 func TestLoaderWritesHeadBlocksOneByOne(t *testing.T) {
-	store := &fakeStore{checkpoint: &storage.Checkpoint{ChainID: 1, Offset: 9, Height: 99}}
+	store := &fakeStore{checkpoint: &chainsync.Checkpoint{ChainID: 1, Offset: 9, Height: 99}}
 	loader := newLoader(t, store, Options{BatchLag: time.Minute, FlushRows: 100, FlushInterval: time.Hour})
 	step(t, loader, 10, testBlock(100, time.Second))
 	step(t, loader, 11, testBlock(101, time.Second))
@@ -157,7 +158,7 @@ func TestLoaderRevertsBufferedAndStoredBlocks(t *testing.T) {
 	if err := loader.Revert(ctx, 101); err != nil {
 		t.Fatalf("Revert() error = %v", err)
 	}
-	if err := loader.Commit(ctx, storage.Checkpoint{ChainID: 1, Offset: 5, Height: 101}); err != nil {
+	if err := loader.Commit(ctx, chainsync.Checkpoint{ChainID: 1, Offset: 5, Height: 101}); err != nil {
 		t.Fatalf("Commit() error = %v", err)
 	}
 	step(t, loader, 6, testBlock(102, time.Second))
@@ -167,7 +168,7 @@ func TestLoaderRevertsBufferedAndStoredBlocks(t *testing.T) {
 }
 
 func TestLoaderRevertAfterRestartAlwaysDeletes(t *testing.T) {
-	store := &fakeStore{checkpoint: &storage.Checkpoint{ChainID: 1, Offset: 9, Height: 99}}
+	store := &fakeStore{checkpoint: &chainsync.Checkpoint{ChainID: 1, Offset: 9, Height: 99}}
 	loader := newLoader(t, store, Options{})
 	if err := loader.Revert(context.Background(), 120); err != nil {
 		t.Fatalf("Revert() error = %v", err)
@@ -187,7 +188,7 @@ func TestLoaderRetriesAFailedFlushWithoutDuplicates(t *testing.T) {
 		t.Fatalf("Apply() error = %v", err)
 	}
 	store.failWrite = true
-	if err := loader.Commit(ctx, storage.Checkpoint{ChainID: 1, Offset: 1, Height: 101}); err == nil {
+	if err := loader.Commit(ctx, chainsync.Checkpoint{ChainID: 1, Offset: 1, Height: 101}); err == nil {
 		t.Fatal("Commit() error = nil")
 	}
 	// The write may have reached part of the tables, so the retry clears it.

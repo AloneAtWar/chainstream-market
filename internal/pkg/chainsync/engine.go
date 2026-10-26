@@ -1,5 +1,7 @@
-// Package engine applies one chain topic, in order, to market storage.
-package engine
+// Package chainsync applies one chainstream-evm chain topic, in offset order,
+// to a Handler: it checks continuity, handles reverts and redeliveries, and
+// commits a checkpoint after every record.
+package chainsync
 
 import (
 	"context"
@@ -8,9 +10,8 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/AloneAtWar/chainstream-market/internal/metrics"
-	"github.com/AloneAtWar/chainstream-market/internal/source"
-	"github.com/AloneAtWar/chainstream-market/internal/storage"
+	"github.com/AloneAtWar/chainstream-market/internal/pkg/metrics"
+	"github.com/AloneAtWar/chainstream-market/internal/pkg/source"
 	streamv1 "github.com/AloneAtWar/chainstream-market/proto/stream/v1"
 	"google.golang.org/protobuf/proto"
 )
@@ -33,22 +34,10 @@ type Options struct {
 	ChainID uint64
 	Chain   string
 	Open    SourceFactory
-	// Handler receives the records. When it is nil, the engine builds one
-	// from Processor, Output and Checkpoints or State.
-	Handler   Handler
-	Processor Processor
-	Output    storage.Output
-	// Checkpoints persists the checkpoint alone. It is used when State is
-	// nil, and the processor then rebuilds its state by replaying the topic.
-	Checkpoints storage.CheckpointStore
-	// State persists the processor's state with each checkpoint. The
-	// processor must implement Stateful.
-	State storage.StateStore
-	// Notifier, when set, receives each block's output and each revert after
-	// they are stored. It is only used with Processor.
-	Notifier Notifier
-	Logger   *slog.Logger
-	Now      func() time.Time
+	// Handler receives the records.
+	Handler Handler
+	Logger  *slog.Logger
+	Now     func() time.Time
 }
 
 // Engine consumes one chain topic. Each record is applied and committed
@@ -63,26 +52,19 @@ type Engine struct {
 }
 
 func New(options Options) (*Engine, error) {
-	if options.ChainID == 0 || options.Open == nil {
-		return nil, errors.New("engine: chain id and source are required")
+	if options.ChainID == 0 || options.Open == nil || options.Handler == nil {
+		return nil, errors.New("engine: chain id, source and handler are required")
 	}
 	logger := options.Logger
 	if logger == nil {
 		logger = slog.Default()
 	}
 	logger = logger.With("chain", options.Chain, "chain_id", options.ChainID)
-	handler := options.Handler
-	if handler == nil {
-		var err error
-		if handler, err = newProcessorHandler(options, logger); err != nil {
-			return nil, err
-		}
-	}
 	now := options.Now
 	if now == nil {
 		now = time.Now
 	}
-	return &Engine{chainID: options.ChainID, chain: options.Chain, open: options.Open, handler: handler, logger: logger, now: now}, nil
+	return &Engine{chainID: options.ChainID, chain: options.Chain, open: options.Open, handler: options.Handler, logger: logger, now: now}, nil
 }
 
 // Run consumes until ctx is done, returning nil, or a record fails to apply.
@@ -92,7 +74,7 @@ func (engine *Engine) Run(ctx context.Context) error {
 		return fmt.Errorf("engine: restore: %w", err)
 	}
 	if !ok {
-		checkpoint = storage.Checkpoint{ChainID: engine.chainID, Offset: -1}
+		checkpoint = Checkpoint{ChainID: engine.chainID, Offset: -1}
 	}
 	stream, err := engine.open(checkpoint.Offset + 1)
 	if err != nil {
@@ -130,7 +112,7 @@ func (engine *Engine) Run(ctx context.Context) error {
 	}
 }
 
-func (engine *Engine) handle(ctx context.Context, checkpoint storage.Checkpoint, message source.Message) (storage.Checkpoint, error) {
+func (engine *Engine) handle(ctx context.Context, checkpoint Checkpoint, message source.Message) (Checkpoint, error) {
 	if message.Offset <= checkpoint.Offset {
 		return checkpoint, nil
 	}
@@ -172,7 +154,7 @@ func (engine *Engine) handle(ctx context.Context, checkpoint storage.Checkpoint,
 	return next, nil
 }
 
-func (engine *Engine) revert(ctx context.Context, checkpoint storage.Checkpoint, revert *streamv1.BlockRevert, next *storage.Checkpoint) error {
+func (engine *Engine) revert(ctx context.Context, checkpoint Checkpoint, revert *streamv1.BlockRevert, next *Checkpoint) error {
 	if revert.GetChainId() != engine.chainID {
 		return fmt.Errorf("%w: revert chain %d", ErrChainMismatch, revert.GetChainId())
 	}
@@ -192,7 +174,7 @@ func (engine *Engine) revert(ctx context.Context, checkpoint storage.Checkpoint,
 	return nil
 }
 
-func (engine *Engine) apply(ctx context.Context, checkpoint storage.Checkpoint, block *streamv1.BlockEvent, next *storage.Checkpoint) error {
+func (engine *Engine) apply(ctx context.Context, checkpoint Checkpoint, block *streamv1.BlockEvent, next *Checkpoint) error {
 	if block.GetChainId() != engine.chainID {
 		return fmt.Errorf("%w: block chain %d", ErrChainMismatch, block.GetChainId())
 	}
@@ -218,6 +200,6 @@ func (engine *Engine) apply(ctx context.Context, checkpoint storage.Checkpoint, 
 }
 
 // applied reports whether the checkpoint has applied at least one block.
-func applied(checkpoint storage.Checkpoint) bool {
+func applied(checkpoint Checkpoint) bool {
 	return checkpoint.Height > 0 || checkpoint.Hash != ""
 }

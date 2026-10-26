@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/AloneAtWar/chainstream-market/internal/storage"
+	"github.com/AloneAtWar/chainstream-market/internal/pkg/chainsync"
 	"github.com/AloneAtWar/chainstream-market/internal/storage/storagetest"
 )
 
@@ -44,7 +44,7 @@ func TestCheckpointRoundTrip(t *testing.T) {
 	if _, ok, err := store.Load(ctx, 1); err != nil || ok {
 		t.Fatalf("Load() on empty store = %v, %v", ok, err)
 	}
-	want := storage.Checkpoint{ChainID: 1, Offset: 42, Height: 100, Hash: "0xabc", UpdatedAt: time.UnixMilli(1_700_000_000_123).UTC()}
+	want := chainsync.Checkpoint{ChainID: 1, Offset: 42, Height: 100, Hash: "0xabc", UpdatedAt: time.UnixMilli(1_700_000_000_123).UTC()}
 	if err := store.Save(ctx, want); err != nil {
 		t.Fatalf("Save() error = %v", err)
 	}
@@ -113,7 +113,7 @@ func TestOpenConcurrent(t *testing.T) {
 	if len(opened) != services {
 		t.Fatalf("opened %d stores, want %d", len(opened), services)
 	}
-	if err := opened[0].Save(ctx, storage.Checkpoint{ChainID: 1, Height: 1, Hash: "0x1", UpdatedAt: time.Now().UTC()}); err != nil {
+	if err := opened[0].Save(ctx, chainsync.Checkpoint{ChainID: 1, Height: 1, Hash: "0x1", UpdatedAt: time.Now().UTC()}); err != nil {
 		t.Fatalf("Save() after concurrent Open() error = %v", err)
 	}
 }

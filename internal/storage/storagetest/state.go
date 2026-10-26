@@ -9,6 +9,7 @@ import (
 	"reflect"
 	"testing"
 
+	"github.com/AloneAtWar/chainstream-market/internal/pkg/chainsync"
 	"github.com/AloneAtWar/chainstream-market/internal/storage"
 )
 
@@ -20,7 +21,7 @@ func StateStore(t *testing.T, store storage.StateStore) {
 	if _, ok, err := store.LoadState(ctx, 1); err != nil || ok {
 		t.Fatalf("LoadState() on empty store = %v, %v", ok, err)
 	}
-	commit := func(checkpoint storage.Checkpoint, delta storage.StateDelta) {
+	commit := func(checkpoint chainsync.Checkpoint, delta storage.StateDelta) {
 		t.Helper()
 		if err := store.Commit(ctx, checkpoint, delta); err != nil {
 			t.Fatalf("Commit(%+v) error = %v", checkpoint, err)
@@ -42,14 +43,14 @@ func StateStore(t *testing.T, store storage.StateStore) {
 		return storage.StateUndo{Kind: kind, Height: height, Key: key, Prev: bytesOf(prev)}
 	}
 
-	commit(storage.Checkpoint{ChainID: 1, Offset: 0, Height: 100, Hash: "a100"}, storage.StateDelta{
+	commit(chainsync.Checkpoint{ChainID: 1, Offset: 0, Height: 100, Hash: "a100"}, storage.StateDelta{
 		Entries: []storage.StateEntry{entry("pools", "p", `{"a":1}`), entry("prices", "t", `"1.5"`)},
 		Undo:    []storage.StateUndo{undo(100, "pools", "p", ""), undo(100, "prices", "t", "")},
 	})
-	commit(storage.Checkpoint{ChainID: 56, Offset: 7, Height: 9, Hash: "bsc"}, storage.StateDelta{
+	commit(chainsync.Checkpoint{ChainID: 56, Offset: 7, Height: 9, Hash: "bsc"}, storage.StateDelta{
 		Entries: []storage.StateEntry{entry("pools", "p", `{"bsc":true}`)},
 	})
-	commit(storage.Checkpoint{ChainID: 1, Offset: 1, Height: 101, Hash: "a101"}, storage.StateDelta{
+	commit(chainsync.Checkpoint{ChainID: 1, Offset: 1, Height: 101, Hash: "a101"}, storage.StateDelta{
 		Entries: []storage.StateEntry{entry("pools", "p", `{"a":2}`), entry("prices", "t", "")},
 		Undo:    []storage.StateUndo{undo(101, "pools", "p", `{"a":1}`), undo(101, "prices", "t", `"1.5"`)},
 	})
@@ -64,7 +65,7 @@ func StateStore(t *testing.T, store storage.StateStore) {
 	})
 
 	// A revert to 100 restores the values and drops the undo history above it.
-	commit(storage.Checkpoint{ChainID: 1, Offset: 2, Height: 100}, storage.StateDelta{
+	commit(chainsync.Checkpoint{ChainID: 1, Offset: 2, Height: 100}, storage.StateDelta{
 		Reverted: true, RevertTo: 100,
 		Entries: []storage.StateEntry{entry("pools", "p", `{"a":1}`), entry("prices", "t", `"1.5"`)},
 	})
@@ -72,7 +73,7 @@ func StateStore(t *testing.T, store storage.StateStore) {
 	assertEntries(t, state.Entries, []storage.StateEntry{entry("pools", "p", `{"a":1}`), entry("prices", "t", `"1.5"`)})
 	assertUndo(t, state.Undo, []storage.StateUndo{undo(100, "pools", "p", ""), undo(100, "prices", "t", "")})
 
-	commit(storage.Checkpoint{ChainID: 1, Offset: 3, Height: 101, Hash: "b101"}, storage.StateDelta{
+	commit(chainsync.Checkpoint{ChainID: 1, Offset: 3, Height: 101, Hash: "b101"}, storage.StateDelta{
 		Undo:          []storage.StateUndo{undo(101, "pools", "p", `{"a":1}`)},
 		Entries:       []storage.StateEntry{entry("pools", "p", `{"a":3}`)},
 		PrunedThrough: 100,
