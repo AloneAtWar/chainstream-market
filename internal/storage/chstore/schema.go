@@ -65,10 +65,16 @@ var schema = []string{
 		price_usd     Decimal256(36),
 		source        Enum8('unknown' = 0, 'anchor' = 1, 'graph' = 2),
 		hops          UInt8,
-		liquidity_usd Decimal256(36)
+		liquidity_usd Decimal256(36),
+		revision_height Int64
 	) ENGINE = MergeTree
 	PARTITION BY toYYYYMM(block_time)
 	ORDER BY (chain_id, token, block_height)`,
+
+	// revision_height is the block that wrote the row: block_height, or the
+	// later block that recomputed the price of a token whose decimals
+	// arrived late.
+	`ALTER TABLE token_prices ADD COLUMN IF NOT EXISTS revision_height Int64 DEFAULT block_height`,
 
 	`CREATE TABLE IF NOT EXISTS candles (
 		chain_id         UInt64,

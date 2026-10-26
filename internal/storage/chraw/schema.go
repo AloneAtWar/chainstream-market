@@ -55,6 +55,9 @@ var schema = []string{
 	ORDER BY (chain_id, block_height, log_index, operation_index)`,
 
 	`ALTER TABLE raw_trades ADD INDEX IF NOT EXISTS raw_trades_pool_id pool_id TYPE bloom_filter GRANULARITY 4`,
+	// market-engine reads a token's trades back with hasAny(amount_assets, ...)
+	// when the token's decimals arrive late.
+	`ALTER TABLE raw_trades ADD INDEX IF NOT EXISTS raw_trades_assets amount_assets TYPE bloom_filter GRANULARITY 4`,
 
 	`CREATE TABLE IF NOT EXISTS oracle_updates (
 		chain_id          UInt64,

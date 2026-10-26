@@ -4,6 +4,8 @@ import (
 	"context"
 	"math/big"
 	"time"
+
+	"github.com/shopspring/decimal"
 )
 
 // RawBlock is one block's facts exactly as chainstream-evm published them,
@@ -122,6 +124,33 @@ type RawStore interface {
 	// DeleteRawAbove removes every fact above height.
 	DeleteRawAbove(ctx context.Context, chainID uint64, height int64) error
 	SaveRawCheckpoint(ctx context.Context, checkpoint Checkpoint) error
+}
+
+// RawTradeAt is a stored raw trade with the block that published it.
+type RawTradeAt struct {
+	Height    int64
+	BlockTime time.Time
+	RawTrade
+}
+
+// PricePoint is a token's stored USD price as of a block.
+type PricePoint struct {
+	Height int64
+	USD    decimal.Decimal
+	Hops   uint8
+}
+
+// History reads what earlier blocks stored: ch-loader's raw trades and
+// market-engine's own token prices. market-engine uses it to recompute the
+// trades of a token whose decimals arrived late, beyond the ones it held.
+type History interface {
+	// RawTrades returns, in chain order, the trades at heights from..through
+	// with a leg in one of tokens. ok is false when the raw store does not
+	// hold every height through yet.
+	RawTrades(ctx context.Context, chainID uint64, tokens []string, from, through int64) (trades []RawTradeAt, ok bool, err error)
+	// PriceHistory returns each token's stored prices at heights
+	// from..through, oldest first, led by its latest price below from.
+	PriceHistory(ctx context.Context, chainID uint64, tokens []string, from, through int64) (map[string][]PricePoint, error)
 }
 
 // Transfer is a stored ERC-20 transfer as the API returns it.

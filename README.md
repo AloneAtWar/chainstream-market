@@ -47,10 +47,10 @@ The engine only orders records; a `Handler` does the work. market-engine's handl
 | --- | --- |
 | `blocks` | One per applied block. It is written last, so it marks the height as complete. |
 | `trades` | Oriented trades with USD values, and `outlier` for swaps left out of token candles. |
-| `token_prices` | Each token price emitted by a block. |
+| `token_prices` | Each token price emitted by a block, plus the earlier prices of a token whose decimals arrived late (see [Backfill](#backfill)). |
 | `candles` | One version per block that changed a bucket. Read the current bucket with `argMax(col, update_height)` or `LIMIT 1 BY`. |
 
-Rows are keyed by `(chain_id, height)`. A revert deletes every row above `rollback_to`; candles drop the newer versions, so the previous version becomes current again. Writing a height that may already exist deletes it first, which makes a replay idempotent. Deletes use ClickHouse lightweight `DELETE`.
+Rows are keyed by `(chain_id, height)`. A revert deletes every row above `rollback_to`; candles drop the newer versions, so the previous version becomes current again. `trades` and `token_prices` carry `revision_height`, the block that wrote the row, which is later than `block_height` for rows recomputed after a token's decimals arrived; reverts delete those by `revision_height`. Writing a height that may already exist deletes it first, which makes a replay idempotent. Deletes use ClickHouse lightweight `DELETE`.
 
 ### Retention and cold storage
 
@@ -303,7 +303,7 @@ A thin or manipulated pool can print a swap far from a token's real price. Such 
 - Outliers still join their own pool's candles, which show that pool's prices.
 - `trades.outlier`, the REST trade field `outlier` and live trades carry the mark.
 - The mark only depends on journaled state at the swap's block, so a reorg that replaces the block recomputes it against the new fork's prices.
-- Held late trades are replayed unmarked: they usually wait on their base token's decimals, so the token had no reference price at their block.
+- Replayed late trades are checked against the base token's recomputed price at their block when the block that brought its decimals could compute one (see [Late token metadata](#late-token-metadata)); otherwise they stay unmarked.
 
 Set `outlier_deviation: -1` to turn the filter off.
 
@@ -314,9 +314,26 @@ chainstream-evm publishes a trade's amounts without decimals when it has not rea
 - **Learning decimals.** Decimals come from trade amounts and from the metadata of `recognized` assets in the block's `assets`, which often arrives a few blocks after a new token's first trades. A trade whose amount lacks decimals the engine already learned is valued at once.
 - **Holding.** A trade still missing decimals is kept, with its block's closing USD prices for its other tokens, for up to `late_trade_blocks` blocks (default 7200; -1 drops such trades). At most `late_trades_per_token` trades are held per missing token, so spam tokens that never get metadata stay bounded.
 - **Replay.** The block that brings the decimals replays the held trades first, in chain order. Each keeps its own block height and time and is valued at the quote price of its own block. Pools seen only through held trades take their state from the latest one, so the token is priced in that same block. The replayed trades then build their pool and token candles, older buckets included, before the block's own trades join the latest bucket.
-- **Reorgs.** Held trades are journaled like all other state. ClickHouse `trades` carries `revision_height`, the block that wrote the row, and rewinds delete by it, so reverting the block that replayed a trade removes it and holds it again. Candle versions carry the replaying block as `update_height` and rewind the usual way.
+- **Earlier prices.** The token is also priced at each earlier block where a replayed trade touched one of its pools, the way that block would have priced it: through the pool whose priced counterpart reserve was worth the most, using the pool states the replayed trades leave and the counterpart's price at that block. These rows keep their own block height and time. Trades quoted in the token are valued at them, and its swaps are checked for [outliers](#outlier-swaps) against them, so a thin pool's swap stays out of the token's candles.
+- **Reorgs.** Held trades are journaled like all other state. ClickHouse `trades` and `token_prices` carry `revision_height`, the block that wrote the row, and rewinds delete by it, so reverting the block that replayed a trade removes it and holds it again. Candle versions carry the replaying block as `update_height` and rewind the usual way.
 
-A candle key that already has buckets is left alone: once a token's decimals are known its later trades are never held, so a replayed trade could only land before those buckets. Token price rows for the held blocks are not backfilled; the price series starts at the block that brought the decimals.
+A candle key that already has buckets is left alone: once a token's decimals are known its later trades are never held, so a replayed trade could only land before those buckets. Such keys only come up in pools with more than two tokens, or where the late token is the quote.
+
+#### Backfill
+
+Holding is bounded by `late_trade_blocks` and `late_trades_per_token`, and lives in market-engine's state. With `storage.driver: clickhouse`, the block that brings a token's decimals also reads the token's earlier trades back from the `raw_trades` that ch-loader stored, so nothing has to be consumed from Kafka again:
+
+- **What is read.** market-engine records, per token, the first and last height that had a trade waiting on its decimals (state kind `missed`). The backfill reads the raw trades with a nonzero leg in the token from the first of those heights, at most `backfill_blocks` back, through the last. Trades it already holds are kept as they are; the rest join them and are replayed together, in chain order, as described above. A trade that still waits on another token's decimals is left for that token's backfill.
+- **Prices.** A backfilled trade's other tokens are valued at their latest `token_prices` row at or below its block, or an anchor's peg when there is none. Where `token_price_rollup_days` has already rolled old rows up, those prices are coarser.
+- **Waiting for ch-loader.** ch-loader consumes the topic on its own checkpoint. The backfill waits up to `backfill_wait` for that checkpoint to reach the last height it reads. If ch-loader has never stored the chain, or is still behind after the wait, the block replays only its held trades and logs a warning.
+- **Cost.** A bloom filter index on `raw_trades.amount_assets` serves the lookup, and only tokens that actually missed their decimals are read. Tokens that stop missing their decimals for `backfill_blocks` blocks are forgotten.
+
+The output is the same as for held trades: rows keep their own block height, belong to the block that brought the decimals, and rewind with it. Live clients receive the recomputed trades and candles with that block, like any held trade.
+
+| Setting | Effect |
+| --- | --- |
+| `market.backfill_blocks` | How far back a backfill reads (default 50400, about a week on Ethereum). `-1` replays only held trades. Ignored without ClickHouse. |
+| `market.backfill_wait` | How long a backfill waits for ch-loader (default 30s). |
 
 All state is journaled by height. A revert undoes it exactly, as long as the reorg stays above the finalized height and within `history_depth` blocks. A deeper reorg stops the engine. State is computed in memory and persisted per block when `state.driver` is `postgres`; see [State](#state).
 

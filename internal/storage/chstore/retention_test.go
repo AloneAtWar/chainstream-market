@@ -25,7 +25,8 @@ func TestRetentionRules(t *testing.T) {
 		"trades": "block_time + toIntervalDay(30) TO VOLUME 'cold', block_time + toIntervalDay(180)",
 		"token_prices": "block_time + toIntervalDay(30) TO VOLUME 'cold', block_time + toIntervalDay(7) GROUP BY chain_id, token " +
 			"SET block_time = max(block_time), price_usd = argMax(price_usd, block_height), source = argMax(source, block_height), " +
-			"hops = argMax(hops, block_height), liquidity_usd = argMax(liquidity_usd, block_height), block_height = max(block_height)",
+			"hops = argMax(hops, block_height), liquidity_usd = argMax(liquidity_usd, block_height), " +
+			"revision_height = argMax(revision_height, block_height), block_height = max(block_height)",
 		"candles": "open_time + toIntervalDay(30) TO VOLUME 'cold', open_time + toIntervalDay(3) " +
 			"GROUP BY chain_id, subject, key, interval_seconds, open_time SET open = argMax(open, update_height), " +
 			"high = argMax(high, update_height), low = argMax(low, update_height), close = argMax(close, update_height), " +

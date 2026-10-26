@@ -78,6 +78,14 @@ market:
   late_trade_blocks: 7200
   # At most this many trades are held while waiting on one token.
   late_trades_per_token: 1000
+  # With storage.driver: clickhouse, the block that brings a token's decimals
+  # also recomputes the token's trades from up to this many blocks back, from
+  # the raw trades ch-loader stored, with its prices and candles; -1 replays
+  # only held trades.
+  backfill_blocks: 50400
+  # How long a backfill waits for ch-loader to reach the heights it reads
+  # before it falls back to the held trades.
+  backfill_wait: 30s
 
 # holder-indexer keeps ERC-20 balances per holder in the state.postgres
 # database; it needs state.driver: postgres and an rpc_url on every chain.

@@ -22,6 +22,7 @@ import (
 	"github.com/AloneAtWar/chainstream-market/internal/rpc"
 	"github.com/AloneAtWar/chainstream-market/internal/source"
 	"github.com/AloneAtWar/chainstream-market/internal/storage"
+	"github.com/AloneAtWar/chainstream-market/internal/storage/chraw"
 	"github.com/AloneAtWar/chainstream-market/internal/storage/chstore"
 	"github.com/AloneAtWar/chainstream-market/internal/storage/pgstore"
 	"github.com/shopspring/decimal"
@@ -68,6 +69,11 @@ func run(configPath string, logger *slog.Logger) error {
 		return err
 	}
 	defer closeNotifier()
+	history, closeHistory, err := openHistory(ctx, config)
+	if err != nil {
+		return err
+	}
+	defer closeHistory()
 	engines := make([]*engine.Engine, 0, len(config.Chains))
 	for _, chain := range config.Chains {
 		options := source.KafkaOptions{
@@ -90,6 +96,9 @@ func run(configPath string, logger *slog.Logger) error {
 			OutlierDeviation:      decimal.NewFromFloat(max(config.Market.OutlierDeviation, 0)),
 			LateTradeBlocks:       max(config.Market.LateTradeBlocks, 0),
 			LateTradesPerToken:    config.Market.LateTradesPerToken,
+			History:               history,
+			BackfillBlocks:        max(config.Market.BackfillBlocks, 0),
+			Logger:                logger.With("chain", chain.Name),
 		})
 		if processorErr != nil {
 			return fmt.Errorf("chain %s: %w", chain.Name, processorErr)
@@ -182,6 +191,23 @@ func openNotifier(config *conf.Config) (engine.Notifier, func(), error) {
 		return nil, nil, err
 	}
 	return publisher, publisher.Close, nil
+}
+
+// openHistory returns ch-loader's raw trades for backfills, or nil when
+// backfills are off or the output is not in ClickHouse.
+func openHistory(ctx context.Context, config *conf.Config) (storage.History, func(), error) {
+	if config.Storage.Driver != conf.StorageClickHouse || config.Market.BackfillBlocks <= 0 {
+		return nil, func() {}, nil
+	}
+	clickhouse := config.Storage.ClickHouse
+	store, err := chraw.Open(ctx, chstore.Options{
+		Addr: clickhouse.Addr, Database: clickhouse.Database,
+		Username: clickhouse.Username, Password: clickhouse.Password, DialTimeout: clickhouse.DialTimeout,
+	})
+	if err != nil {
+		return nil, nil, err
+	}
+	return chraw.NewHistory(store, config.Market.BackfillWait), func() { _ = store.Close() }, nil
 }
 
 // openState returns the persistent state store, or nil when checkpoints stay

@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"maps"
 	"slices"
 	"time"
@@ -52,6 +53,14 @@ type Options struct {
 	LateTradeBlocks int64
 	// LateTradesPerToken caps the trades held while waiting on one token.
 	LateTradesPerToken int
+	// History, when set, lets the block that brings a token's decimals
+	// recompute the token's trades from the raw trades stored for earlier
+	// blocks, reaching back at most BackfillBlocks blocks. Without it only
+	// held trades are replayed.
+	History        storage.History
+	BackfillBlocks int64
+	// Logger reports backfills; nil discards.
+	Logger *slog.Logger
 }
 
 // Feed is a trusted Chainlink-style aggregator answering in USD. One
@@ -106,6 +115,9 @@ type Processor struct {
 	// lateOrder lists them oldest first; keys no longer in late are skipped.
 	lateByToken map[string]map[string]struct{}
 	lateOrder   []string
+	// missed records, per token, the first and last heights that had a
+	// trade waiting on its decimals, so a backfill knows what to read.
+	missed *journal[string, missedToken]
 	// prunedThrough is the highest height whose undo history was discarded.
 	prunedThrough int64
 	// reverted and revertTo record a revert since the last TakeDelta.
@@ -134,6 +146,12 @@ func NewProcessor(options Options) (*Processor, error) {
 	if options.LateTradeBlocks < 0 || (options.LateTradeBlocks > 0 && options.LateTradesPerToken <= 0) {
 		return nil, errors.New("market: holding late trades needs positive blocks and a positive per-token cap")
 	}
+	if options.BackfillBlocks < 0 {
+		return nil, errors.New("market: backfill blocks must not be negative")
+	}
+	if options.Logger == nil {
+		options.Logger = slog.New(slog.DiscardHandler)
+	}
 	feeds := make(map[string][]Feed, len(options.Feeds))
 	for _, feed := range options.Feeds {
 		address := normalize(feed.Address)
@@ -157,6 +175,7 @@ func NewProcessor(options Options) (*Processor, error) {
 		candles:      newJournal[candleKey, storage.Candle](candleKeys),
 		oracle:       newJournal[string, decimal.Decimal](stringKeys(kindOracle)),
 		late:         newJournal[string, lateTrade](stringKeys(kindLate)),
+		missed:       newJournal[string, missedToken](stringKeys(kindMissed)),
 		feeds:        feeds,
 		tokenPools:   make(map[string][]string),
 		lateByToken:  make(map[string]map[string]struct{}),
@@ -167,9 +186,11 @@ func NewProcessor(options Options) (*Processor, error) {
 // values the block's trades at the block's closing prices.
 //
 // Trades whose token decimals are unknown are held. When a block brings
-// those decimals, from an asset's metadata or another trade, the held trades
-// are replayed first: valued at their own block's prices and added to their
-// candles, ahead of the block's own trades.
+// those decimals, from an asset's metadata or another trade, the held trades,
+// and with a History every stored trade of the token, are replayed first:
+// valued at their own block's prices and added to their candles, ahead of
+// the block's own trades. The token's prices at those blocks are
+// recomputed too.
 func (processor *Processor) Apply(ctx context.Context, block *streamv1.BlockEvent) (storage.BlockOutput, error) {
 	if err := ctx.Err(); err != nil {
 		return storage.BlockOutput{}, err
@@ -184,20 +205,26 @@ func (processor *Processor) Apply(ctx context.Context, block *streamv1.BlockEven
 	for _, trade := range block.GetTrades() {
 		processor.learnDecimals(height, trade, learned)
 	}
-	ready := processor.ready(learned)
+	ready, series, err := processor.backfill(ctx, height, output.ChainID, learned, processor.ready(learned))
+	if err != nil {
+		return storage.BlockOutput{}, err
+	}
+	past := processor.pastPrices(output.ChainID, ready, series, learned)
 	processor.seedPools(height, ready, touched)
 	for _, trade := range block.GetTrades() {
 		processor.observe(height, trade, touched)
 	}
-	output.Prices = processor.reprice(height, output, touched)
+	output.Prices = past.prices
+	output.Prices = append(output.Prices, processor.reprice(height, output, touched)...)
 
 	touchedCandles := make(map[candleKey]struct{})
-	replayed := processor.replay(height, &output, ready, touchedCandles)
+	replayed := processor.replay(height, &output, ready, past, touchedCandles)
 	for _, source := range block.GetTrades() {
 		trade, status := processor.orient(height, source)
 		switch status {
 		case orientLate:
 			processor.hold(height, block.GetBlockTime(), source)
+			processor.miss(height, source)
 			continue
 		case orientSkip:
 			continue
@@ -213,6 +240,7 @@ func (processor *Processor) Apply(ctx context.Context, block *streamv1.BlockEven
 	}
 	output.Candles = processor.collectCandles(touchedCandles, replayed)
 	processor.expireLate(height)
+	processor.expireMissed(height)
 	processor.prune(block)
 	return output, nil
 }
@@ -228,6 +256,7 @@ func (processor *Processor) Revert(_ context.Context, rollbackTo int64) error {
 	processor.candles.revert(rollbackTo)
 	processor.oracle.revert(rollbackTo)
 	processor.late.revert(rollbackTo)
+	processor.missed.revert(rollbackTo)
 	processor.rebuildLate()
 	if !processor.reverted || rollbackTo < processor.revertTo {
 		processor.reverted, processor.revertTo = true, rollbackTo
@@ -270,6 +299,7 @@ func (processor *Processor) prune(block *streamv1.BlockEvent) {
 	processor.candles.prune(through)
 	processor.oracle.prune(through)
 	processor.late.prune(through)
+	processor.missed.prune(through)
 	processor.prunedThrough = through
 }
 
@@ -581,11 +611,17 @@ func valueTrade(trade *storage.Trade, quoteUSD decimal.Decimal) {
 // the reference; a thin pool trading far from it is, such as a manipulated
 // or mispriced pool.
 func (processor *Processor) outlier(trade storage.Trade) bool {
+	reference, ok := processor.priceOf(trade.BaseToken)
+	return processor.strays(trade, reference, ok)
+}
+
+// strays reports whether trade is an outlier against its base token's
+// reference price.
+func (processor *Processor) strays(trade storage.Trade, reference tokenPrice, ok bool) bool {
 	limit := processor.options.OutlierDeviation
 	if !limit.IsPositive() || (trade.Side != storage.SideBuy && trade.Side != storage.SideSell) || !trade.PriceUSD.IsPositive() {
 		return false
 	}
-	reference, ok := processor.priceOf(trade.BaseToken)
 	if !ok || !reference.USD.IsPositive() || (!reference.FromOracle && reference.Pool == trade.PoolID) {
 		return false
 	}
