@@ -34,17 +34,19 @@ func TestClientCountsRequestsAndFailures(t *testing.T) {
 	}))
 	defer down.Close()
 	broken, _ := New(Options{URL: down.URL, Chain: chain})
-	if _, err := broken.CallLatest(ctx, []Call{{To: token, Data: "0x"}}); err == nil {
+	if _, err := broken.CallLatest(ctx, []Call{{To: token}}); err == nil {
 		t.Fatal("CallLatest() against a failing node error = nil")
 	}
 
 	if got := testutil.ToFloat64(metrics.RPCRequests.WithLabelValues(chain, "ok")); got != 2 {
 		t.Errorf("ok requests = %v, want 2", got)
 	}
-	if got := testutil.ToFloat64(metrics.RPCRequests.WithLabelValues(chain, "error")); got != 1 {
-		t.Errorf("failed requests = %v, want 1", got)
+	// The SDK tries a failed request three times; every attempt is counted.
+	if got := testutil.ToFloat64(metrics.RPCRequests.WithLabelValues(chain, "error")); got != 3 {
+		t.Errorf("failed requests = %v, want 3", got)
 	}
-	if got := testutil.ToFloat64(metrics.RPCFailures.WithLabelValues(chain)); got != 2 {
-		t.Errorf("failures = %v, want 2", got)
+	// Three failed attempts plus the call without state.
+	if got := testutil.ToFloat64(metrics.RPCFailures.WithLabelValues(chain)); got != 4 {
+		t.Errorf("failures = %v, want 4", got)
 	}
 }

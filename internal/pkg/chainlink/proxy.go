@@ -5,23 +5,21 @@ package chainlink
 import (
 	"context"
 	"fmt"
-	"math/big"
 	"strings"
 
-	"github.com/AloneAtWar/chainstream-market/internal/pkg/rpc"
-)
+	"github.com/ethereum/go-ethereum/common"
 
-// Function selectors read from a proxy.
-const (
-	selectorDecimals         = "0x313ce567" // decimals()
-	selectorDescription      = "0x7284e416" // description()
-	selectorAggregator       = "0x245a7bfc" // aggregator()
-	selectorPhaseID          = "0x58303b10" // phaseId()
-	selectorPhaseAggregators = "0xc1597304" // phaseAggregators(uint16)
+	"github.com/AloneAtWar/chainstream-market/internal/pkg/contract/aggregatorproxy"
+	"github.com/AloneAtWar/chainstream-market/internal/pkg/rpc"
 )
 
 // maxPhases bounds how many phases are read from one proxy.
 const maxPhases = 1000
+
+// maxDecimals bounds the decimals a feed may report.
+const maxDecimals = 36
+
+var proxyABI = aggregatorproxy.NewProxy()
 
 // Caller runs eth_calls against the latest block, as rpc.Client does.
 type Caller interface {
@@ -46,48 +44,49 @@ type Proxy struct {
 func Resolve(ctx context.Context, caller Caller, address string) (Proxy, error) {
 	address = strings.ToLower(strings.TrimSpace(address))
 	results, err := caller.CallLatest(ctx, []rpc.Call{
-		{To: address, Data: selectorDecimals},
-		{To: address, Data: selectorDescription},
-		{To: address, Data: selectorAggregator},
-		{To: address, Data: selectorPhaseID},
+		{To: address, Data: proxyABI.PackDecimals()},
+		{To: address, Data: proxyABI.PackDescription()},
+		{To: address, Data: proxyABI.PackAggregator()},
+		{To: address, Data: proxyABI.PackPhaseId()},
 	})
 	if err != nil {
 		return Proxy{}, fmt.Errorf("chainlink: proxy %s: %w", address, err)
 	}
-	decimals, ok := word(results[0])
-	if !ok || !decimals.IsUint64() || decimals.Uint64() > 36 {
+	decimals, err := proxyABI.UnpackDecimals(results[0])
+	if err != nil || decimals > maxDecimals {
 		return Proxy{}, fmt.Errorf("chainlink: proxy %s has no decimals(); is it a feed proxy?", address)
 	}
-	description, ok := abiString(results[1])
-	if !ok {
+	description, err := proxyABI.UnpackDescription(results[1])
+	if err != nil {
 		return Proxy{}, fmt.Errorf("chainlink: proxy %s has no description()", address)
 	}
-	current, ok := addressWord(results[2])
-	if !ok {
+	current, err := proxyABI.UnpackAggregator(results[2])
+	if err != nil || current == (common.Address{}) {
 		return Proxy{}, fmt.Errorf("chainlink: proxy %s has no aggregator()", address)
 	}
-	proxy := Proxy{Address: address, Description: description, Decimals: uint8(decimals.Uint64())}
+	proxy := Proxy{Address: address, Description: description, Decimals: decimals}
 
-	phase, hasPhases := word(results[3])
-	if hasPhases && phase.Sign() > 0 {
-		if !phase.IsUint64() || phase.Uint64() > maxPhases {
-			return Proxy{}, fmt.Errorf("chainlink: proxy %s reports phase %s", address, phase)
+	// A plain AggregatorProxy has no phaseId(); its call fails and only the
+	// current aggregator is listed.
+	if phase, err := proxyABI.UnpackPhaseId(results[3]); err == nil && phase > 0 {
+		if phase > maxPhases {
+			return Proxy{}, fmt.Errorf("chainlink: proxy %s reports phase %d", address, phase)
 		}
-		calls := make([]rpc.Call, phase.Uint64())
+		calls := make([]rpc.Call, phase)
 		for index := range calls {
-			calls[index] = rpc.Call{To: address, Data: fmt.Sprintf("%s%064x", selectorPhaseAggregators, index+1)}
+			calls[index] = rpc.Call{To: address, Data: proxyABI.PackPhaseAggregators(uint16(index + 1))}
 		}
 		phases, err := caller.CallLatest(ctx, calls)
 		if err != nil {
 			return Proxy{}, fmt.Errorf("chainlink: proxy %s phases: %w", address, err)
 		}
 		for _, result := range phases {
-			if aggregator, ok := addressWord(result); ok {
-				proxy.add(aggregator)
+			if aggregator, err := proxyABI.UnpackPhaseAggregators(result); err == nil && aggregator != (common.Address{}) {
+				proxy.add(lower(aggregator))
 			}
 		}
 	}
-	proxy.add(current)
+	proxy.add(lower(current))
 	return proxy, nil
 }
 
@@ -103,33 +102,4 @@ func (proxy *Proxy) add(aggregator string) {
 	proxy.Aggregators = append(proxy.Aggregators, aggregator)
 }
 
-// word reads the first 32-byte word of return data.
-func word(data []byte) (*big.Int, bool) {
-	if len(data) < 32 {
-		return nil, false
-	}
-	return new(big.Int).SetBytes(data[:32]), true
-}
-
-// addressWord reads a non-zero address from the first word of return data.
-func addressWord(data []byte) (string, bool) {
-	value, ok := word(data)
-	if !ok || value.Sign() == 0 || value.BitLen() > 160 {
-		return "", false
-	}
-	return fmt.Sprintf("0x%040x", value), true
-}
-
-// abiString decodes return data holding a single ABI-encoded string.
-func abiString(data []byte) (string, bool) {
-	offset, ok := word(data)
-	if !ok || !offset.IsUint64() || offset.Uint64() > uint64(len(data)) {
-		return "", false
-	}
-	start := offset.Uint64()
-	length, ok := word(data[start:])
-	if !ok || !length.IsUint64() || length.Uint64() > uint64(len(data))-start-32 {
-		return "", false
-	}
-	return string(data[start+32 : start+32+length.Uint64()]), true
-}
+func lower(address common.Address) string { return strings.ToLower(address.Hex()) }

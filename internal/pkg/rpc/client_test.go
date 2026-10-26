@@ -3,7 +3,6 @@ package rpc
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -16,8 +15,8 @@ const (
 	broken  = "0x2222222222222222222222222222222222222222"
 	alice   = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	bob     = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
-	blockA  = "0xa"
-	missing = "0xdead"
+	blockA  = "0x000000000000000000000000000000000000000000000000000000000000000a"
+	missing = "0x000000000000000000000000000000000000000000000000000000000000dead"
 )
 
 func TestBalancesAtBatchesAndDecodes(t *testing.T) {
@@ -62,16 +61,11 @@ func TestBalancesAtReportsBatchErrors(t *testing.T) {
 	}))
 	defer server.Close()
 	client, _ := New(Options{URL: server.URL})
-	_, err := client.BalancesAt(context.Background(), blockA, []BalanceQuery{{Token: token, Holder: alice}})
-	var rpcErr *rpcError
-	if !errors.As(err, &rpcErr) || rpcErr.Code != -32600 {
-		t.Fatalf("BalancesAt() error = %v", err)
+	if _, err := client.BalancesAt(context.Background(), blockA, []BalanceQuery{{Token: token, Holder: alice}}); err == nil {
+		t.Fatal("BalancesAt() against a node rejecting the batch error = nil")
 	}
-}
-
-func TestDecodeUint256(t *testing.T) {
-	if decodeUint256([]byte(`"0x"`)) != nil || decodeUint256([]byte(`"0x12"`)) != nil {
-		t.Fatal("short results must decode to nil")
+	if _, err := client.BalancesAt(context.Background(), "0xa", []BalanceQuery{{Token: token, Holder: alice}}); err == nil {
+		t.Fatal("BalancesAt() with a short block hash error = nil")
 	}
 	if _, err := New(Options{}); err == nil {
 		t.Fatal("New() without url error = nil")
@@ -105,7 +99,7 @@ func TestCallLatestDecodesRevertsAndEmptyCode(t *testing.T) {
 	}))
 	defer server.Close()
 	client, _ := New(Options{URL: server.URL, BatchSize: 2})
-	results, err := client.CallLatest(context.Background(), []Call{{To: token, Data: "0x01"}, {To: broken}, {To: alice}})
+	results, err := client.CallLatest(context.Background(), []Call{{To: token, Data: []byte{1}}, {To: broken}, {To: alice}})
 	if err != nil {
 		t.Fatalf("CallLatest() error = %v", err)
 	}

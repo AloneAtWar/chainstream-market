@@ -39,9 +39,19 @@ jobs:
     env:
       CLICKHOUSE_ADDR: 127.0.0.1:9000
       POSTGRES_DSN: postgres://market:market@127.0.0.1:5432/market
+      GOPRIVATE: github.com/AloneAtWar
+      GONOSUMDB: github.com/AloneAtWar
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
+
+      - name: Configure OMB deploy key
+        uses: webfactory/ssh-agent@v0.9.1
+        with:
+          ssh-private-key: ${{ secrets.OMB_SSH_PRIVATE_KEY }}
+
+      - name: Use SSH for private GitHub modules
+        run: git config --global url."git@github.com:".insteadOf "https://github.com/"
 
       - name: Set up Go
         uses: actions/setup-go@v6

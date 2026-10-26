@@ -24,7 +24,7 @@ type fakeChain map[string][]byte
 func (chain fakeChain) CallLatest(_ context.Context, calls []rpc.Call) ([][]byte, error) {
 	results := make([][]byte, len(calls))
 	for index, call := range calls {
-		results[index] = chain[strings.ToLower(call.To)+call.Data]
+		results[index] = chain[strings.ToLower(call.To)+hex.EncodeToString(call.Data)]
 	}
 	return results, nil
 }
@@ -46,23 +46,25 @@ func stringData(value string) []byte {
 	return append(data, padded...)
 }
 
+// key is the fakeChain key of a call to the proxy.
+func key(data []byte) string { return strings.ToLower(proxyAddress) + hex.EncodeToString(data) }
+
 func feedProxy(phases ...string) fakeChain {
-	proxy := strings.ToLower(proxyAddress)
 	return fakeChain{
-		proxy + selectorDecimals:    uintWord(8),
-		proxy + selectorDescription: stringData("BNB / USD"),
-		proxy + selectorAggregator:  addressData(phases[len(phases)-1]),
+		key(proxyABI.PackDecimals()):    uintWord(8),
+		key(proxyABI.PackDescription()): stringData("BNB / USD"),
+		key(proxyABI.PackAggregator()):  addressData(phases[len(phases)-1]),
 	}
 }
 
 func TestResolveListsEveryPhaseAggregator(t *testing.T) {
 	chain := feedProxy(phaseOne, phaseTwo)
 	proxy := strings.ToLower(proxyAddress)
-	chain[proxy+selectorPhaseID] = uintWord(3)
-	chain[proxy+selectorPhaseAggregators+fmt.Sprintf("%064x", 1)] = addressData(phaseTwo)
-	chain[proxy+selectorPhaseAggregators+fmt.Sprintf("%064x", 2)] = addressData(phaseOne)
+	chain[key(proxyABI.PackPhaseId())] = uintWord(3)
+	chain[key(proxyABI.PackPhaseAggregators(1))] = addressData(phaseTwo)
+	chain[key(proxyABI.PackPhaseAggregators(2))] = addressData(phaseOne)
 	// Phase 3 was never set: the zero address is skipped.
-	chain[proxy+selectorPhaseAggregators+fmt.Sprintf("%064x", 3)] = uintWord(0)
+	chain[key(proxyABI.PackPhaseAggregators(3))] = uintWord(0)
 
 	resolved, err := Resolve(context.Background(), chain, proxyAddress)
 	if err != nil {
@@ -89,8 +91,34 @@ func TestResolveRejectsNonProxies(t *testing.T) {
 		t.Fatal("Resolve() of an address without code error = nil")
 	}
 	chain := feedProxy(phaseOne)
-	chain[strings.ToLower(proxyAddress)+selectorDescription] = uintWord(7)
+	chain[key(proxyABI.PackDescription())] = uintWord(7)
 	if _, err := Resolve(context.Background(), chain, proxyAddress); err == nil {
 		t.Fatal("Resolve() with a malformed description error = nil")
+	}
+}
+
+// The binding must keep the selectors deployed proxies answer to.
+func TestProxySelectors(t *testing.T) {
+	for name, test := range map[string]struct {
+		data []byte
+		want string
+	}{
+		"decimals":         {proxyABI.PackDecimals(), "313ce567"},
+		"description":      {proxyABI.PackDescription(), "7284e416"},
+		"aggregator":       {proxyABI.PackAggregator(), "245a7bfc"},
+		"phaseId":          {proxyABI.PackPhaseId(), "58303b10"},
+		"phaseAggregators": {proxyABI.PackPhaseAggregators(1), "c1597304" + fmt.Sprintf("%064x", 1)},
+	} {
+		if got := hex.EncodeToString(test.data); got != test.want {
+			t.Errorf("%s calldata = %s, want %s", name, got, test.want)
+		}
+	}
+}
+
+func TestResolveRejectsTooManyDecimals(t *testing.T) {
+	chain := feedProxy(phaseOne)
+	chain[key(proxyABI.PackDecimals())] = uintWord(37)
+	if _, err := Resolve(context.Background(), chain, proxyAddress); err == nil {
+		t.Fatal("Resolve() with 37 decimals error = nil")
 	}
 }

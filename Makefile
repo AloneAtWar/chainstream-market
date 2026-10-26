@@ -3,7 +3,7 @@ VERSION := $(shell git describe --tags --always --dirty)
 GOLANGCI_LINT_VERSION := v2.12.2
 WIRE_VERSION := v0.7.0
 
-.PHONY: build clean config docker down generate logs up lint lint-install proto-check test test-race fmt fmt-check verify wire
+.PHONY: abi build clean config docker down generate logs up lint lint-install proto-check test test-race fmt fmt-check verify wire
 
 build:
 	go build -trimpath -ldflags "-X main.Version=$(VERSION)" -o bin/$(APP) ./cmd/market-engine
@@ -18,8 +18,10 @@ build:
 EVM_DIR ?= ../chainstream-evm
 COMPOSE := docker compose -f deploy/docker-compose.yml
 
+# oh-my-blockchain is a private module: the build fetches it over SSH with
+# the key in your ssh-agent, or from vendor/ when one exists.
 docker:
-	docker build --build-arg VERSION=$(VERSION) -t chainstream-market:latest .
+	docker build $(if $(SSH_AUTH_SOCK),--ssh default) --build-arg VERSION=$(VERSION) -t chainstream-market:latest .
 
 up: docker
 	$(MAKE) -C $(EVM_DIR) docker
@@ -40,7 +42,11 @@ config:
 wire:
 	go run github.com/google/wire/cmd/wire@$(WIRE_VERSION) ./cmd/...
 
-generate: config wire
+# abigen bindings for the contract ABIs copied into internal/pkg/contract.
+abi:
+	go generate ./internal/pkg/contract/...
+
+generate: config abi wire
 	cd proto && buf generate
 	cd proto && go mod tidy
 	go mod tidy

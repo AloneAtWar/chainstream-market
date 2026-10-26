@@ -32,8 +32,9 @@ Market data services built on the [chainstream-evm](https://github.com/AloneAtWa
 | `internal/pkg/chainsync` | Per-chain ordered apply loop: reverts, continuity checks and checkpoints, driving a `Handler`. Shared by every command that consumes chain topics. |
 | `internal/pkg/source` | Chain topic readers: Kafka partition zero, or a followed file of protobuf JSON records. |
 | `internal/pkg/asset` | Token addresses every command shares: the per-chain catalog of USD anchors, quote preferences and aliases, and chainstream-evm's asset metadata. |
-| `internal/pkg/rpc` | Minimal JSON-RPC client for batched `balanceOf` calls. |
+| `internal/pkg/rpc` | Contract reads over oh-my-blockchain's EVM SDK: `balanceOf` pinned to a block hash, and calls at the latest block. Adds the indexers' failure rules and metrics. |
 | `internal/pkg/chainlink` | Resolves Chainlink feed proxies to the aggregators of every phase. |
+| `internal/pkg/contract` | Contract ABIs copied into the repo (ERC-20, Chainlink's EACAggregatorProxy) and the abigen bindings generated from them. |
 | `internal/pkg/transport` | Kratos servers every command shares: HTTP, and a Runner for long-lived work. |
 | `internal/pkg/metrics` | Prometheus metrics every command serves at `/metrics`. |
 | `deploy/` | docker-compose stack: infrastructure, chainstream-evm, every service, Prometheus and Grafana. |
@@ -354,7 +355,7 @@ go run ./cmd/market-engine -conf configs/config.yaml
 
 ## Local stack
 
-`make up` builds both images and starts everything with docker compose: Kafka, ClickHouse, PostgreSQL and Redis, chainstream-evm scanning eth into `chainstream-eth`, the six services here, and Prometheus and Grafana. It needs Docker with Compose v2, an eth node, and a chainstream-evm checkout next to this one (`EVM_DIR=...` points elsewhere). chainstream-evm reads the private oh-my-blockchain module through your SSH agent; see its README.
+`make up` builds both images and starts everything with docker compose: Kafka, ClickHouse, PostgreSQL and Redis, chainstream-evm scanning eth into `chainstream-eth`, the six services here, and Prometheus and Grafana. It needs Docker with Compose v2, an eth node, and a chainstream-evm checkout next to this one (`EVM_DIR=...` points elsewhere). Both images read the private oh-my-blockchain module through your SSH agent (`docker build --ssh default`); see chainstream-evm's README.
 
 ```sh
 cp deploy/.env.example deploy/.env   # set ETH_RPC_URL
@@ -372,7 +373,7 @@ make down    # stop, keeping data; make clean also drops the volumes
 | 8123, 9000 | ClickHouse HTTP and native, user `default` without password, database `market` |
 | 5432 | PostgreSQL, `market:market@localhost:5432/market` |
 
-The node must answer `eth_call` by block hash near the head, for holder-indexer, and serve the Chainlink proxies market-engine resolves at startup. chainstream-evm starts at the chain tip unless `ETH_START_HEIGHT` is set, and keeps its cursor in Redis afterwards. Its config is `deploy/evm/config.yaml`; the services share `deploy/config.yaml`. A service that cannot start, such as market-engine without a reachable node, restarts until it can.
+The node must answer `eth_call` by block hash (EIP-1898) near the head, for holder-indexer, and serve the Chainlink proxies market-engine resolves at startup. chainstream-evm starts at the chain tip unless `ETH_START_HEIGHT` is set, and keeps its cursor in Redis afterwards. Its config is `deploy/evm/config.yaml`; the services share `deploy/config.yaml`. A service that cannot start, such as market-engine without a reachable node, restarts until it can.
 
 The topics are created by `kafka-init` with one partition and no retention limit, since every consumer resumes from its own committed offset. To add a chain, add a chainstream-evm service with its own config and topic, the topics to `kafka-init`, and the chain to `deploy/config.yaml`.
 
@@ -388,7 +389,7 @@ Every command serves Prometheus metrics at `/metrics` on `metrics.addr`, off by 
 | `engine_record_seconds{kind}` | Time to apply and commit one record, `block` or `revert`. |
 | `engine_records_total{kind}` | Records committed. |
 | `engine_reorgs_total`, `engine_reorg_depth_blocks` | Reverts that undid applied blocks, and how many each undid. |
-| `rpc_requests_total{result}`, `rpc_request_seconds` | JSON-RPC batches sent by holder-indexer and market-engine's feed lookups. |
+| `rpc_requests_total{result}`, `rpc_request_seconds` | JSON-RPC batches sent by holder-indexer and market-engine's feed lookups, one per attempt: the SDK retries a failed batch up to three times. |
 | `rpc_failures_total` | Failed batches, plus node errors on single calls other than a revert. |
 | `rankings_refresh_seconds`, `rankings_refresh_failures_total` | market-rankings refreshes. |
 | `http_requests_total{route,code}`, `http_request_seconds{route}` | market-api requests by matched route pattern. |
@@ -402,11 +403,17 @@ The config file may read the environment: `${NAME}` is replaced by the variable,
 Requires Go 1.26.10 and Buf.
 
 ```sh
-make generate   # regenerate internal/conf, wire_gen.go and proto/stream/v1, and tidy both modules
+make generate   # regenerate internal/conf, the abigen bindings, wire_gen.go and proto/stream/v1, and tidy both modules
 make verify     # buf lint, gofmt, golangci-lint, go test -race
 ```
 
 Every command follows chainstream-evm's layout. `main.go` loads `-conf` into `conf.Bootstrap` with Kratos config, and `wire.go` lists the provider sets that `wireApp` assembles into a `kratos.App`. Change a constructor or a provider set, then run `make wire` (or `go generate ./cmd/...`) to rewrite the `wire_gen.go` files; change `internal/conf/conf.proto`, then run `make config`. CI runs `make generate` and fails when it changes or adds any file.
+
+### Chain calls
+
+Every read from a node goes through [oh-my-blockchain](https://github.com/AloneAtWar/oh-my-blockchain)'s EVM SDK (`internal/pkg/rpc`), which batches, retries and aggregates calls through the chain's multicall contract. Calldata is packed and return data decoded only with abigen bindings, never with hand-written selectors. The ABIs are copied unchanged into `internal/pkg/contract/<contract>/`, and the `*_generate.go` file next to each runs abigen at the go-ethereum version in `go.mod`; `TestAbigenMatchesGoMod` fails when the two drift. To call a new contract, add its ABI and a `*_generate.go` there, then run `make abi`.
+
+oh-my-blockchain is private. Locally, set `GOPRIVATE=github.com/AloneAtWar` and give git access to it, for example with `git config --global url."git@github.com:".insteadOf "https://github.com/"`. CI needs the repository secret `OMB_SSH_PRIVATE_KEY`, an SSH key with read access to oh-my-blockchain, as in chainstream-evm.
 
 ### Storage backends
 

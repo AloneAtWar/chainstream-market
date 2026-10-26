@@ -126,7 +126,9 @@ func ResolveFeeds(ctx context.Context, chain *conf.Chain, logger *slog.Logger) (
 		if !ok {
 			var err error
 			if client == nil {
-				if client, err = rpc.New(rpc.Options{URL: chain.GetRpcUrl(), Chain: chain.GetName()}); err != nil {
+				if client, err = rpc.New(rpc.Options{
+					URL: chain.GetRpcUrl(), ChainID: chain.GetChainId(), Chain: chain.GetName(), Logger: logger,
+				}); err != nil {
 					return nil, err
 				}
 			}
@@ -159,8 +161,9 @@ func NewHolderEngines(chains []*conf.Chain, holderConfig *conf.Holders, sources 
 			return nil, fmt.Errorf("chain %s: rpc_url is required", chain.GetName())
 		}
 		client, err := rpc.New(rpc.Options{
-			URL: chain.GetRpcUrl(), Chain: chain.GetName(),
+			URL: chain.GetRpcUrl(), ChainID: chain.GetChainId(), Chain: chain.GetName(),
 			BatchSize: int(holderConfig.GetRpcBatchSize()), Timeout: holderConfig.GetRpcTimeout().AsDuration(),
+			Logger: logger.With("chain", chain.GetName()),
 		})
 		if err != nil {
 			return nil, fmt.Errorf("chain %s: %w", chain.GetName(), err)
