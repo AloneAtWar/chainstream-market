@@ -80,7 +80,10 @@ func transfer(asset, from, to string, amount int64) *streamv1.TokenTransfer {
 	return &streamv1.TokenTransfer{Token: asset, From: from, To: to, RawAmount: fmt.Sprint(amount)}
 }
 
-func hashOf(height int64, fork string) string { return fmt.Sprintf("0x%d%s", height, fork) }
+// hashOf is a 32-byte block hash for height on fork, a hex digit or "".
+func hashOf(height int64, fork string) string {
+	return fmt.Sprintf("0x%062d%02s", height, fork)
+}
 
 func (f *fixture) apply(height int64, fork string, transfers ...*streamv1.TokenTransfer) error {
 	f.t.Helper()
