@@ -9,7 +9,6 @@ import (
 	"context"
 	"errors"
 	"flag"
-	"fmt"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -62,9 +61,6 @@ func run(logger *slog.Logger) (resultErr error) {
 		return err
 	}
 	defer func() { resultErr = errors.Join(resultErr, closeConfig()) }()
-	if bootstrap.Storage.Driver != conf.StorageClickHouse {
-		return fmt.Errorf("market-api needs storage.driver %q, got %q", conf.StorageClickHouse, bootstrap.Storage.Driver)
-	}
 	if metricsAddr != "" {
 		bootstrap.Metrics.Addr = metricsAddr
 	}

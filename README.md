@@ -28,7 +28,7 @@ Market data services built on the [chainstream-evm](https://github.com/AloneAtWa
 | `internal/storage/chraw` | ClickHouse raw fact store and schema for ch-loader, through GORM. |
 | `internal/storage/pgstore` | PostgreSQL (through GORM) checkpoints, market state, holder balances and the token and pool registry. |
 | `internal/conf` | Configuration: the `Bootstrap` proto in `conf.proto`, loaded with Kratos config, plus defaults and validation. |
-| `internal/data` | wire providers for the stores, Kafka sources and live publisher, built from the config. |
+| `internal/data` | wire providers for the stores, Kafka sources and live publisher, built from the config. Stores are opened by the driver the config names and provided by role; see [Storage backends](#storage-backends). |
 | `internal/biz` | wire providers for each command's handlers and the workers they run. |
 | `internal/service` | wire provider for market-api's HTTP handler. |
 | `internal/server` | Kratos transport servers: HTTP, metrics and the long-running workers. |
@@ -402,6 +402,20 @@ make verify     # buf lint, gofmt, golangci-lint, go test -race
 ```
 
 Every command follows chainstream-evm's layout. `main.go` loads `-conf` into `conf.Bootstrap` with Kratos config, and `wire.go` lists the provider sets that `wireApp` assembles into a `kratos.App`. Change a constructor or a provider set, then run `make wire` (or `go generate ./cmd/...`) to rewrite the `wire_gen.go` files; change `internal/conf/conf.proto`, then run `make config`. CI runs `make generate` and fails when it changes or adds any file.
+
+### Storage backends
+
+Commands depend on storage roles, the interfaces in `internal/storage` such as `storage.Output`, `storage.Reader`, `storage.RawStore` or `storage.HolderStore`, never on a concrete store. `internal/data/storage.go` maps each driver name to an opener:
+
+| Setting | Backend | Drivers | Roles it serves |
+| --- | --- | --- | --- |
+| `storage.driver` | market | `memory`, `clickhouse` | `Output` (both); `Reader`, `RankingSource` (clickhouse) |
+| `storage.driver` | raw | `clickhouse` | `RawStore`, `TransferReader`, backfill `History` |
+| `state.driver` | state | `memory`, `postgres` | none (memory); `StateStore`, `HolderStore`/`HolderReader`, `RegistryStore`/`RegistryReader`, `RankingStore`/`RankingReader` (postgres) |
+
+wire provides each role by asserting it on the backend the setting opened, so a command whose driver does not serve a role it needs fails at startup with, for example, `state.driver "memory" does not provide storage.HolderStore`. market-api's holder, registry and ranking routes are optional and left out when the state backend does not serve them.
+
+To add a backend, implement the roles it serves, add its settings to `conf.proto` and their validation, and list its opener in the driver map of its setting. Nothing in `internal/biz`, `internal/service` or `cmd/` changes.
 
 PostgreSQL and ClickHouse are reached through GORM. The schemas stay hand-written DDL in each store's `schema.go` rather than GORM migrations, since they rely on partial and GIN indexes, ClickHouse engines, sort keys and TTLs that model tags cannot express.
 

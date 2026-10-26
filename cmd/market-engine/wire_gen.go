@@ -27,31 +27,30 @@ func wireApp(contextContext context.Context, bootstrap *conf.Bootstrap, logger *
 	kafka := bootstrap.Kafka
 	sources := data.NewSources(kafka)
 	storage := bootstrap.Storage
-	options := data.NewClickHouseOptions(storage, logger)
-	store, cleanup, err := data.NewClickHouse(contextContext, storage, options, logger)
+	marketBackend, cleanup, err := data.NewMarketBackend(contextContext, storage, logger)
 	if err != nil {
+		return nil, nil, err
+	}
+	output, err := data.NewOutput(contextContext, marketBackend, storage)
+	if err != nil {
+		cleanup()
 		return nil, nil, err
 	}
 	memory := data.NewMemory()
-	output, err := biz.NewOutput(contextContext, store, memory, storage)
-	if err != nil {
-		cleanup()
-		return nil, nil, err
-	}
 	state := conf.NewState(bootstrap)
-	pgstoreStore, cleanup2, err := data.NewPostgres(contextContext, state, logger)
+	stateBackend, cleanup2, err := data.NewStateBackend(contextContext, state, logger)
 	if err != nil {
 		cleanup()
 		return nil, nil, err
 	}
-	stateStore := data.NewStateStore(pgstoreStore)
+	stateStore := data.NewStateStore(stateBackend)
 	notifier, cleanup3, err := data.NewPublisher(bootstrap)
 	if err != nil {
 		cleanup2()
 		cleanup()
 		return nil, nil, err
 	}
-	history, cleanup4, err := data.NewHistory(contextContext, storage, market, options, logger)
+	history, cleanup4, err := data.NewHistory(contextContext, storage, market, logger)
 	if err != nil {
 		cleanup3()
 		cleanup2()

@@ -25,18 +25,28 @@ func wireApp(contextContext context.Context, bootstrap *conf.Bootstrap, logger *
 	v := bootstrap.Chains
 	rankings := bootstrap.Rankings
 	storage := bootstrap.Storage
-	options := data.NewClickHouseOptions(storage, logger)
-	store, cleanup, err := data.NewClickHouse(contextContext, storage, options, logger)
+	marketBackend, cleanup, err := data.NewMarketBackend(contextContext, storage, logger)
 	if err != nil {
 		return nil, nil, err
 	}
-	state := conf.NewState(bootstrap)
-	pgstoreStore, cleanup2, err := data.NewPostgres(contextContext, state, logger)
+	rankingSource, err := data.NewRankingSource(marketBackend)
 	if err != nil {
 		cleanup()
 		return nil, nil, err
 	}
-	runners, err := biz.NewRefreshers(v, rankings, store, pgstoreStore, logger)
+	state := conf.NewState(bootstrap)
+	stateBackend, cleanup2, err := data.NewStateBackend(contextContext, state, logger)
+	if err != nil {
+		cleanup()
+		return nil, nil, err
+	}
+	rankingStore, err := data.NewRankingStore(stateBackend)
+	if err != nil {
+		cleanup2()
+		cleanup()
+		return nil, nil, err
+	}
+	runners, err := biz.NewRefreshers(v, rankings, rankingSource, rankingStore, logger)
 	if err != nil {
 		cleanup2()
 		cleanup()

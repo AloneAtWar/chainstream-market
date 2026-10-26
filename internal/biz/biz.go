@@ -22,16 +22,13 @@ import (
 	"github.com/AloneAtWar/chainstream-market/internal/registry"
 	"github.com/AloneAtWar/chainstream-market/internal/rpc"
 	"github.com/AloneAtWar/chainstream-market/internal/storage"
-	"github.com/AloneAtWar/chainstream-market/internal/storage/chraw"
-	"github.com/AloneAtWar/chainstream-market/internal/storage/chstore"
-	"github.com/AloneAtWar/chainstream-market/internal/storage/pgstore"
 	"github.com/google/wire"
 	"github.com/shopspring/decimal"
 )
 
 // The provider sets of the commands that consume chain topics.
 var (
-	MarketSet   = wire.NewSet(NewOutput, NewMarketEngines)
+	MarketSet   = wire.NewSet(NewMarketEngines)
 	HolderSet   = wire.NewSet(NewHolderEngines)
 	RegistrySet = wire.NewSet(NewRegistryEngines)
 	LoaderSet   = wire.NewSet(NewLoaderEngines)
@@ -51,18 +48,6 @@ type Runners []Runner
 
 func engineRunner(chain *conf.Chain, chainEngine *engine.Engine) Runner {
 	return Runner{Name: "chain " + chain.GetName(), Run: chainEngine.Run}
-}
-
-// NewOutput returns market-engine's output store: ClickHouse, whose
-// retention it applies, or memory.
-func NewOutput(ctx context.Context, clickhouse *chstore.Store, memory *storage.Memory, storageConfig *conf.Storage) (storage.Output, error) {
-	if clickhouse == nil {
-		return memory, nil
-	}
-	if err := clickhouse.ApplyRetention(ctx, data.Retention(storageConfig.GetClickhouse().GetRetention())); err != nil {
-		return nil, err
-	}
-	return clickhouse, nil
 }
 
 // NewMarketEngines builds market-engine's processor and engine per chain.
@@ -160,7 +145,7 @@ func ResolveFeeds(ctx context.Context, chain *conf.Chain, logger *slog.Logger) (
 
 // NewHolderEngines builds holder-indexer's balanceOf client, indexer and
 // engine per chain.
-func NewHolderEngines(chains []*conf.Chain, holderConfig *conf.Holders, sources *data.Sources, store *pgstore.Store, logger *slog.Logger) (Runners, error) {
+func NewHolderEngines(chains []*conf.Chain, holderConfig *conf.Holders, sources *data.Sources, store storage.HolderStore, logger *slog.Logger) (Runners, error) {
 	runners := make(Runners, 0, len(chains))
 	for _, chain := range chains {
 		if strings.TrimSpace(chain.GetRpcUrl()) == "" {
@@ -195,7 +180,7 @@ func NewHolderEngines(chains []*conf.Chain, holderConfig *conf.Holders, sources 
 }
 
 // NewRegistryEngines builds market-registry's handler and engine per chain.
-func NewRegistryEngines(chains []*conf.Chain, registryConfig *conf.Registry, sources *data.Sources, store *pgstore.Store, logger *slog.Logger) (Runners, error) {
+func NewRegistryEngines(chains []*conf.Chain, registryConfig *conf.Registry, sources *data.Sources, store storage.RegistryStore, logger *slog.Logger) (Runners, error) {
 	runners := make(Runners, 0, len(chains))
 	for _, chain := range chains {
 		handler, err := registry.New(registry.Options{
@@ -217,21 +202,15 @@ func NewRegistryEngines(chains []*conf.Chain, registryConfig *conf.Registry, sou
 	return runners, nil
 }
 
-// NewLoaderEngines applies ch-loader's retention and builds its loader and
-// engine per chain. A chain that stops cleanly writes its buffered batch, so
+// NewLoaderEngines builds ch-loader's loader and engine per chain. A chain that stops cleanly writes its buffered batch, so
 // a restart replays less.
 func NewLoaderEngines(
-	ctx context.Context,
 	chains []*conf.Chain,
 	loaderConfig *conf.ChLoader,
-	storageConfig *conf.Storage,
 	sources *data.Sources,
-	store *chraw.Store,
+	store storage.RawStore,
 	logger *slog.Logger,
 ) (Runners, error) {
-	if err := store.ApplyRetention(ctx, data.Retention(storageConfig.GetClickhouse().GetRetention())); err != nil {
-		return nil, err
-	}
 	runners := make(Runners, 0, len(chains))
 	for _, chain := range chains {
 		loader, err := chloader.New(chloader.Options{
@@ -266,7 +245,7 @@ func NewLoaderEngines(
 }
 
 // NewRefreshers builds market-rankings' refresher per chain.
-func NewRefreshers(chains []*conf.Chain, rankingConfig *conf.Rankings, source *chstore.Store, store *pgstore.Store, logger *slog.Logger) (Runners, error) {
+func NewRefreshers(chains []*conf.Chain, rankingConfig *conf.Rankings, source storage.RankingSource, store storage.RankingStore, logger *slog.Logger) (Runners, error) {
 	period := rankingConfig.GetRefreshInterval().AsDuration()
 	logger.Info("refreshing rankings", "every", period, "candle_interval", rankingConfig.GetCandleInterval().AsDuration())
 	runners := make(Runners, 0, len(chains))

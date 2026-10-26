@@ -1,6 +1,7 @@
-// Package data opens the stores and clients the commands share. A provider
-// whose resource the config turns off returns nil, as in chainstream-evm,
-// and the commands that need it check the config before wiring.
+// Package data opens the stores and clients the commands share. Stores are
+// opened by the driver the config names and provided by role, see
+// storage.go. A provider whose resource the config turns off returns nil, as
+// in chainstream-evm.
 package data
 
 import (
@@ -13,104 +14,35 @@ import (
 	"github.com/AloneAtWar/chainstream-market/internal/live"
 	"github.com/AloneAtWar/chainstream-market/internal/source"
 	"github.com/AloneAtWar/chainstream-market/internal/storage"
-	"github.com/AloneAtWar/chainstream-market/internal/storage/chraw"
 	"github.com/AloneAtWar/chainstream-market/internal/storage/chstore"
-	"github.com/AloneAtWar/chainstream-market/internal/storage/pgstore"
 	"github.com/google/wire"
 )
 
 // ProviderSet is the data-layer provider set.
 var ProviderSet = wire.NewSet(
-	NewPostgres,
-	NewClickHouseOptions,
-	NewClickHouse,
+	NewMarketBackend,
+	NewRawBackend,
+	NewStateBackend,
+	NewOutput,
+	NewReader,
+	NewRankingSource,
 	NewRawStore,
+	NewTransferReader,
 	NewHistory,
-	NewMemory,
 	NewStateStore,
+	NewHolderStore,
+	NewRegistryStore,
+	NewRankingStore,
+	NewStateReaders,
+	NewMemory,
 	NewSources,
 	NewPublisher,
 	NewHub,
 )
 
-// NewPostgres opens the state.postgres store, or returns nil when
-// state.driver is not postgres.
-func NewPostgres(ctx context.Context, state *conf.State, logger *slog.Logger) (*pgstore.Store, func(), error) {
-	if state.GetDriver() != conf.StatePostgres {
-		return nil, func() {}, nil
-	}
-	store, err := pgstore.Open(ctx, pgstore.Options{
-		DSN: state.GetPostgres().GetDsn(), Schema: state.GetPostgres().GetSchema(), Logger: logger,
-	})
-	if err != nil {
-		return nil, nil, err
-	}
-	return store, store.Close, nil
-}
-
-// NewClickHouseOptions turns storage.clickhouse into store options.
-func NewClickHouseOptions(storageConfig *conf.Storage, logger *slog.Logger) chstore.Options {
-	clickhouse := storageConfig.GetClickhouse()
-	return chstore.Options{
-		Addr: clickhouse.GetAddr(), Database: clickhouse.GetDatabase(),
-		Username: clickhouse.GetUsername(), Password: clickhouse.GetPassword(),
-		DialTimeout: clickhouse.GetDialTimeout().AsDuration(), Logger: logger,
-	}
-}
-
-// NewClickHouse opens market-engine's output store, or returns nil when
-// storage.driver is not clickhouse.
-func NewClickHouse(ctx context.Context, storageConfig *conf.Storage, options chstore.Options, logger *slog.Logger) (*chstore.Store, func(), error) {
-	if storageConfig.GetDriver() != conf.StorageClickHouse {
-		return nil, func() {}, nil
-	}
-	store, err := chstore.Open(ctx, options)
-	if err != nil {
-		return nil, nil, err
-	}
-	return store, closer(store.Close, logger, "clickhouse"), nil
-}
-
-// NewRawStore opens ch-loader's raw store, or returns nil when
-// storage.driver is not clickhouse.
-func NewRawStore(ctx context.Context, storageConfig *conf.Storage, options chstore.Options, logger *slog.Logger) (*chraw.Store, func(), error) {
-	if storageConfig.GetDriver() != conf.StorageClickHouse {
-		return nil, func() {}, nil
-	}
-	store, err := chraw.Open(ctx, options)
-	if err != nil {
-		return nil, nil, err
-	}
-	return store, closer(store.Close, logger, "clickhouse raw"), nil
-}
-
-// NewHistory returns ch-loader's raw trades for market-engine's backfills,
-// or nil when backfills are off or the output is not in ClickHouse. It opens
-// its own raw store, so market-engine only touches ch-loader's tables when
-// it backfills.
-func NewHistory(ctx context.Context, storageConfig *conf.Storage, market *conf.Market, options chstore.Options, logger *slog.Logger) (storage.History, func(), error) {
-	if storageConfig.GetDriver() != conf.StorageClickHouse || market.GetBackfillBlocks() <= 0 {
-		return nil, func() {}, nil
-	}
-	store, err := chraw.Open(ctx, options)
-	if err != nil {
-		return nil, nil, err
-	}
-	return chraw.NewHistory(store, market.GetBackfillWait().AsDuration()), closer(store.Close, logger, "clickhouse history"), nil
-}
-
-// NewMemory is the in-memory store market-engine keeps checkpoints in, and
-// writes its output to without ClickHouse.
+// NewMemory keeps market-engine's checkpoints when state.driver keeps no
+// state.
 func NewMemory() *storage.Memory { return storage.NewMemory() }
-
-// NewStateStore returns the persistent state store, or nil when checkpoints
-// stay in memory.
-func NewStateStore(store *pgstore.Store) storage.StateStore {
-	if store == nil {
-		return nil
-	}
-	return store
-}
 
 // Sources opens chain topics.
 type Sources struct {

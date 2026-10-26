@@ -25,23 +25,34 @@ func wireApp(contextContext context.Context, bootstrap *conf.Bootstrap, logger *
 	api := bootstrap.Api
 	market := bootstrap.Market
 	storage := bootstrap.Storage
-	options := data.NewClickHouseOptions(storage, logger)
-	store, cleanup, err := data.NewClickHouse(contextContext, storage, options, logger)
+	marketBackend, cleanup, err := data.NewMarketBackend(contextContext, storage, logger)
 	if err != nil {
 		return nil, nil, err
 	}
-	chrawStore, cleanup2, err := data.NewRawStore(contextContext, storage, options, logger)
+	reader, err := data.NewReader(marketBackend)
 	if err != nil {
 		cleanup()
 		return nil, nil, err
 	}
-	state := conf.NewState(bootstrap)
-	pgstoreStore, cleanup3, err := data.NewPostgres(contextContext, state, logger)
+	rawBackend, cleanup2, err := data.NewRawBackend(contextContext, storage, logger)
+	if err != nil {
+		cleanup()
+		return nil, nil, err
+	}
+	transferReader, err := data.NewTransferReader(rawBackend)
 	if err != nil {
 		cleanup2()
 		cleanup()
 		return nil, nil, err
 	}
+	state := conf.NewState(bootstrap)
+	stateBackend, cleanup3, err := data.NewStateBackend(contextContext, state, logger)
+	if err != nil {
+		cleanup2()
+		cleanup()
+		return nil, nil, err
+	}
+	stateReaders := data.NewStateReaders(stateBackend)
 	hub, err := data.NewHub(bootstrap, logger)
 	if err != nil {
 		cleanup3()
@@ -49,7 +60,7 @@ func wireApp(contextContext context.Context, bootstrap *conf.Bootstrap, logger *
 		cleanup()
 		return nil, nil, err
 	}
-	handler := service.NewAPIHandler(market, store, chrawStore, pgstoreStore, hub, logger)
+	handler := service.NewAPIHandler(market, reader, transferReader, stateReaders, hub, logger)
 	httpServer := server.NewHTTPServer(api, handler, logger)
 	v := server.NewAPIServers(metricsServer, httpServer, hub)
 	app := newApp(v)

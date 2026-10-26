@@ -7,7 +7,6 @@ import (
 	"context"
 	"errors"
 	"flag"
-	"fmt"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -60,9 +59,6 @@ func run(logger *slog.Logger) (resultErr error) {
 		return err
 	}
 	defer func() { resultErr = errors.Join(resultErr, closeConfig()) }()
-	if bootstrap.Storage.Driver != conf.StorageClickHouse || bootstrap.State.Driver != conf.StatePostgres {
-		return fmt.Errorf("market-rankings needs storage.driver %q and state.driver %q", conf.StorageClickHouse, conf.StatePostgres)
-	}
 	if metricsAddr != "" {
 		bootstrap.Metrics.Addr = metricsAddr
 	}

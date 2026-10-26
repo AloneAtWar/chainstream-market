@@ -27,11 +27,16 @@ func wireApp(contextContext context.Context, bootstrap *conf.Bootstrap, logger *
 	kafka := bootstrap.Kafka
 	sources := data.NewSources(kafka)
 	state := conf.NewState(bootstrap)
-	store, cleanup, err := data.NewPostgres(contextContext, state, logger)
+	stateBackend, cleanup, err := data.NewStateBackend(contextContext, state, logger)
 	if err != nil {
 		return nil, nil, err
 	}
-	runners, err := biz.NewHolderEngines(v, holders, sources, store, logger)
+	holderStore, err := data.NewHolderStore(stateBackend)
+	if err != nil {
+		cleanup()
+		return nil, nil, err
+	}
+	runners, err := biz.NewHolderEngines(v, holders, sources, holderStore, logger)
 	if err != nil {
 		cleanup()
 		return nil, nil, err

@@ -31,6 +31,12 @@ func NewHistory(store *Store, wait time.Duration) *History {
 	return &History{store: store, wait: wait}
 }
 
+// History reads market-engine's backfills through store, waiting up to wait
+// for ch-loader to catch up.
+func (store *Store) History(wait time.Duration) storage.History {
+	return NewHistory(store, wait)
+}
+
 // RawTrades reports ok false, without waiting, when ch-loader has never
 // stored the chain, and after wait when it is still behind through.
 func (history *History) RawTrades(ctx context.Context, chainID uint64, tokens []string, from, through int64) ([]storage.RawTradeAt, bool, error) {
