@@ -15,7 +15,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/AloneAtWar/chainstream-market/internal/metrics"
+	"github.com/AloneAtWar/chainstream-market/internal/pkg/metrics"
 )
 
 // balanceOfSelector is the ERC-20 balanceOf(address) selector.

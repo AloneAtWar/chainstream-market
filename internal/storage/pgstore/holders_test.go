@@ -5,6 +5,7 @@ import (
 	"math/big"
 	"testing"
 
+	"github.com/AloneAtWar/chainstream-market/internal/pkg/chainsync"
 	"github.com/AloneAtWar/chainstream-market/internal/storage"
 )
 
@@ -22,7 +23,7 @@ func commitHolders(t *testing.T, store *Store, change storage.HolderChange) {
 	if change.Reverted && len(change.Created)+len(change.Deltas) == 0 {
 		height = change.RevertTo
 	}
-	if err := store.CommitHolders(context.Background(), storage.Checkpoint{ChainID: 1, Height: height}, change); err != nil {
+	if err := store.CommitHolders(context.Background(), chainsync.Checkpoint{ChainID: 1, Height: height}, change); err != nil {
 		t.Fatalf("CommitHolders() error = %v", err)
 	}
 }

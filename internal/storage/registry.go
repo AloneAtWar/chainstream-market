@@ -1,6 +1,10 @@
 package storage
 
-import "context"
+import (
+	"context"
+
+	"github.com/AloneAtWar/chainstream-market/internal/pkg/chainsync"
+)
 
 // Deployment is the transaction that created a contract.
 type Deployment struct {
@@ -71,8 +75,8 @@ type RegistryChange struct {
 type RegistryStore interface {
 	// LoadRegistryCheckpoint returns the last committed checkpoint and the
 	// highest height whose undo history was pruned.
-	LoadRegistryCheckpoint(ctx context.Context, chainID uint64) (Checkpoint, int64, bool, error)
-	CommitRegistry(ctx context.Context, checkpoint Checkpoint, change RegistryChange) error
+	LoadRegistryCheckpoint(ctx context.Context, chainID uint64) (chainsync.Checkpoint, int64, bool, error)
+	CommitRegistry(ctx context.Context, checkpoint chainsync.Checkpoint, change RegistryChange) error
 }
 
 // RegistryReader answers token and pool queries for the API.

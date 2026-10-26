@@ -7,7 +7,7 @@ import (
 	"slices"
 	"time"
 
-	"github.com/AloneAtWar/chainstream-market/internal/registry"
+	"github.com/AloneAtWar/chainstream-market/internal/pkg/asset"
 	"github.com/AloneAtWar/chainstream-market/internal/storage"
 	streamv1 "github.com/AloneAtWar/chainstream-market/proto/stream/v1"
 	"github.com/shopspring/decimal"
@@ -68,7 +68,7 @@ func (processor *Processor) learnAssets(height int64, block *streamv1.BlockEvent
 			continue
 		}
 		token := normalize(fact.GetAddress())
-		if _, _, value := registry.ParseMetadata(fact.GetMetadataJson()); value != nil && token != "" {
+		if _, _, value := asset.ParseMetadata(fact.GetMetadataJson()); value != nil && token != "" {
 			processor.learn(height, token, uint32(*value), learned)
 		}
 	}

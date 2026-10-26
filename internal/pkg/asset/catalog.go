@@ -1,4 +1,7 @@
-package market
+// Package asset holds what every component knows about token addresses: the
+// per-chain Catalog of USD anchors, quote preferences and aliases, and the
+// metadata chainstream-evm publishes for each asset.
+package asset
 
 import (
 	"strings"
@@ -38,17 +41,17 @@ func NewCatalog(spec CatalogSpec) Catalog {
 	}
 	rank := 0
 	add := func(address string) {
-		address = normalize(address)
+		address = Normalize(address)
 		if _, exists := catalog.priority[address]; !exists && address != "" {
 			catalog.priority[address] = rank
 			rank++
 		}
 	}
 	for _, anchor := range spec.Anchors {
-		catalog.anchors[normalize(anchor)] = decimal.NewFromInt(1)
+		catalog.anchors[Normalize(anchor)] = decimal.NewFromInt(1)
 		add(anchor)
 	}
-	if wrapped := normalize(spec.WrappedNative); wrapped != "" {
+	if wrapped := Normalize(spec.WrappedNative); wrapped != "" {
 		add(wrapped)
 		catalog.aliases[NativeAddress] = wrapped
 	}
@@ -113,7 +116,7 @@ func DefaultCatalog(chainID uint64) Catalog {
 // Canonical maps aliases, such as the native pseudo-address, to the token
 // that carries their price.
 func (catalog Catalog) Canonical(token string) string {
-	token = normalize(token)
+	token = Normalize(token)
 	if alias, ok := catalog.aliases[token]; ok {
 		return alias
 	}
@@ -131,6 +134,7 @@ func (catalog Catalog) QuotePriority(token string) (int, bool) {
 	return rank, ok
 }
 
-func normalize(address string) string {
+// Normalize lowercases address and trims its spaces.
+func Normalize(address string) string {
 	return strings.ToLower(strings.TrimSpace(address))
 }

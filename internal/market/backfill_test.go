@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/AloneAtWar/chainstream-market/internal/pkg/asset"
 	"github.com/AloneAtWar/chainstream-market/internal/storage"
 	streamv1 "github.com/AloneAtWar/chainstream-market/proto/stream/v1"
 	"github.com/shopspring/decimal"
@@ -104,7 +105,7 @@ func rawOf(trade *streamv1.Trade) storage.RawTrade {
 func newBackfillProcessor(t *testing.T, history storage.History, heldBlocks int64, perToken int) *Processor {
 	t.Helper()
 	processor, err := NewProcessor(Options{
-		Catalog:               DefaultCatalog(1),
+		Catalog:               asset.DefaultCatalog(1),
 		MinLiquidityUSD:       decimal.NewFromInt(1000),
 		CandleMinLiquidityUSD: decimal.NewFromInt(10000),
 		MaxHops:               3,

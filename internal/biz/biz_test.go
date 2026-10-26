@@ -14,6 +14,7 @@ import (
 
 	"github.com/AloneAtWar/chainstream-market/internal/conf"
 	"github.com/AloneAtWar/chainstream-market/internal/market"
+	"github.com/AloneAtWar/chainstream-market/internal/pkg/asset"
 )
 
 const (
@@ -63,7 +64,7 @@ func TestResolveFeedsReadsProxies(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	chain := &conf.Chain{Name: "base", RpcUrl: node.URL, Feeds: []*conf.Feed{
 		{Proxy: proxy, Token: weth, Description: "eth / usd"},
-		{Proxy: proxy, Token: market.NativeAddress, Decimals: 8},
+		{Proxy: proxy, Token: asset.NativeAddress, Decimals: 8},
 		{Address: "0xcc", Token: "0xdd", Decimals: 18},
 	}}
 	feeds, err := ResolveFeeds(context.Background(), chain, logger)
@@ -72,7 +73,7 @@ func TestResolveFeedsReadsProxies(t *testing.T) {
 	}
 	want := []market.Feed{
 		{Address: aggregator, Token: weth, Decimals: 8},
-		{Address: aggregator, Token: market.NativeAddress, Decimals: 8},
+		{Address: aggregator, Token: asset.NativeAddress, Decimals: 8},
 		{Address: "0xcc", Token: "0xdd", Decimals: 18},
 	}
 	if !reflect.DeepEqual(feeds, want) {

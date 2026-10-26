@@ -11,26 +11,14 @@ import (
 	"context"
 	"time"
 
+	"github.com/AloneAtWar/chainstream-market/internal/pkg/chainsync"
 	"github.com/shopspring/decimal"
 )
 
-// Checkpoint is the last chain-topic record the engine fully applied.
-type Checkpoint struct {
-	ChainID uint64
-	// Offset is the Kafka offset of the last applied record; consumption
-	// resumes at Offset+1.
-	Offset int64
-	// Height and Hash identify the last applied block. Hash is empty right
-	// after a revert, when the block at Height is no longer known.
-	Height    int64
-	Hash      string
-	UpdatedAt time.Time
-}
-
-// CheckpointStore persists one Checkpoint per chain.
+// CheckpointStore persists one chainsync.Checkpoint per chain.
 type CheckpointStore interface {
-	Load(ctx context.Context, chainID uint64) (Checkpoint, bool, error)
-	Save(ctx context.Context, checkpoint Checkpoint) error
+	Load(ctx context.Context, chainID uint64) (chainsync.Checkpoint, bool, error)
+	Save(ctx context.Context, checkpoint chainsync.Checkpoint) error
 }
 
 // Output stores what the engine derives from each block.

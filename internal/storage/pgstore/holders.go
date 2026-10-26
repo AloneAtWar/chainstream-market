@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math/big"
 
+	"github.com/AloneAtWar/chainstream-market/internal/pkg/chainsync"
 	"github.com/AloneAtWar/chainstream-market/internal/storage"
 	"gorm.io/gorm"
 )
@@ -75,7 +76,7 @@ const addHolderCounts = `
 	HAVING sum((COALESCE(new_balance, 0) > 0)::int - (COALESCE(old_balance, 0) > 0)::int) <> 0
 	ON CONFLICT (chain_id, token) DO UPDATE SET holders = c.holders + EXCLUDED.holders`
 
-func (store *Store) LoadHolderCheckpoint(ctx context.Context, chainID uint64) (storage.Checkpoint, int64, bool, error) {
+func (store *Store) LoadHolderCheckpoint(ctx context.Context, chainID uint64) (chainsync.Checkpoint, int64, bool, error) {
 	return loadCheckpoint(store.db.WithContext(ctx), holderCheckpoints, chainID)
 }
 
@@ -129,7 +130,7 @@ func (store *Store) HolderCount(ctx context.Context, chainID uint64, token strin
 }
 
 // CommitHolders applies change and saves checkpoint in one transaction.
-func (store *Store) CommitHolders(ctx context.Context, checkpoint storage.Checkpoint, change storage.HolderChange) error {
+func (store *Store) CommitHolders(ctx context.Context, checkpoint chainsync.Checkpoint, change storage.HolderChange) error {
 	if checkpoint.ChainID == 0 {
 		return errors.New("postgres store: checkpoint chain id is required")
 	}

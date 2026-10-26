@@ -12,9 +12,9 @@ import (
 	"path/filepath"
 
 	"github.com/AloneAtWar/chainstream-market/internal/conf"
-	"github.com/AloneAtWar/chainstream-market/internal/engine"
 	"github.com/AloneAtWar/chainstream-market/internal/live"
-	"github.com/AloneAtWar/chainstream-market/internal/source"
+	"github.com/AloneAtWar/chainstream-market/internal/market"
+	"github.com/AloneAtWar/chainstream-market/internal/pkg/source"
 	"github.com/AloneAtWar/chainstream-market/internal/storage"
 	"github.com/AloneAtWar/chainstream-market/internal/storage/chstore"
 	"github.com/google/wire"
@@ -140,7 +140,7 @@ func liveDriver(bootstrap *conf.Bootstrap) (string, error) {
 
 // NewPublisher returns market-engine's live publisher, or nil when live push
 // is off.
-func NewPublisher(bootstrap *conf.Bootstrap) (engine.Notifier, func(), error) {
+func NewPublisher(bootstrap *conf.Bootstrap) (market.Notifier, func(), error) {
 	if !bootstrap.GetLive().GetEnabled() {
 		return nil, func() {}, nil
 	}

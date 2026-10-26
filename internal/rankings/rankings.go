@@ -17,7 +17,7 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/AloneAtWar/chainstream-market/internal/metrics"
+	"github.com/AloneAtWar/chainstream-market/internal/pkg/metrics"
 
 	"github.com/AloneAtWar/chainstream-market/internal/storage"
 )

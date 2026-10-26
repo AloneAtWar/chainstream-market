@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/AloneAtWar/chainstream-market/internal/pkg/asset"
 	"github.com/AloneAtWar/chainstream-market/internal/storage"
 	streamv1 "github.com/AloneAtWar/chainstream-market/proto/stream/v1"
 	"github.com/shopspring/decimal"
@@ -15,7 +16,7 @@ const thinWETH = "0xpool-weth-usdc-thin"
 func newOutlierProcessor(t *testing.T, deviation string) *Processor {
 	t.Helper()
 	processor, err := NewProcessor(Options{
-		Catalog:               DefaultCatalog(1),
+		Catalog:               asset.DefaultCatalog(1),
 		MinLiquidityUSD:       decimal.NewFromInt(1000),
 		CandleMinLiquidityUSD: decimal.NewFromInt(10000),
 		MaxHops:               3,

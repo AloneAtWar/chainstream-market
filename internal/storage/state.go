@@ -1,12 +1,16 @@
 package storage
 
-import "context"
+import (
+	"context"
+
+	"github.com/AloneAtWar/chainstream-market/internal/pkg/chainsync"
+)
 
 // State is a processor's persisted state and the checkpoint it belongs to.
 // The engine restores it into a fresh processor on start, so a restart
 // resumes at Checkpoint.Offset+1 without replaying the topic.
 type State struct {
-	Checkpoint Checkpoint
+	Checkpoint chainsync.Checkpoint
 	// PrunedThrough is the highest height whose undo history was discarded.
 	PrunedThrough int64
 	Entries       []StateEntry
@@ -49,5 +53,5 @@ type StateDelta struct {
 // it was derived from.
 type StateStore interface {
 	LoadState(ctx context.Context, chainID uint64) (State, bool, error)
-	Commit(ctx context.Context, checkpoint Checkpoint, delta StateDelta) error
+	Commit(ctx context.Context, checkpoint chainsync.Checkpoint, delta StateDelta) error
 }

@@ -5,6 +5,7 @@ import (
 	"math/big"
 	"time"
 
+	"github.com/AloneAtWar/chainstream-market/internal/pkg/chainsync"
 	"github.com/shopspring/decimal"
 )
 
@@ -118,12 +119,12 @@ type RawPoolFact struct {
 // a writer stores facts first and the checkpoint after them; a checkpoint
 // can lag the facts but never lead them.
 type RawStore interface {
-	LoadRawCheckpoint(ctx context.Context, chainID uint64) (Checkpoint, bool, error)
+	LoadRawCheckpoint(ctx context.Context, chainID uint64) (chainsync.Checkpoint, bool, error)
 	// WriteRaw inserts blocks, which must not already be stored.
 	WriteRaw(ctx context.Context, blocks []RawBlock) error
 	// DeleteRawAbove removes every fact above height.
 	DeleteRawAbove(ctx context.Context, chainID uint64, height int64) error
-	SaveRawCheckpoint(ctx context.Context, checkpoint Checkpoint) error
+	SaveRawCheckpoint(ctx context.Context, checkpoint chainsync.Checkpoint) error
 }
 
 // RawTradeAt is a stored raw trade with the block that published it.

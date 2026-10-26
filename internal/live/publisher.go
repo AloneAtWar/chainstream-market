@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/AloneAtWar/chainstream-market/internal/engine"
 	"github.com/AloneAtWar/chainstream-market/internal/storage"
 )
 
@@ -128,5 +127,3 @@ func RevertUpdates(revert storage.Revert) []Update {
 	}
 	return updates
 }
-
-var _ engine.Notifier = (*Publisher)(nil)

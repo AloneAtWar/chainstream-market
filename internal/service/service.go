@@ -10,7 +10,7 @@ import (
 	"github.com/AloneAtWar/chainstream-market/internal/conf"
 	"github.com/AloneAtWar/chainstream-market/internal/data"
 	"github.com/AloneAtWar/chainstream-market/internal/live"
-	"github.com/AloneAtWar/chainstream-market/internal/metrics"
+	"github.com/AloneAtWar/chainstream-market/internal/pkg/metrics"
 	"github.com/AloneAtWar/chainstream-market/internal/storage"
 	"github.com/google/wire"
 )

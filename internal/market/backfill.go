@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/AloneAtWar/chainstream-market/internal/pkg/asset"
 	"github.com/AloneAtWar/chainstream-market/internal/storage"
 	streamv1 "github.com/AloneAtWar/chainstream-market/proto/stream/v1"
 	"github.com/shopspring/decimal"
@@ -173,7 +174,7 @@ func (processor *Processor) missedOn(source *streamv1.Trade, tokens map[string]s
 	return missed
 }
 
-func isLearned(catalog Catalog, learned map[string]struct{}, canonical string) bool {
+func isLearned(catalog asset.Catalog, learned map[string]struct{}, canonical string) bool {
 	for token := range learned {
 		if catalog.Canonical(token) == canonical {
 			return true

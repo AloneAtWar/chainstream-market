@@ -14,15 +14,12 @@ Market data services built on the [chainstream-evm](https://github.com/AloneAtWa
 | `cmd/market-registry` | Consumes the same chain topics and keeps the latest token and pool metadata in PostgreSQL. |
 | `cmd/market-rankings` | Periodically rolls prices, 24h activity, holder counts and metadata into the PostgreSQL token rankings. |
 | `internal/api` | market-api handlers. |
-| `internal/engine` | Per-chain ordered apply loop: reverts, continuity checks and checkpoints, driving a `Handler`. |
 | `internal/chloader` | ch-loader's handler: converts each block's facts and writes them in batches. |
 | `internal/holders` | holder-indexer's handler: transfer deltas, balanceOf seeding and reconciliation. |
 | `internal/registry` | market-registry's handler: asset and pool facts to token and pool metadata. |
 | `internal/rankings` | market-rankings' refresher: reads the ClickHouse output and commits one chain's rankings. |
 | `internal/live` | Realtime push: market-engine's live topic publisher and market-api's WebSocket hub, over a Kafka or Redis Pub/Sub transport. |
-| `internal/rpc` | Minimal JSON-RPC client for batched `balanceOf` calls. |
-| `internal/market` | Per-chain processor: pool state, base/quote orientation, the USD price graph and candles. |
-| `internal/source` | Chain topic readers: Kafka partition zero, or a followed file of protobuf JSON records. |
+| `internal/market` | Per-chain processor: pool state, base/quote orientation, the USD price graph and candles, and the `chainsync.Handler` that runs it and writes its output. |
 | `internal/storage` | Output models (oriented trades, token prices, candles), store interfaces and the in-memory backend. |
 | `internal/storage/chstore` | ClickHouse output store and schema, through GORM. |
 | `internal/storage/chraw` | ClickHouse raw fact store and schema for ch-loader, through GORM. |
@@ -32,7 +29,13 @@ Market data services built on the [chainstream-evm](https://github.com/AloneAtWa
 | `internal/biz` | wire providers for each command's handlers and the workers they run. |
 | `internal/service` | wire provider for market-api's HTTP handler. |
 | `internal/server` | Kratos transport servers: HTTP, metrics and the long-running workers. |
-| `internal/metrics` | Prometheus metrics every command serves at `/metrics`. |
+| `internal/pkg/chainsync` | Per-chain ordered apply loop: reverts, continuity checks and checkpoints, driving a `Handler`. Shared by every command that consumes chain topics. |
+| `internal/pkg/source` | Chain topic readers: Kafka partition zero, or a followed file of protobuf JSON records. |
+| `internal/pkg/asset` | Token addresses every command shares: the per-chain catalog of USD anchors, quote preferences and aliases, and chainstream-evm's asset metadata. |
+| `internal/pkg/rpc` | Minimal JSON-RPC client for batched `balanceOf` calls. |
+| `internal/pkg/chainlink` | Resolves Chainlink feed proxies to the aggregators of every phase. |
+| `internal/pkg/transport` | Kratos servers every command shares: HTTP, and a Runner for long-lived work. |
+| `internal/pkg/metrics` | Prometheus metrics every command serves at `/metrics`. |
 | `deploy/` | docker-compose stack: infrastructure, chainstream-evm, every service, Prometheus and Grafana. |
 
 ## market-engine

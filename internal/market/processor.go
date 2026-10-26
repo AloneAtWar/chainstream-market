@@ -12,7 +12,7 @@ import (
 	"slices"
 	"time"
 
-	"github.com/AloneAtWar/chainstream-market/internal/engine"
+	"github.com/AloneAtWar/chainstream-market/internal/pkg/asset"
 	"github.com/AloneAtWar/chainstream-market/internal/storage"
 	streamv1 "github.com/AloneAtWar/chainstream-market/proto/stream/v1"
 	"github.com/shopspring/decimal"
@@ -22,7 +22,7 @@ import (
 var ErrReorgTooDeep = errors.New("market: reorg deeper than retained history")
 
 type Options struct {
-	Catalog Catalog
+	Catalog asset.Catalog
 	// MinLiquidityUSD is the counterpart reserve value a pool needs before a
 	// price can propagate through it.
 	MinLiquidityUSD decimal.Decimal
@@ -195,7 +195,7 @@ func (processor *Processor) Apply(ctx context.Context, block *streamv1.BlockEven
 	if err := ctx.Err(); err != nil {
 		return storage.BlockOutput{}, err
 	}
-	output := engine.NewBlockOutput(block)
+	output := NewBlockOutput(block)
 	height := block.GetBlockHeight()
 
 	touched := make(map[string]struct{})
@@ -647,7 +647,7 @@ func (processor *Processor) quoteLiquidityUSD(trade storage.Trade) decimal.Decim
 }
 
 // reserveUSD values token's reserve in state at usd, or zero when unknown.
-func reserveUSD(catalog Catalog, state pool, token string, usd decimal.Decimal) decimal.Decimal {
+func reserveUSD(catalog asset.Catalog, state pool, token string, usd decimal.Decimal) decimal.Decimal {
 	if !state.HasReserves {
 		return decimal.Zero
 	}
@@ -752,8 +752,8 @@ func compareCandleKeys(left, right candleKey) int {
 }
 
 var (
-	_ engine.Processor = (*Processor)(nil)
-	_ engine.Stateful  = (*Processor)(nil)
+	_ BlockProcessor = (*Processor)(nil)
+	_ Stateful       = (*Processor)(nil)
 
-	_ engine.CandleReverter = (*Processor)(nil)
+	_ CandleReverter = (*Processor)(nil)
 )

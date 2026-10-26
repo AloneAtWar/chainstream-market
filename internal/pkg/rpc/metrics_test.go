@@ -6,8 +6,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/AloneAtWar/chainstream-market/internal/metrics"
-	"github.com/AloneAtWar/chainstream-market/internal/rpc/rpctest"
+	"github.com/AloneAtWar/chainstream-market/internal/pkg/metrics"
+	"github.com/AloneAtWar/chainstream-market/internal/pkg/rpc/rpctest"
 	"github.com/prometheus/client_golang/prometheus/testutil"
 )
 

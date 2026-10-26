@@ -5,33 +5,35 @@ import (
 	"errors"
 	"sort"
 	"sync"
+
+	"github.com/AloneAtWar/chainstream-market/internal/pkg/chainsync"
 )
 
 // Memory keeps checkpoints, processor state and outputs in process memory.
 // It is the local and test backend; everything is lost on restart.
 type Memory struct {
 	mu          sync.RWMutex
-	checkpoints map[uint64]Checkpoint
+	checkpoints map[uint64]chainsync.Checkpoint
 	blocks      map[uint64]map[int64]BlockOutput
 	states      map[uint64]*memoryState
 }
 
 func NewMemory() *Memory {
 	return &Memory{
-		checkpoints: make(map[uint64]Checkpoint),
+		checkpoints: make(map[uint64]chainsync.Checkpoint),
 		blocks:      make(map[uint64]map[int64]BlockOutput),
 		states:      make(map[uint64]*memoryState),
 	}
 }
 
-func (memory *Memory) Load(_ context.Context, chainID uint64) (Checkpoint, bool, error) {
+func (memory *Memory) Load(_ context.Context, chainID uint64) (chainsync.Checkpoint, bool, error) {
 	memory.mu.RLock()
 	defer memory.mu.RUnlock()
 	checkpoint, ok := memory.checkpoints[chainID]
 	return checkpoint, ok, nil
 }
 
-func (memory *Memory) Save(_ context.Context, checkpoint Checkpoint) error {
+func (memory *Memory) Save(_ context.Context, checkpoint chainsync.Checkpoint) error {
 	if checkpoint.ChainID == 0 {
 		return errors.New("memory storage: checkpoint chain id is required")
 	}

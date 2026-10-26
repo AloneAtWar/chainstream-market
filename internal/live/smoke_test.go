@@ -11,9 +11,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/AloneAtWar/chainstream-market/internal/engine"
 	"github.com/AloneAtWar/chainstream-market/internal/market"
-	"github.com/AloneAtWar/chainstream-market/internal/source"
+	"github.com/AloneAtWar/chainstream-market/internal/pkg/asset"
+	"github.com/AloneAtWar/chainstream-market/internal/pkg/chainsync"
+	"github.com/AloneAtWar/chainstream-market/internal/pkg/source"
 	"github.com/AloneAtWar/chainstream-market/internal/storage"
 	streamv1 "github.com/AloneAtWar/chainstream-market/proto/stream/v1"
 	"github.com/alicebob/miniredis/v2"
@@ -335,7 +336,7 @@ func smokeLive(t *testing.T, transport func(brokers []string) (Sink, Feed)) {
 	block(102, 24, "0xb102", "0xb101")
 
 	processor, err := market.NewProcessor(market.Options{
-		Catalog: market.DefaultCatalog(1), MinLiquidityUSD: decimal.NewFromInt(1000),
+		Catalog: asset.DefaultCatalog(1), MinLiquidityUSD: decimal.NewFromInt(1000),
 		CandleMinLiquidityUSD: decimal.NewFromInt(10000), MaxHops: 3, Intervals: intervals, HistoryDepth: 16,
 	})
 	if err != nil {
@@ -348,12 +349,18 @@ func smokeLive(t *testing.T, transport func(brokers []string) (Sink, Feed)) {
 	defer publisher.Close()
 	memory := storage.NewMemory()
 	kafka := source.KafkaOptions{Brokers: brokers, Topic: smokeTopic, FetchMaxBytes: 1 << 20, FetchMaxWait: 20 * time.Millisecond}
-	chainEngine, err := engine.New(engine.Options{
-		ChainID: 1, Chain: "eth", Processor: processor, Output: memory, Checkpoints: memory, Notifier: publisher,
+	handler, err := market.NewHandler(market.HandlerOptions{
+		ChainID: 1, Processor: processor, Output: memory, Checkpoints: memory, Notifier: publisher,
+	})
+	if err != nil {
+		t.Fatalf("NewHandler() error = %v", err)
+	}
+	chainEngine, err := chainsync.New(chainsync.Options{
+		ChainID: 1, Chain: "eth", Handler: handler,
 		Open: func(start int64) (source.Source, error) { return source.NewKafka(kafka, start) },
 	})
 	if err != nil {
-		t.Fatalf("engine.New() error = %v", err)
+		t.Fatalf("chainsync.New() error = %v", err)
 	}
 	engineDone := make(chan error, 1)
 	go func() { engineDone <- chainEngine.Run(ctx) }()

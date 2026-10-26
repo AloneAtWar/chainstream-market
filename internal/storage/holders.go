@@ -3,6 +3,8 @@ package storage
 import (
 	"context"
 	"math/big"
+
+	"github.com/AloneAtWar/chainstream-market/internal/pkg/chainsync"
 )
 
 // HolderKey is one holder of one token. Both addresses are lowercase.
@@ -50,13 +52,13 @@ type HolderChange struct {
 type HolderStore interface {
 	// LoadHolderCheckpoint returns the last committed checkpoint and the
 	// highest height whose undo history was pruned.
-	LoadHolderCheckpoint(ctx context.Context, chainID uint64) (Checkpoint, int64, bool, error)
+	LoadHolderCheckpoint(ctx context.Context, chainID uint64) (chainsync.Checkpoint, int64, bool, error)
 	// Holdings returns the stored holdings among keys.
 	Holdings(ctx context.Context, chainID uint64, keys []HolderKey) ([]Holding, error)
 	// StaleHoldings returns up to limit holdings, least recently verified
 	// first.
 	StaleHoldings(ctx context.Context, chainID uint64, limit int) ([]Holding, error)
-	CommitHolders(ctx context.Context, checkpoint Checkpoint, change HolderChange) error
+	CommitHolders(ctx context.Context, checkpoint chainsync.Checkpoint, change HolderChange) error
 }
 
 // HolderReader answers holder queries for the API.

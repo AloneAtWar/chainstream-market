@@ -14,7 +14,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/AloneAtWar/chainstream-market/internal/market"
+	"github.com/AloneAtWar/chainstream-market/internal/pkg/asset"
 )
 
 type HubOptions struct {
@@ -455,7 +455,7 @@ func (hub *Hub) parseChannel(name string) (parsedChannel, error) {
 		return parsedChannel{}, invalid
 	}
 	if subject == "token" {
-		key = market.DefaultCatalog(chainID).Canonical(key)
+		key = asset.DefaultCatalog(chainID).Canonical(key)
 	}
 	switch {
 	case parts[0] == "trades" && len(parts) == 4:

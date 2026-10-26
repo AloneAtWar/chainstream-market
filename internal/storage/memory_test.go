@@ -3,6 +3,8 @@ package storage
 import (
 	"context"
 	"testing"
+
+	"github.com/AloneAtWar/chainstream-market/internal/pkg/chainsync"
 )
 
 func TestMemoryWriteBlockReplacesHeight(t *testing.T) {
@@ -51,10 +53,10 @@ func TestMemoryCheckpoints(t *testing.T) {
 	if _, ok, err := memory.Load(ctx, 1); err != nil || ok {
 		t.Fatalf("Load() = %v, %v", ok, err)
 	}
-	if err := memory.Save(ctx, Checkpoint{}); err == nil {
+	if err := memory.Save(ctx, chainsync.Checkpoint{}); err == nil {
 		t.Fatal("Save() without chain id error = nil")
 	}
-	want := Checkpoint{ChainID: 1, Offset: 7, Height: 100, Hash: "h"}
+	want := chainsync.Checkpoint{ChainID: 1, Offset: 7, Height: 100, Hash: "h"}
 	if err := memory.Save(ctx, want); err != nil {
 		t.Fatalf("Save() error = %v", err)
 	}

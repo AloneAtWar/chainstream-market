@@ -11,16 +11,17 @@ import (
 	"strings"
 	"time"
 
-	"github.com/AloneAtWar/chainstream-market/internal/chainlink"
 	"github.com/AloneAtWar/chainstream-market/internal/chloader"
 	"github.com/AloneAtWar/chainstream-market/internal/conf"
 	"github.com/AloneAtWar/chainstream-market/internal/data"
-	"github.com/AloneAtWar/chainstream-market/internal/engine"
 	"github.com/AloneAtWar/chainstream-market/internal/holders"
 	"github.com/AloneAtWar/chainstream-market/internal/market"
+	"github.com/AloneAtWar/chainstream-market/internal/pkg/asset"
+	"github.com/AloneAtWar/chainstream-market/internal/pkg/chainlink"
+	"github.com/AloneAtWar/chainstream-market/internal/pkg/chainsync"
+	"github.com/AloneAtWar/chainstream-market/internal/pkg/rpc"
 	"github.com/AloneAtWar/chainstream-market/internal/rankings"
 	"github.com/AloneAtWar/chainstream-market/internal/registry"
-	"github.com/AloneAtWar/chainstream-market/internal/rpc"
 	"github.com/AloneAtWar/chainstream-market/internal/storage"
 	"github.com/google/wire"
 	"github.com/shopspring/decimal"
@@ -46,7 +47,7 @@ type Runner struct {
 // so the process restarts from consistent checkpoints.
 type Runners []Runner
 
-func engineRunner(chain *conf.Chain, chainEngine *engine.Engine) Runner {
+func engineRunner(chain *conf.Chain, chainEngine *chainsync.Engine) Runner {
 	return Runner{Name: "chain " + chain.GetName(), Run: chainEngine.Run}
 }
 
@@ -59,7 +60,7 @@ func NewMarketEngines(
 	output storage.Output,
 	memory *storage.Memory,
 	state storage.StateStore,
-	notifier engine.Notifier,
+	notifier market.Notifier,
 	history storage.History,
 	logger *slog.Logger,
 ) (Runners, error) {
@@ -70,7 +71,7 @@ func NewMarketEngines(
 			return nil, fmt.Errorf("chain %s: %w", chain.GetName(), err)
 		}
 		processor, err := market.NewProcessor(market.Options{
-			Catalog:               market.DefaultCatalog(chain.GetChainId()),
+			Catalog:               asset.DefaultCatalog(chain.GetChainId()),
 			MinLiquidityUSD:       decimal.NewFromFloat(marketConfig.GetMinLiquidityUsd()),
 			CandleMinLiquidityUSD: decimal.NewFromFloat(marketConfig.GetCandleMinLiquidityUsd()),
 			MaxHops:               uint8(marketConfig.GetMaxHops()),
@@ -88,10 +89,16 @@ func NewMarketEngines(
 		if err != nil {
 			return nil, fmt.Errorf("chain %s: %w", chain.GetName(), err)
 		}
-		chainEngine, err := engine.New(engine.Options{
+		handler, err := market.NewHandler(market.HandlerOptions{
+			ChainID: chain.GetChainId(), Processor: processor, Output: output, Checkpoints: memory, State: state,
+			Notifier: notifier, Logger: logger.With("chain", chain.GetName(), "chain_id", chain.GetChainId()),
+		})
+		if err != nil {
+			return nil, fmt.Errorf("chain %s: %w", chain.GetName(), err)
+		}
+		chainEngine, err := chainsync.New(chainsync.Options{
 			ChainID: chain.GetChainId(), Chain: chain.GetName(), Open: sources.Opener(chain.GetTopic()),
-			Processor: processor, Output: output, Checkpoints: memory, State: state,
-			Notifier: notifier, Logger: logger,
+			Handler: handler, Logger: logger,
 		})
 		if err != nil {
 			return nil, fmt.Errorf("chain %s: %w", chain.GetName(), err)
@@ -167,7 +174,7 @@ func NewHolderEngines(chains []*conf.Chain, holderConfig *conf.Holders, sources 
 		if err != nil {
 			return nil, fmt.Errorf("chain %s: %w", chain.GetName(), err)
 		}
-		chainEngine, err := engine.New(engine.Options{
+		chainEngine, err := chainsync.New(chainsync.Options{
 			ChainID: chain.GetChainId(), Chain: chain.GetName(), Handler: indexer, Logger: logger,
 			Open: sources.Opener(chain.GetTopic()),
 		})
@@ -190,7 +197,7 @@ func NewRegistryEngines(chains []*conf.Chain, registryConfig *conf.Registry, sou
 		if err != nil {
 			return nil, fmt.Errorf("chain %s: %w", chain.GetName(), err)
 		}
-		chainEngine, err := engine.New(engine.Options{
+		chainEngine, err := chainsync.New(chainsync.Options{
 			ChainID: chain.GetChainId(), Chain: chain.GetName(), Handler: handler, Logger: logger,
 			Open: sources.Opener(chain.GetTopic()),
 		})
@@ -221,7 +228,7 @@ func NewLoaderEngines(
 		if err != nil {
 			return nil, fmt.Errorf("chain %s: %w", chain.GetName(), err)
 		}
-		chainEngine, err := engine.New(engine.Options{
+		chainEngine, err := chainsync.New(chainsync.Options{
 			ChainID: chain.GetChainId(), Chain: chain.GetName(), Handler: loader, Logger: logger,
 			Open: sources.Opener(chain.GetTopic()),
 		})

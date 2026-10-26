@@ -8,7 +8,7 @@ import (
 	"math/big"
 	"strings"
 
-	"github.com/AloneAtWar/chainstream-market/internal/rpc"
+	"github.com/AloneAtWar/chainstream-market/internal/pkg/rpc"
 )
 
 // Function selectors read from a proxy.

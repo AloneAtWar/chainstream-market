@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/AloneAtWar/chainstream-market/internal/pkg/chainsync"
 	"github.com/AloneAtWar/chainstream-market/internal/storage"
 	"github.com/AloneAtWar/chainstream-market/internal/storage/chstore"
 )
@@ -134,7 +135,7 @@ func TestStoreWritesDeletesAndCheckpoints(t *testing.T) {
 	}
 
 	for offset, height := range []int64{100, 101} {
-		checkpoint := storage.Checkpoint{ChainID: 1, Offset: int64(offset), Height: height, Hash: fmt.Sprintf("0x%d", height)}
+		checkpoint := chainsync.Checkpoint{ChainID: 1, Offset: int64(offset), Height: height, Hash: fmt.Sprintf("0x%d", height)}
 		if err := store.SaveRawCheckpoint(ctx, checkpoint); err != nil {
 			t.Fatalf("SaveRawCheckpoint() error = %v", err)
 		}

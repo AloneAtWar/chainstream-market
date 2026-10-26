@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/AloneAtWar/chainstream-market/internal/pkg/chainsync"
 	"github.com/AloneAtWar/chainstream-market/internal/storage"
 	"github.com/shopspring/decimal"
 )
@@ -37,7 +38,7 @@ func seedHolders(t *testing.T, store *Store, balances map[storage.HolderKey]int6
 			Holding: storage.Holding{HolderKey: key, Balance: big.NewInt(balance)}, Verified: true,
 		})
 	}
-	if err := store.CommitHolders(context.Background(), storage.Checkpoint{ChainID: 1, Height: 1}, change); err != nil {
+	if err := store.CommitHolders(context.Background(), chainsync.Checkpoint{ChainID: 1, Height: 1}, change); err != nil {
 		t.Fatalf("CommitHolders() error = %v", err)
 	}
 }
@@ -86,7 +87,7 @@ func TestRankingsRefreshAndList(t *testing.T) {
 	if _, ok, err := store.LoadRankingCursor(ctx, 1); err != nil || ok {
 		t.Fatalf("empty LoadRankingCursor() = %v, %v", ok, err)
 	}
-	if err := store.CommitRegistry(ctx, storage.Checkpoint{ChainID: 1, Height: 1}, storage.RegistryChange{
+	if err := store.CommitRegistry(ctx, chainsync.Checkpoint{ChainID: 1, Height: 1}, storage.RegistryChange{
 		Height: 1,
 		Tokens: []storage.Token{
 			registryToken(tokenAA, "USDC", &storage.Deployment{BlockHeight: 5, BlockTime: 50}),

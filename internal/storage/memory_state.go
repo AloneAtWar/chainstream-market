@@ -6,6 +6,8 @@ import (
 	"context"
 	"errors"
 	"slices"
+
+	"github.com/AloneAtWar/chainstream-market/internal/pkg/chainsync"
 )
 
 type memoryState struct {
@@ -50,7 +52,7 @@ func (memory *Memory) LoadState(_ context.Context, chainID uint64) (State, bool,
 	return state, true, nil
 }
 
-func (memory *Memory) Commit(_ context.Context, checkpoint Checkpoint, delta StateDelta) error {
+func (memory *Memory) Commit(_ context.Context, checkpoint chainsync.Checkpoint, delta StateDelta) error {
 	if checkpoint.ChainID == 0 {
 		return errors.New("memory storage: checkpoint chain id is required")
 	}

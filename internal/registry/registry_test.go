@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/AloneAtWar/chainstream-market/internal/pkg/chainsync"
 	"github.com/AloneAtWar/chainstream-market/internal/storage"
 	"github.com/AloneAtWar/chainstream-market/internal/storage/pgstore"
 	streamv1 "github.com/AloneAtWar/chainstream-market/proto/stream/v1"
@@ -111,7 +112,7 @@ func (f *fixture) revert(rollbackTo int64) error {
 
 func (f *fixture) commit(height int64, hash string) {
 	f.t.Helper()
-	checkpoint := storage.Checkpoint{ChainID: 1, Offset: f.offset, Height: height, Hash: hash}
+	checkpoint := chainsync.Checkpoint{ChainID: 1, Offset: f.offset, Height: height, Hash: hash}
 	if err := f.registry.Commit(context.Background(), checkpoint); err != nil {
 		f.t.Fatalf("Commit() error = %v", err)
 	}
@@ -292,36 +293,6 @@ func TestRegistryCleansMetadata(t *testing.T) {
 	}
 	if pool, _ := f.pool(pair); pool.Metadata != nil {
 		t.Fatalf("pool metadata = %s", pool.Metadata)
-	}
-}
-
-func TestParseMetadata(t *testing.T) {
-	tests := map[string]struct {
-		raw              string
-		name, symbol     string
-		decimals         int
-		hasName, hasDecs bool
-	}{
-		"erc20":       {raw: `{"Name":{"Value":"Tether","Known":true},"Symbol":{"Value":"USDT","Known":true},"Decimals":{"Value":6,"Known":true}}`, name: "Tether", symbol: "USDT", decimals: 6, hasName: true, hasDecs: true},
-		"unknown":     {raw: `{"Name":{"Value":"","Known":false},"Symbol":{"Value":"X","Known":true},"Decimals":{"Value":0,"Known":false}}`, symbol: "X"},
-		"native":      {raw: `{"Name":"Ether","Symbol":"ETH","Decimals":18}`, name: "Ether", symbol: "ETH", decimals: 18, hasName: true, hasDecs: true},
-		"erc1155":     {raw: `{"Address":"0x1","SupportsMetadataURI":{"Value":true,"Known":true}}`},
-		"bad decimal": {raw: `{"Decimals":{"Value":300,"Known":true}}`},
-		"empty":       {raw: ``},
-	}
-	for name, test := range tests {
-		t.Run(name, func(t *testing.T) {
-			gotName, gotSymbol, gotDecimals := ParseMetadata([]byte(test.raw))
-			if (gotName != nil) != test.hasName || (gotName != nil && *gotName != test.name) {
-				t.Fatalf("name = %v", gotName)
-			}
-			if (gotSymbol != nil) != (test.symbol != "") || (gotSymbol != nil && *gotSymbol != test.symbol) {
-				t.Fatalf("symbol = %v", gotSymbol)
-			}
-			if (gotDecimals != nil) != test.hasDecs || (gotDecimals != nil && int(*gotDecimals) != test.decimals) {
-				t.Fatalf("decimals = %v", gotDecimals)
-			}
-		})
 	}
 }
 
