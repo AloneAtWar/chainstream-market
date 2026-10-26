@@ -26,7 +26,7 @@ func openTestStore(t *testing.T) *Store {
 		t.Fatalf("Open() error = %v", err)
 	}
 	t.Cleanup(func() {
-		if _, err := store.pool.Exec(context.Background(), "DROP SCHEMA IF EXISTS "+schema+" CASCADE"); err != nil {
+		if err := store.db.Exec("DROP SCHEMA IF EXISTS " + schema + " CASCADE").Error; err != nil {
 			t.Errorf("drop schema: %v", err)
 		}
 		store.Close()
@@ -99,7 +99,7 @@ func TestOpenConcurrent(t *testing.T) {
 	}
 	t.Cleanup(func() {
 		if len(opened) > 0 {
-			if _, err := opened[0].pool.Exec(ctx, "DROP SCHEMA IF EXISTS "+schema+" CASCADE"); err != nil {
+			if err := opened[0].db.WithContext(ctx).Exec("DROP SCHEMA IF EXISTS " + schema + " CASCADE").Error; err != nil {
 				t.Errorf("drop schema: %v", err)
 			}
 		}
