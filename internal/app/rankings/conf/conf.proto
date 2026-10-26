@@ -1,0 +1,37 @@
+syntax = "proto3";
+
+package app.rankings.conf;
+
+option go_package = "github.com/AloneAtWar/chainstream-market/internal/app/rankings/conf;conf";
+
+import "google/protobuf/duration.proto";
+import "pkg/config/common.proto";
+
+// Bootstrap is market-rankings' configuration; configs/market-rankings.yaml
+// documents every setting. Durations may be written as Go durations such as
+// 500ms or 5m.
+message Bootstrap {
+  // clickhouse is market-engine's output database, which is only read.
+  pkg.config.ClickHouse clickhouse = 1;
+  // postgres is the database of the token_rankings table, and of the
+  // holder and registry tables it is joined with.
+  pkg.config.Postgres postgres = 2;
+  pkg.config.Metrics metrics = 3;
+  // chains are refreshed each on its own; only name and chain_id are read.
+  repeated pkg.config.Chain chains = 4;
+  Rankings rankings = 5;
+}
+
+// Rankings tunes how market-rankings rolls market-engine's output, holder
+// counts and registry metadata into the token_rankings table that
+// market-api lists.
+message Rankings {
+  google.protobuf.Duration refresh_interval = 1;
+  // candle_interval is the token candle size summed for the 24h columns; it
+  // must be one of market-engine's market.intervals, and market-engine must
+  // keep its candles for 2 days or more.
+  google.protobuf.Duration candle_interval = 2;
+  // reorg_window is how far behind the last refresh's chain head latest
+  // prices are read again, so a reorg that moved them is picked up.
+  google.protobuf.Duration reorg_window = 3;
+}

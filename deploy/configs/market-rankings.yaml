@@ -1,0 +1,16 @@
+# market-rankings for the docker-compose stack; configs/market-rankings.yaml
+# documents each setting.
+clickhouse:
+  addr: [clickhouse:9000]
+  database: market
+  username: default
+  password: ""
+
+postgres:
+  dsn: postgres://market:market@postgres:5432/market
+
+metrics:
+  addr: ":9100"
+
+chains:
+  - {name: eth, chain_id: 1}

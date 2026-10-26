@@ -161,12 +161,6 @@ func NewReader(backend *MarketBackend) (storage.Reader, error) {
 	return Role[storage.Reader](backend.Backend)
 }
 
-// NewRankingSource returns what market-rankings reads market-engine's
-// output through.
-func NewRankingSource(backend *MarketBackend) (storage.RankingSource, error) {
-	return Role[storage.RankingSource](backend.Backend)
-}
-
 // NewTransferReader returns what market-api reads ch-loader's transfers
 // through.
 func NewTransferReader(backend *RawBackend) (storage.TransferReader, error) {
@@ -202,11 +196,6 @@ func NewHistory(ctx context.Context, config *config.Storage, market *conf.Market
 // state.driver keeps state in memory.
 func NewStateStore(backend *StateBackend) storage.StateStore {
 	return OptionalRole[storage.StateStore](backend.Backend)
-}
-
-// NewRankingStore returns market-rankings' store.
-func NewRankingStore(backend *StateBackend) (storage.RankingStore, error) {
-	return Role[storage.RankingStore](backend.Backend)
 }
 
 // StateReaders are what market-api reads from the state backend. Each is

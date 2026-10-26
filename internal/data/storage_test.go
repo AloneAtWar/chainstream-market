@@ -20,7 +20,6 @@ var (
 	_ interface {
 		storage.Output
 		storage.Reader
-		storage.RankingSource
 		retainer
 	} = (*chstore.Store)(nil)
 	_ interface {
@@ -31,7 +30,6 @@ var (
 		storage.StateStore
 		storage.HolderReader
 		storage.RegistryReader
-		storage.RankingStore
 		storage.RankingReader
 	} = (*pgstore.Store)(nil)
 	_ storage.Output = (*storage.Memory)(nil)
@@ -52,9 +50,6 @@ func TestMemoryMarketBackend(t *testing.T) {
 	_, err = NewReader(backend)
 	if err == nil || err.Error() != `storage.driver "memory" does not provide storage.Reader` {
 		t.Fatalf("NewReader() error = %v", err)
-	}
-	if _, err := NewRankingSource(backend); err == nil {
-		t.Fatal("NewRankingSource() error = nil, want the memory store to serve no rankings")
 	}
 }
 
@@ -82,13 +77,6 @@ func TestMemoryStateBackend(t *testing.T) {
 	}
 	if readers := NewStateReaders(backend); readers != (StateReaders{}) {
 		t.Fatalf("NewStateReaders() = %+v, want none", readers)
-	}
-	for name, provide := range map[string]func(*StateBackend) error{
-		"storage.RankingStore": func(backend *StateBackend) error { _, err := NewRankingStore(backend); return err },
-	} {
-		if err := provide(backend); err == nil || err.Error() != `state.driver "memory" does not provide `+name {
-			t.Errorf("%s error = %v", name, err)
-		}
 	}
 }
 

@@ -1,7 +1,5 @@
 package pgstore
 
-import "time"
-
 // stateRow is an engine_state row read with value as text.
 type stateRow struct {
 	ChainID int64 `gorm:"primaryKey;autoIncrement:false"`
@@ -22,12 +20,3 @@ type stateUndoRow struct {
 }
 
 func (stateUndoRow) TableName() string { return "engine_state_undo" }
-
-// rankingCheckpointRow is a ranking_checkpoints row.
-type rankingCheckpointRow struct {
-	ChainID     int64 `gorm:"primaryKey;autoIncrement:false"`
-	HeadTime    time.Time
-	RefreshedAt time.Time
-}
-
-func (rankingCheckpointRow) TableName() string { return "ranking_checkpoints" }

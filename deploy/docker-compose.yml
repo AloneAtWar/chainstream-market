@@ -135,7 +135,7 @@ services:
 
   market-rankings:
     <<: *market
-    command: ["/usr/local/bin/market-rankings", "-conf", "/etc/chainstream-market/config.yaml"]
+    command: ["/usr/local/bin/market-rankings", "-conf", "/etc/chainstream-market/market-rankings.yaml"]
 
   market-api:
     <<: *market

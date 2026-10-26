@@ -1,18 +1,30 @@
-package chstore
+package data
 
 import (
 	"context"
 	"fmt"
 	"time"
 
+	"github.com/AloneAtWar/chainstream-market/internal/app/rankings/biz"
+	"github.com/AloneAtWar/chainstream-market/internal/pkg/chdb"
 	"github.com/AloneAtWar/chainstream-market/internal/pkg/model"
-	"github.com/AloneAtWar/chainstream-market/internal/storage"
 	"github.com/shopspring/decimal"
+	"gorm.io/gorm"
 )
 
-func (store *Store) ChainHead(ctx context.Context, chainID uint64) (time.Time, bool, error) {
-	var rows []blockRow
-	err := store.db.WithContext(ctx).Select("block_time").Where("chain_id = ?", chainID).
+// rankingSource reads market-engine's ClickHouse output.
+type rankingSource struct {
+	db *gorm.DB
+}
+
+// NewRankingSource returns what the refreshers read market-engine's output
+// through.
+func NewRankingSource(data *Data) biz.RankingSource { return &rankingSource{db: data.market} }
+
+// ChainHead returns the time of the highest stored block.
+func (source *rankingSource) ChainHead(ctx context.Context, chainID uint64) (time.Time, bool, error) {
+	var rows []chdb.BlockRow
+	err := source.db.WithContext(ctx).Select("block_time").Where("chain_id = ?", chainID).
 		Order("block_height DESC").Limit(1).Find(&rows).Error
 	if err != nil {
 		return time.Time{}, false, fmt.Errorf("clickhouse store: query chain head: %w", err)
@@ -26,7 +38,7 @@ func (store *Store) ChainHead(ctx context.Context, chainID uint64) (time.Time, b
 // TokenActivity reads each bucket's current version first, then sums the
 // buckets per token. Buckets chain open to previous close, so the earliest
 // bucket's open is the price the window started at.
-func (store *Store) TokenActivity(ctx context.Context, chainID uint64, interval time.Duration, since time.Time) ([]model.TokenActivity, error) {
+func (source *rankingSource) TokenActivity(ctx context.Context, chainID uint64, interval time.Duration, since time.Time) ([]model.TokenActivity, error) {
 	if interval < time.Second {
 		return nil, fmt.Errorf("clickhouse store: activity interval %s is below one second", interval)
 	}
@@ -37,7 +49,7 @@ func (store *Store) TokenActivity(ctx context.Context, chainID uint64, interval 
 		Open      decimal.Decimal
 		Close     decimal.Decimal
 	}
-	err := store.db.WithContext(ctx).Raw(`
+	err := source.db.WithContext(ctx).Raw(`
 		SELECT key, sum(bucket_volume) AS volume_usd, sum(bucket_trades) AS trades,
 			argMin(bucket_open, open_time) AS open, argMax(bucket_close, open_time) AS close
 		FROM (
@@ -70,7 +82,7 @@ func (store *Store) TokenActivity(ctx context.Context, chainID uint64, interval 
 // LatestQuotes finds recently priced tokens by block_time, which the monthly
 // partitions and their min/max index narrow to recent parts, then reads each
 // one's latest row through the (chain_id, token) sort key.
-func (store *Store) LatestQuotes(ctx context.Context, chainID uint64, since time.Time, tokens []string) ([]model.TokenQuote, error) {
+func (source *rankingSource) LatestQuotes(ctx context.Context, chainID uint64, since time.Time, tokens []string) ([]model.TokenQuote, error) {
 	filter, args := "", []any{chainID}
 	if !since.IsZero() {
 		filter = ` AND (token IN (SELECT token FROM token_prices WHERE chain_id = ? AND block_time >= ?)`
@@ -83,8 +95,8 @@ func (store *Store) LatestQuotes(ctx context.Context, chainID uint64, since time
 	}
 	// The aliases name the model's columns; prefer_column_name_to_alias
 	// keeps them from shadowing the columns the other aggregates read.
-	var rows []priceRow
-	err := store.db.WithContext(ctx).Raw(`
+	var rows []chdb.TokenPriceRow
+	err := source.db.WithContext(ctx).Raw(`
 		SELECT token, argMax(price_usd, block_height) AS price_usd, argMax(liquidity_usd, block_height) AS liquidity_usd,
 			max(block_height) AS block_height, argMax(block_time, block_height) AS block_time
 		FROM token_prices
@@ -106,5 +118,3 @@ func (store *Store) LatestQuotes(ctx context.Context, chainID uint64, since time
 	}
 	return quotes, nil
 }
-
-var _ storage.RankingSource = (*Store)(nil)

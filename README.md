@@ -233,7 +233,7 @@ market-registry reads each chain topic on its own checkpoint and keeps the lates
 ## market-rankings
 
 ```sh
-go run ./cmd/market-rankings -conf configs/config.yaml   # needs storage.driver: clickhouse and state.driver: postgres
+go run ./cmd/market-rankings -conf configs/market-rankings.yaml   # needs clickhouse.addr and postgres.dsn
 ```
 
 market-rankings keeps `token_rankings` in PostgreSQL, a rollup that market-api's token list reads with one indexed query. Every `rankings.refresh_interval` it rebuilds each chain's rows and commits them in one transaction:

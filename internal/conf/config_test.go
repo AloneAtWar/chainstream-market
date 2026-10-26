@@ -32,11 +32,6 @@ chains:
 	if bootstrap.State.Driver != config.StateMemory {
 		t.Fatalf("state driver = %q", bootstrap.State.Driver)
 	}
-	if bootstrap.Rankings.RefreshInterval.AsDuration() != defaultRankingsRefreshInterval ||
-		bootstrap.Rankings.CandleInterval.AsDuration() != defaultRankingsCandleInterval ||
-		bootstrap.Rankings.ReorgWindow.AsDuration() != defaultRankingsReorgWindow {
-		t.Fatalf("rankings defaults = %+v", bootstrap.Rankings)
-	}
 	if bootstrap.Market.MaxHops != defaultMaxHops || len(bootstrap.Market.Intervals) != len(DefaultIntervals()) ||
 		bootstrap.Market.MinLiquidityUsd != defaultMinLiquidityUSD || bootstrap.Market.HistoryDepth != defaultHistoryDepth {
 		t.Fatalf("market defaults = %+v", bootstrap.Market)
@@ -63,8 +58,6 @@ func TestParseRejectsInvalidConfig(t *testing.T) {
 		"unknown driver":         "kafka: {brokers: [b]}\nstorage: {driver: postgres}\nchains: [{name: eth, chain_id: 1, topic: a}]",
 		"postgres no dsn":        "kafka: {brokers: [b]}\nstate: {driver: postgres}\nchains: [{name: eth, chain_id: 1, topic: a}]",
 		"unknown state":          "kafka: {brokers: [b]}\nstate: {driver: redis}\nchains: [{name: eth, chain_id: 1, topic: a}]",
-		"negative rankings":      "kafka: {brokers: [b]}\nrankings: {refresh_interval: -1s}\nchains: [{name: eth, chain_id: 1, topic: a}]",
-		"unknown candle":         "kafka: {brokers: [b]}\nrankings: {candle_interval: 2m}\nchains: [{name: eth, chain_id: 1, topic: a}]",
 		"negative live":          "kafka: {brokers: [b]}\nlive: {client_buffer: -1}\nchains: [{name: eth, chain_id: 1, topic: a}]",
 		"live topic reused":      "kafka: {brokers: [b]}\nlive: {enabled: true}\nchains: [{name: eth, chain_id: 1, topic: a, live_topic: b}, {name: base, chain_id: 2, topic: b}]",
 		"live topic twice":       "kafka: {brokers: [b]}\nlive: {enabled: true}\nchains: [{name: eth, chain_id: 1, topic: a, live_topic: l}, {name: base, chain_id: 2, topic: b, live_topic: l}]",
@@ -77,7 +70,6 @@ func TestParseRejectsInvalidConfig(t *testing.T) {
 		"unknown live":           "kafka: {brokers: [b]}\nlive: {driver: nats}\nchains: [{name: eth, chain_id: 1, topic: a}]",
 		"redis live no addr":     "kafka: {brokers: [b]}\nlive: {enabled: true, driver: redis}\nchains: [{name: eth, chain_id: 1, topic: a}]",
 		"kafka live no brokers":  "source: {driver: file, file: {dir: d}}\nlive: {enabled: true}\nchains: [{name: eth, chain_id: 1, topic: a}]",
-		"rankings candles short": "kafka: {brokers: [b]}\nstorage: {driver: clickhouse, clickhouse: {addr: [c], retention: {candle_days: {5m: 1}}}}\nchains: [{name: eth, chain_id: 1, topic: a}]",
 	}
 	for name, raw := range tests {
 		t.Run(name, func(t *testing.T) {

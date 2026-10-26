@@ -3,7 +3,6 @@ package conf
 import (
 	"errors"
 	"fmt"
-	"slices"
 	"time"
 
 	"github.com/AloneAtWar/chainstream-market/internal/pkg/config"
@@ -58,32 +57,9 @@ func (bootstrap *Bootstrap) Validate() error {
 		if err := retention.Validate(intervals); err != nil {
 			return err
 		}
-		if err := validateRankingCandleDays(retention, bootstrap.GetRankings()); err != nil {
-			return err
-		}
-	}
-	rankings := bootstrap.GetRankings()
-	if rankings.GetRefreshInterval().AsDuration() < 0 || rankings.GetReorgWindow().AsDuration() < 0 {
-		return errors.New("conf: rankings durations must be positive")
-	}
-	candleInterval := rankings.GetCandleInterval().AsDuration()
-	if !slices.Contains(intervals, candleInterval) || candleInterval > 24*time.Hour {
-		return fmt.Errorf("conf: rankings.candle_interval %s must be one of market.intervals and at most 24h", candleInterval)
 	}
 	if err := bootstrap.GetState().Validate(); err != nil {
 		return err
 	}
 	return config.ValidateChains(bootstrap.GetChains(), live)
-}
-
-// validateRankingCandleDays checks that the retention of the candle interval
-// market-rankings reads keeps the buckets it sums over 24h.
-func validateRankingCandleDays(retention *config.Retention, rankings *Rankings) error {
-	for interval, days := range retention.CandleDayDurations() {
-		if interval == rankings.GetCandleInterval().AsDuration() && days > 0 && days < minRankingCandleDays {
-			return fmt.Errorf("conf: storage.clickhouse.retention.candle_days %s must be at least %d, since rankings sum it over 24h",
-				interval, minRankingCandleDays)
-		}
-	}
-	return nil
 }

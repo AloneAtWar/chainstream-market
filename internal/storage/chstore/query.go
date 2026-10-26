@@ -7,12 +7,13 @@ import (
 	"slices"
 	"time"
 
+	"github.com/AloneAtWar/chainstream-market/internal/pkg/chdb"
 	"github.com/AloneAtWar/chainstream-market/internal/pkg/model"
 	"github.com/AloneAtWar/chainstream-market/internal/storage"
 )
 
 func (store *Store) LatestPrice(ctx context.Context, chainID uint64, token string) (model.TokenPrice, bool, error) {
-	var rows []priceRow
+	var rows []chdb.TokenPriceRow
 	err := store.db.WithContext(ctx).
 		Select("block_height, block_time, price_usd, toString(source) AS source, hops, liquidity_usd").
 		Where("chain_id = ? AND token = ?", chainID, token).
@@ -37,7 +38,7 @@ func (store *Store) Candles(ctx context.Context, query model.CandleQuery) ([]mod
 	}
 	// The aliases name the model's columns; prefer_column_name_to_alias
 	// keeps them from shadowing the columns the other aggregates read.
-	var rows []candleRow
+	var rows []chdb.CandleRow
 	err := store.db.WithContext(ctx).Raw(`
 		SELECT open_time,
 			argMax(open, update_height) AS open, argMax(high, update_height) AS high,
@@ -75,7 +76,7 @@ func (store *Store) Trades(ctx context.Context, query model.TradeQuery) ([]model
 	if query.Limit <= 0 || (query.BaseToken == "") == (query.PoolID == "") {
 		return nil, errors.New("clickhouse store: trade query needs a limit and exactly one of base token or pool")
 	}
-	db := store.db.WithContext(ctx).Model(&tradeRow{}).Select(`block_height, block_time, transaction_hash,
+	db := store.db.WithContext(ctx).Model(&chdb.TradeRow{}).Select(`block_height, block_time, transaction_hash,
 		transaction_index, log_index, operation_index, protocol, pool_id, trader, toString(side) AS side,
 		base_token, quote_token, base_amount, quote_amount, price_quote, price_usd, value_usd, outlier`).
 		Where("chain_id = ?", query.ChainID)
@@ -87,7 +88,7 @@ func (store *Store) Trades(ctx context.Context, query model.TradeQuery) ([]model
 	if query.BeforeHeight > 0 {
 		db = db.Where("block_height < ?", query.BeforeHeight)
 	}
-	var rows []tradeRow
+	var rows []chdb.TradeRow
 	if err := db.Order("block_height DESC, log_index DESC, operation_index DESC").Limit(query.Limit).
 		Find(&rows).Error; err != nil {
 		return nil, fmt.Errorf("clickhouse store: query trades: %w", err)

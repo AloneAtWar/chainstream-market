@@ -16,7 +16,6 @@ message Bootstrap {
   pkg.config.State state = 3;
   Market market = 4;
   API api = 5;
-  Rankings rankings = 8;
   pkg.config.Live live = 10;
   pkg.config.Metrics metrics = 11;
   repeated pkg.config.Chain chains = 12;
@@ -61,19 +60,6 @@ message Market {
 // API configures market-api, which reads the ClickHouse store.
 message API {
   string addr = 1;
-}
-
-// Rankings tunes market-rankings, which rolls market-engine's ClickHouse
-// output, holder counts and registry metadata into the token_rankings table
-// that market-api lists.
-message Rankings {
-  google.protobuf.Duration refresh_interval = 1;
-  // candle_interval is the token candle size summed for the 24h columns; it
-  // must be one of market.intervals.
-  google.protobuf.Duration candle_interval = 2;
-  // reorg_window is how far behind the last refresh's chain head latest
-  // prices are read again, so a reorg that moved them is picked up.
-  google.protobuf.Duration reorg_window = 3;
 }
 
 

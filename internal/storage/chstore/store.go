@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"sync"
-	"time"
 
 	"github.com/AloneAtWar/chainstream-market/internal/pkg/chdb"
 	"github.com/AloneAtWar/chainstream-market/internal/pkg/model"
@@ -64,7 +63,7 @@ func (store *Store) loadWritten(ctx context.Context) error {
 		ChainID uint64
 		Height  int64
 	}
-	if err := store.db.WithContext(ctx).Model(&blockRow{}).Select("chain_id, max(block_height) AS height").
+	if err := store.db.WithContext(ctx).Model(&chdb.BlockRow{}).Select("chain_id, max(block_height) AS height").
 		Group("chain_id").Find(&heights).Error; err != nil {
 		return fmt.Errorf("clickhouse store: load heights: %w", err)
 	}
@@ -89,20 +88,7 @@ func (store *Store) WriteBlock(ctx context.Context, block model.BlockOutput) err
 			return err
 		}
 	}
-	if err := store.insertTrades(ctx, block); err != nil {
-		return err
-	}
-	if err := store.insertPrices(ctx, block); err != nil {
-		return err
-	}
-	if err := store.insertCandles(ctx, block); err != nil {
-		return err
-	}
-	// The block row goes last: its presence means the height is complete.
-	if err := store.insert(ctx, "blocks", &[]blockRow{{
-		ChainID: block.ChainID, BlockHeight: block.Height, BlockHash: block.Hash,
-		BlockTime: block.BlockTime, Finalized: block.Finalized,
-	}}); err != nil {
+	if err := chdb.InsertBlock(ctx, store.db, block); err != nil {
 		return err
 	}
 	if block.Height > store.written[block.ChainID] {
@@ -129,65 +115,6 @@ func (store *Store) deleteFrom(ctx context.Context, chainID uint64, operator str
 		if err := store.db.WithContext(ctx).Exec(query, chainID, height).Error; err != nil {
 			return fmt.Errorf("clickhouse store: delete %s %s %d: %w", table.name, operator, height, err)
 		}
-	}
-	return nil
-}
-
-func (store *Store) insertTrades(ctx context.Context, block model.BlockOutput) error {
-	if len(block.Trades) == 0 {
-		return nil
-	}
-	rows := make([]tradeRow, len(block.Trades))
-	for index, trade := range block.Trades {
-		rows[index] = tradeRow{
-			ChainID: trade.ChainID, BlockHeight: trade.BlockHeight, BlockTime: trade.BlockTime,
-			TransactionHash: trade.TransactionHash, TransactionIndex: trade.TransactionIndex,
-			LogIndex: trade.LogIndex, OperationIndex: trade.OperationIndex, Protocol: trade.Protocol,
-			PoolID: trade.PoolID, Trader: trade.Trader, Side: trade.Side.String(),
-			BaseToken: trade.BaseToken, QuoteToken: trade.QuoteToken,
-			BaseAmount: trade.BaseAmount, QuoteAmount: trade.QuoteAmount, PriceQuote: trade.PriceQuote,
-			PriceUSD: trade.PriceUSD, ValueUSD: trade.ValueUSD, Finalized: block.Finalized,
-			RevisionHeight: block.Height, Outlier: trade.Outlier,
-		}
-	}
-	return store.insert(ctx, "trades", &rows)
-}
-
-func (store *Store) insertPrices(ctx context.Context, block model.BlockOutput) error {
-	if len(block.Prices) == 0 {
-		return nil
-	}
-	rows := make([]priceRow, len(block.Prices))
-	for index, price := range block.Prices {
-		rows[index] = priceRow{
-			ChainID: price.ChainID, Token: price.Token, BlockHeight: price.BlockHeight, BlockTime: price.BlockTime,
-			PriceUSD: price.PriceUSD, Source: price.Source.String(), Hops: price.Hops,
-			LiquidityUSD: price.LiquidityUSD, RevisionHeight: block.Height,
-		}
-	}
-	return store.insert(ctx, "token_prices", &rows)
-}
-
-func (store *Store) insertCandles(ctx context.Context, block model.BlockOutput) error {
-	if len(block.Candles) == 0 {
-		return nil
-	}
-	rows := make([]candleRow, len(block.Candles))
-	for index, candle := range block.Candles {
-		rows[index] = candleRow{
-			ChainID: candle.ChainID, Subject: candle.Subject.String(), Key: candle.Key,
-			IntervalSeconds: uint32(candle.Interval / time.Second), OpenTime: candle.OpenTime,
-			Open: candle.Open, High: candle.High, Low: candle.Low, Close: candle.Close,
-			VolumeBase: candle.VolumeBase, VolumeUSD: candle.VolumeUSD, Trades: candle.Trades,
-			UpdateHeight: candle.UpdateHeight,
-		}
-	}
-	return store.insert(ctx, "candles", &rows)
-}
-
-func (store *Store) insert(ctx context.Context, table string, rows any) error {
-	if err := chdb.Insert(ctx, store.db, rows); err != nil {
-		return fmt.Errorf("clickhouse store: insert %s: %w", table, err)
 	}
 	return nil
 }

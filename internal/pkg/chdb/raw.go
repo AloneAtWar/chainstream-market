@@ -58,10 +58,10 @@ func WriteRaw(ctx context.Context, db *gorm.DB, blocks []model.RawBlock) error {
 	}
 	var (
 		transfers []TransferRow
-		trades    []TradeRow
-		oracles   []OracleRow
-		assets    []AssetRow
-		pools     []PoolRow
+		trades    []RawTradeRow
+		oracles   []OracleUpdateRow
+		assets    []AssetFactRow
+		pools     []PoolFactRow
 	)
 	for _, block := range blocks {
 		transfers = appendTransfers(transfers, block)
@@ -104,9 +104,9 @@ func appendTransfers(rows []TransferRow, block model.RawBlock) []TransferRow {
 	return rows
 }
 
-func appendTrades(rows []TradeRow, block model.RawBlock) []TradeRow {
+func appendTrades(rows []RawTradeRow, block model.RawBlock) []RawTradeRow {
 	for _, trade := range block.Trades {
-		row := TradeRow{
+		row := RawTradeRow{
 			ChainID: block.ChainID, BlockHeight: block.Height, BlockTime: block.BlockTime,
 			TransactionHash: trade.TransactionHash, TransactionIndex: trade.TransactionIndex,
 			LogIndex: trade.LogIndex, OperationIndex: trade.OperationIndex, Protocol: trade.Protocol,
@@ -129,9 +129,9 @@ func appendTrades(rows []TradeRow, block model.RawBlock) []TradeRow {
 	return rows
 }
 
-func appendOracles(rows []OracleRow, block model.RawBlock) []OracleRow {
+func appendOracles(rows []OracleUpdateRow, block model.RawBlock) []OracleUpdateRow {
 	for _, update := range block.Oracles {
-		rows = append(rows, OracleRow{
+		rows = append(rows, OracleUpdateRow{
 			ChainID: block.ChainID, BlockHeight: block.Height, BlockTime: block.BlockTime,
 			TransactionHash: update.TransactionHash, TransactionIndex: update.TransactionIndex,
 			LogIndex: update.LogIndex, Feed: update.Feed, Answer: update.Answer, RoundID: update.RoundID,
@@ -141,9 +141,9 @@ func appendOracles(rows []OracleRow, block model.RawBlock) []OracleRow {
 	return rows
 }
 
-func appendAssets(rows []AssetRow, block model.RawBlock) []AssetRow {
+func appendAssets(rows []AssetFactRow, block model.RawBlock) []AssetFactRow {
 	for _, fact := range block.Assets {
-		rows = append(rows, AssetRow{
+		rows = append(rows, AssetFactRow{
 			ChainID: block.ChainID, BlockHeight: block.Height, BlockTime: block.BlockTime, Address: fact.Address,
 			Standard: fact.Standard, Recognition: fact.Recognition, MetadataComplete: fact.MetadataComplete,
 			Type: fact.Type, SourceHeight: fact.SourceHeight, DeploymentHeight: fact.DeploymentHeight,
@@ -155,13 +155,13 @@ func appendAssets(rows []AssetRow, block model.RawBlock) []AssetRow {
 	return rows
 }
 
-func appendPools(rows []PoolRow, block model.RawBlock) []PoolRow {
+func appendPools(rows []PoolFactRow, block model.RawBlock) []PoolFactRow {
 	for _, fact := range block.Pools {
 		tokens := fact.TokenAddresses
 		if tokens == nil {
 			tokens = []string{}
 		}
-		rows = append(rows, PoolRow{
+		rows = append(rows, PoolFactRow{
 			ChainID: block.ChainID, BlockHeight: block.Height, BlockTime: block.BlockTime, PoolID: fact.PoolID,
 			Protocol: fact.Protocol, DexAddress: fact.DexAddress, TokenAddresses: tokens,
 			SourceHeight: fact.SourceHeight, SourceTime: fact.SourceTime, Created: fact.Created,
@@ -198,8 +198,8 @@ type TransferRow struct {
 
 func (TransferRow) TableName() string { return "raw_transfers" }
 
-// TradeRow is a raw_trades row: one unoriented trade.
-type TradeRow struct {
+// RawTradeRow is a raw_trades row: one unoriented trade.
+type RawTradeRow struct {
 	ChainID             uint64
 	BlockHeight         int64
 	BlockTime           time.Time
@@ -226,10 +226,10 @@ type TradeRow struct {
 	ActiveBinID         *uint32
 }
 
-func (TradeRow) TableName() string { return "raw_trades" }
+func (RawTradeRow) TableName() string { return "raw_trades" }
 
-// OracleRow is an oracle_updates row.
-type OracleRow struct {
+// OracleUpdateRow is an oracle_updates row.
+type OracleUpdateRow struct {
 	ChainID          uint64
 	BlockHeight      int64
 	BlockTime        time.Time
@@ -242,10 +242,10 @@ type OracleRow struct {
 	UpdatedAt        int64    `gorm:"autoUpdateTime:false"`
 }
 
-func (OracleRow) TableName() string { return "oracle_updates" }
+func (OracleUpdateRow) TableName() string { return "oracle_updates" }
 
-// AssetRow is an asset_facts row.
-type AssetRow struct {
+// AssetFactRow is an asset_facts row.
+type AssetFactRow struct {
 	ChainID           uint64
 	BlockHeight       int64
 	BlockTime         time.Time
@@ -263,10 +263,10 @@ type AssetRow struct {
 	MetadataJSON      string `gorm:"column:metadata_json"`
 }
 
-func (AssetRow) TableName() string { return "asset_facts" }
+func (AssetFactRow) TableName() string { return "asset_facts" }
 
-// PoolRow is a pool_facts row.
-type PoolRow struct {
+// PoolFactRow is a pool_facts row.
+type PoolFactRow struct {
 	ChainID        uint64
 	BlockHeight    int64
 	BlockTime      time.Time
@@ -280,7 +280,7 @@ type PoolRow struct {
 	MetadataJSON   string `gorm:"column:metadata_json"`
 }
 
-func (PoolRow) TableName() string { return "pool_facts" }
+func (PoolFactRow) TableName() string { return "pool_facts" }
 
 // RawCheckpointRow is a raw_checkpoints row. The table keeps every
 // checkpoint; the one with the highest offset is current.

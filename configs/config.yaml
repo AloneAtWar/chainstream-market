@@ -49,7 +49,8 @@ storage:
       # latest per token and month, so every token keeps its last price;
       # older candle buckets keep only their final version, which needs
       # more than the deepest reorg. Candles of intervals left out of
-      # candle_days are kept; rankings.candle_interval needs 2 days or more.
+      # candle_days are kept; the candle interval market-rankings sums over
+      # 24h needs 2 days or more.
       trades_days: 180
       token_price_rollup_days: 30
       candle_compact_days: 3
@@ -96,17 +97,6 @@ market:
   # How long a backfill waits for ch-loader to reach the heights it reads
   # before it falls back to the held trades.
   backfill_wait: 30s
-
-# market-rankings rolls market-engine's ClickHouse output, holder counts and
-# registry metadata into the token_rankings table that market-api lists; it
-# needs storage.driver: clickhouse and state.driver: postgres.
-rankings:
-  refresh_interval: 1m
-  # Token candle size summed for the 24h columns; one of market.intervals.
-  candle_interval: 5m
-  # Latest prices from this far behind the last refresh's chain head are
-  # read again, so a reorg that moved them is picked up.
-  reorg_window: 1h
 
 # market-api serves what market-engine stored and transfers from ch-loader's
 # tables; it needs storage.driver: clickhouse. With state.driver: postgres it

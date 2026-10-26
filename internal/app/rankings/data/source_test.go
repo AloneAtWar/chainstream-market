@@ -1,11 +1,14 @@
-package chstore
+package data
 
 import (
 	"context"
 	"fmt"
+	"os"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/AloneAtWar/chainstream-market/internal/pkg/chdb"
 	"github.com/AloneAtWar/chainstream-market/internal/pkg/model"
 	"github.com/shopspring/decimal"
 )
@@ -42,9 +45,53 @@ func tokenCandle(token string, interval, openAt time.Duration, open, closePrice,
 	}
 }
 
+// openSource connects to CLICKHOUSE_ADDR in a fresh database with
+// market-engine's tables, or skips when it is unset.
+func openSource(t *testing.T) *rankingSource {
+	t.Helper()
+	addr := os.Getenv("CLICKHOUSE_ADDR")
+	if addr == "" {
+		t.Skip("CLICKHOUSE_ADDR not set")
+	}
+	options := chdb.Options{
+		Addr:     strings.Split(addr, ","),
+		Database: fmt.Sprintf("rankings_test_%d", time.Now().UnixNano()),
+		Username: os.Getenv("CLICKHOUSE_USER"), Password: os.Getenv("CLICKHOUSE_PASSWORD"),
+	}
+	db, err := chdb.Connect(context.Background(), options)
+	if err != nil {
+		t.Fatalf("Connect() error = %v", err)
+	}
+	t.Cleanup(func() {
+		if err := db.WithContext(context.Background()).Exec("DROP DATABASE IF EXISTS " + options.Database).Error; err != nil {
+			t.Errorf("drop database: %v", err)
+		}
+		if err := chdb.Close(db); err != nil {
+			t.Errorf("Close() error = %v", err)
+		}
+	})
+	if err := chdb.Migrate(context.Background(), db, chdb.MarketSchema); err != nil {
+		t.Fatalf("Migrate() error = %v", err)
+	}
+	return &rankingSource{db: db}
+}
+
+// rewind deletes what market-engine wrote above rollbackTo, as its reorg
+// does.
+func rewind(t *testing.T, source *rankingSource, rollbackTo int64) {
+	t.Helper()
+	for table, column := range map[string]string{
+		"blocks": "block_height", "trades": "revision_height", "token_prices": "revision_height", "candles": "update_height",
+	} {
+		if err := source.db.Exec("DELETE FROM "+table+" WHERE chain_id = 1 AND "+column+" > ?", rollbackTo).Error; err != nil {
+			t.Fatalf("rewind %s: %v", table, err)
+		}
+	}
+}
+
 func TestRankingSourceReadsActivityAndQuotes(t *testing.T) {
 	ctx := context.Background()
-	store, _ := openTestStore(t)
+	store := openSource(t)
 	if _, ok, err := store.ChainHead(ctx, 1); err != nil || ok {
 		t.Fatalf("empty ChainHead() = %v, %v", ok, err)
 	}
@@ -69,8 +116,8 @@ func TestRankingSourceReadsActivityAndQuotes(t *testing.T) {
 		}),
 	}
 	for _, block := range blocks {
-		if err := store.WriteBlock(ctx, block); err != nil {
-			t.Fatalf("WriteBlock(%d) error = %v", block.Height, err)
+		if err := chdb.InsertBlock(ctx, store.db, block); err != nil {
+			t.Fatalf("InsertBlock(%d) error = %v", block.Height, err)
 		}
 	}
 
@@ -119,9 +166,7 @@ func TestRankingSourceReadsActivityAndQuotes(t *testing.T) {
 	}
 
 	// After a reorg the latest quote and the bucket fall back.
-	if rewindErr := store.Rewind(ctx, 1, 21); rewindErr != nil {
-		t.Fatalf("Rewind() error = %v", rewindErr)
-	}
+	rewind(t, store, 21)
 	recent, err = store.LatestQuotes(ctx, 1, rankingBase.Add(24*time.Hour), nil)
 	if err != nil || len(recent) != 1 || recent[0].BlockHeight != 21 {
 		t.Fatalf("LatestQuotes(after rewind) = %+v, %v", recent, err)
@@ -137,5 +182,12 @@ func TestRankingSourceReadsActivityAndQuotes(t *testing.T) {
 	}
 	if _, err := store.TokenActivity(ctx, 1, 0, head); err == nil {
 		t.Fatal("TokenActivity(zero interval) error = nil")
+	}
+}
+
+func assertDecimalEqual(t *testing.T, got decimal.Decimal, want string) {
+	t.Helper()
+	if !got.Equal(decimal.RequireFromString(want)) {
+		t.Fatalf("value = %s, want %s", got, want)
 	}
 }

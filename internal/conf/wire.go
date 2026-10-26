@@ -11,7 +11,7 @@ import (
 // instead.
 var ProviderSet = wire.NewSet(
 	wire.FieldsOf(new(*Bootstrap),
-		"Kafka", "Storage", "Market", "Api", "Rankings", "Live", "Metrics", "Chains"),
+		"Kafka", "Storage", "Market", "Api", "Live", "Metrics", "Chains"),
 	NewState,
 )
 

@@ -18,7 +18,6 @@ import (
 	"github.com/AloneAtWar/chainstream-market/internal/pkg/config"
 	"github.com/AloneAtWar/chainstream-market/internal/pkg/rpc"
 	"github.com/AloneAtWar/chainstream-market/internal/pkg/source"
-	"github.com/AloneAtWar/chainstream-market/internal/rankings"
 	"github.com/AloneAtWar/chainstream-market/internal/storage"
 	"github.com/google/wire"
 	"github.com/shopspring/decimal"
@@ -26,8 +25,7 @@ import (
 
 // The provider sets of the commands that consume chain topics.
 var (
-	MarketSet  = wire.NewSet(NewMarketEngines)
-	RankingSet = wire.NewSet(NewRefreshers)
+	MarketSet = wire.NewSet(NewMarketEngines)
 )
 
 // Runner is one unit of a command's work, such as one chain's engine. Run
@@ -144,26 +142,4 @@ func ResolveFeeds(ctx context.Context, chain *config.Chain, logger *slog.Logger)
 		}
 	}
 	return feeds, nil
-}
-
-// NewRefreshers builds market-rankings' refresher per chain.
-func NewRefreshers(chains []*config.Chain, rankingConfig *conf.Rankings, source storage.RankingSource, store storage.RankingStore, logger *slog.Logger) (Runners, error) {
-	period := rankingConfig.GetRefreshInterval().AsDuration()
-	logger.Info("refreshing rankings", "every", period, "candle_interval", rankingConfig.GetCandleInterval().AsDuration())
-	runners := make(Runners, 0, len(chains))
-	for _, chain := range chains {
-		refresher, err := rankings.New(rankings.Options{
-			ChainID: chain.GetChainId(), Chain: chain.GetName(), Source: source, Store: store,
-			Interval: rankingConfig.GetCandleInterval().AsDuration(), ReorgWindow: rankingConfig.GetReorgWindow().AsDuration(),
-			Logger: logger.With("chain", chain.GetName()),
-		})
-		if err != nil {
-			return nil, fmt.Errorf("chain %s: %w", chain.GetName(), err)
-		}
-		runners = append(runners, Runner{Name: "rankings " + chain.GetName(), Run: func(ctx context.Context) error {
-			refresher.Run(ctx, period)
-			return nil
-		}})
-	}
-	return runners, nil
 }

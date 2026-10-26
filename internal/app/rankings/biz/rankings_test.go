@@ -1,4 +1,4 @@
-package rankings
+package biz
 
 import (
 	"context"
@@ -63,7 +63,7 @@ func (fake *fakeStore) CommitRankings(_ context.Context, refresh model.RankingRe
 func newTestRefresher(t *testing.T, source *fakeSource, store *fakeStore) *Refresher {
 	t.Helper()
 	refresher, err := New(Options{
-		ChainID: 1, Source: source, Store: store, Interval: 5 * time.Minute, ReorgWindow: time.Hour,
+		ChainID: 1, Source: source, Repo: store, Interval: 5 * time.Minute, ReorgWindow: time.Hour,
 		Now: func() time.Time { return time.Unix(9_000, 0) },
 	})
 	if err != nil {
@@ -146,7 +146,7 @@ func commitsOf(store *fakeStore) []model.RankingRefresh {
 }
 
 func TestNewValidatesOptions(t *testing.T) {
-	base := Options{ChainID: 1, Source: &fakeSource{}, Store: &fakeStore{}, Interval: time.Minute, ReorgWindow: time.Hour}
+	base := Options{ChainID: 1, Source: &fakeSource{}, Repo: &fakeStore{}, Interval: time.Minute, ReorgWindow: time.Hour}
 	for name, mutate := range map[string]func(*Options){
 		"no chain":     func(options *Options) { options.ChainID = 0 },
 		"no source":    func(options *Options) { options.Source = nil },

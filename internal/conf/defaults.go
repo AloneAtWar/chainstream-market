@@ -1,7 +1,6 @@
 package conf
 
 import (
-	"slices"
 	"strings"
 	"time"
 
@@ -22,12 +21,6 @@ const (
 	defaultLateTradesPerToken    = 1000
 	defaultBackfillBlocks        = 50400
 	defaultBackfillWait          = 30 * time.Second
-
-	defaultRankingsRefreshInterval = time.Minute
-	defaultRankingsCandleInterval  = 5 * time.Minute
-	defaultRankingsReorgWindow     = time.Hour
-	// minRankingCandleDays keeps the candles market-rankings sums over 24h.
-	minRankingCandleDays = 2
 )
 
 // DefaultIntervals are the candle sizes used when none are configured.
@@ -57,9 +50,6 @@ func (bootstrap *Bootstrap) ApplyDefaults() {
 	}
 	if bootstrap.Api == nil {
 		bootstrap.Api = &API{}
-	}
-	if bootstrap.Rankings == nil {
-		bootstrap.Rankings = &Rankings{}
 	}
 	if bootstrap.Live == nil {
 		bootstrap.Live = &config.Live{}
@@ -108,18 +98,6 @@ func (bootstrap *Bootstrap) ApplyDefaults() {
 		market.BackfillBlocks = defaultBackfillBlocks
 	}
 	config.DefaultDuration(&market.BackfillWait, defaultBackfillWait)
-
-	rankings := bootstrap.Rankings
-	config.DefaultDuration(&rankings.RefreshInterval, defaultRankingsRefreshInterval)
-	if rankings.CandleInterval.AsDuration() == 0 {
-		intervals := market.IntervalDurations()
-		candleInterval := slices.Min(intervals)
-		if slices.Contains(intervals, defaultRankingsCandleInterval) {
-			candleInterval = defaultRankingsCandleInterval
-		}
-		rankings.CandleInterval = durationpb.New(candleInterval)
-	}
-	config.DefaultDuration(&rankings.ReorgWindow, defaultRankingsReorgWindow)
 
 	if strings.TrimSpace(bootstrap.Api.Addr) == "" {
 		bootstrap.Api.Addr = defaultAPIAddr

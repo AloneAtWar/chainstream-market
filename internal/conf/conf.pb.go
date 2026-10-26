@@ -33,7 +33,6 @@ type Bootstrap struct {
 	State         *config.State          `protobuf:"bytes,3,opt,name=state,proto3" json:"state,omitempty"`
 	Market        *Market                `protobuf:"bytes,4,opt,name=market,proto3" json:"market,omitempty"`
 	Api           *API                   `protobuf:"bytes,5,opt,name=api,proto3" json:"api,omitempty"`
-	Rankings      *Rankings              `protobuf:"bytes,8,opt,name=rankings,proto3" json:"rankings,omitempty"`
 	Live          *config.Live           `protobuf:"bytes,10,opt,name=live,proto3" json:"live,omitempty"`
 	Metrics       *config.Metrics        `protobuf:"bytes,11,opt,name=metrics,proto3" json:"metrics,omitempty"`
 	Chains        []*config.Chain        `protobuf:"bytes,12,rep,name=chains,proto3" json:"chains,omitempty"`
@@ -103,13 +102,6 @@ func (x *Bootstrap) GetMarket() *Market {
 func (x *Bootstrap) GetApi() *API {
 	if x != nil {
 		return x.Api
-	}
-	return nil
-}
-
-func (x *Bootstrap) GetRankings() *Rankings {
-	if x != nil {
-		return x.Rankings
 	}
 	return nil
 }
@@ -332,85 +324,17 @@ func (x *API) GetAddr() string {
 	return ""
 }
 
-// Rankings tunes market-rankings, which rolls market-engine's ClickHouse
-// output, holder counts and registry metadata into the token_rankings table
-// that market-api lists.
-type Rankings struct {
-	state           protoimpl.MessageState `protogen:"open.v1"`
-	RefreshInterval *durationpb.Duration   `protobuf:"bytes,1,opt,name=refresh_interval,json=refreshInterval,proto3" json:"refresh_interval,omitempty"`
-	// candle_interval is the token candle size summed for the 24h columns; it
-	// must be one of market.intervals.
-	CandleInterval *durationpb.Duration `protobuf:"bytes,2,opt,name=candle_interval,json=candleInterval,proto3" json:"candle_interval,omitempty"`
-	// reorg_window is how far behind the last refresh's chain head latest
-	// prices are read again, so a reorg that moved them is picked up.
-	ReorgWindow   *durationpb.Duration `protobuf:"bytes,3,opt,name=reorg_window,json=reorgWindow,proto3" json:"reorg_window,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *Rankings) Reset() {
-	*x = Rankings{}
-	mi := &file_conf_conf_proto_msgTypes[3]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *Rankings) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*Rankings) ProtoMessage() {}
-
-func (x *Rankings) ProtoReflect() protoreflect.Message {
-	mi := &file_conf_conf_proto_msgTypes[3]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use Rankings.ProtoReflect.Descriptor instead.
-func (*Rankings) Descriptor() ([]byte, []int) {
-	return file_conf_conf_proto_rawDescGZIP(), []int{3}
-}
-
-func (x *Rankings) GetRefreshInterval() *durationpb.Duration {
-	if x != nil {
-		return x.RefreshInterval
-	}
-	return nil
-}
-
-func (x *Rankings) GetCandleInterval() *durationpb.Duration {
-	if x != nil {
-		return x.CandleInterval
-	}
-	return nil
-}
-
-func (x *Rankings) GetReorgWindow() *durationpb.Duration {
-	if x != nil {
-		return x.ReorgWindow
-	}
-	return nil
-}
-
 var File_conf_conf_proto protoreflect.FileDescriptor
 
 const file_conf_conf_proto_rawDesc = "" +
 	"\n" +
-	"\x0fconf/conf.proto\x12\x04conf\x1a\x1egoogle/protobuf/duration.proto\x1a\x17pkg/config/common.proto\"\xa7\x03\n" +
+	"\x0fconf/conf.proto\x12\x04conf\x1a\x1egoogle/protobuf/duration.proto\x1a\x17pkg/config/common.proto\"\xfb\x02\n" +
 	"\tBootstrap\x12'\n" +
 	"\x05kafka\x18\x01 \x01(\v2\x11.pkg.config.KafkaR\x05kafka\x12-\n" +
 	"\astorage\x18\x02 \x01(\v2\x13.pkg.config.StorageR\astorage\x12'\n" +
 	"\x05state\x18\x03 \x01(\v2\x11.pkg.config.StateR\x05state\x12$\n" +
 	"\x06market\x18\x04 \x01(\v2\f.conf.MarketR\x06market\x12\x1b\n" +
-	"\x03api\x18\x05 \x01(\v2\t.conf.APIR\x03api\x12*\n" +
-	"\brankings\x18\b \x01(\v2\x0e.conf.RankingsR\brankings\x12$\n" +
+	"\x03api\x18\x05 \x01(\v2\t.conf.APIR\x03api\x12$\n" +
 	"\x04live\x18\n" +
 	" \x01(\v2\x10.pkg.config.LiveR\x04live\x12-\n" +
 	"\ametrics\x18\v \x01(\v2\x13.pkg.config.MetricsR\ametrics\x12)\n" +
@@ -430,11 +354,7 @@ const file_conf_conf_proto_rawDesc = "" +
 	" \x01(\x03R\x0ebackfillBlocks\x12>\n" +
 	"\rbackfill_wait\x18\v \x01(\v2\x19.google.protobuf.DurationR\fbackfillWait\"\x19\n" +
 	"\x03API\x12\x12\n" +
-	"\x04addr\x18\x01 \x01(\tR\x04addr\"\xd2\x01\n" +
-	"\bRankings\x12D\n" +
-	"\x10refresh_interval\x18\x01 \x01(\v2\x19.google.protobuf.DurationR\x0frefreshInterval\x12B\n" +
-	"\x0fcandle_interval\x18\x02 \x01(\v2\x19.google.protobuf.DurationR\x0ecandleInterval\x12<\n" +
-	"\freorg_window\x18\x03 \x01(\v2\x19.google.protobuf.DurationR\vreorgWindowB=Z;github.com/AloneAtWar/chainstream-market/internal/conf;confb\x06proto3"
+	"\x04addr\x18\x01 \x01(\tR\x04addrB=Z;github.com/AloneAtWar/chainstream-market/internal/conf;confb\x06proto3"
 
 var (
 	file_conf_conf_proto_rawDescOnce sync.Once
@@ -448,42 +368,37 @@ func file_conf_conf_proto_rawDescGZIP() []byte {
 	return file_conf_conf_proto_rawDescData
 }
 
-var file_conf_conf_proto_msgTypes = make([]protoimpl.MessageInfo, 4)
+var file_conf_conf_proto_msgTypes = make([]protoimpl.MessageInfo, 3)
 var file_conf_conf_proto_goTypes = []any{
 	(*Bootstrap)(nil),           // 0: conf.Bootstrap
 	(*Market)(nil),              // 1: conf.Market
 	(*API)(nil),                 // 2: conf.API
-	(*Rankings)(nil),            // 3: conf.Rankings
-	(*config.Kafka)(nil),        // 4: pkg.config.Kafka
-	(*config.Storage)(nil),      // 5: pkg.config.Storage
-	(*config.State)(nil),        // 6: pkg.config.State
-	(*config.Live)(nil),         // 7: pkg.config.Live
-	(*config.Metrics)(nil),      // 8: pkg.config.Metrics
-	(*config.Chain)(nil),        // 9: pkg.config.Chain
-	(*config.Source)(nil),       // 10: pkg.config.Source
-	(*durationpb.Duration)(nil), // 11: google.protobuf.Duration
+	(*config.Kafka)(nil),        // 3: pkg.config.Kafka
+	(*config.Storage)(nil),      // 4: pkg.config.Storage
+	(*config.State)(nil),        // 5: pkg.config.State
+	(*config.Live)(nil),         // 6: pkg.config.Live
+	(*config.Metrics)(nil),      // 7: pkg.config.Metrics
+	(*config.Chain)(nil),        // 8: pkg.config.Chain
+	(*config.Source)(nil),       // 9: pkg.config.Source
+	(*durationpb.Duration)(nil), // 10: google.protobuf.Duration
 }
 var file_conf_conf_proto_depIdxs = []int32{
-	4,  // 0: conf.Bootstrap.kafka:type_name -> pkg.config.Kafka
-	5,  // 1: conf.Bootstrap.storage:type_name -> pkg.config.Storage
-	6,  // 2: conf.Bootstrap.state:type_name -> pkg.config.State
+	3,  // 0: conf.Bootstrap.kafka:type_name -> pkg.config.Kafka
+	4,  // 1: conf.Bootstrap.storage:type_name -> pkg.config.Storage
+	5,  // 2: conf.Bootstrap.state:type_name -> pkg.config.State
 	1,  // 3: conf.Bootstrap.market:type_name -> conf.Market
 	2,  // 4: conf.Bootstrap.api:type_name -> conf.API
-	3,  // 5: conf.Bootstrap.rankings:type_name -> conf.Rankings
-	7,  // 6: conf.Bootstrap.live:type_name -> pkg.config.Live
-	8,  // 7: conf.Bootstrap.metrics:type_name -> pkg.config.Metrics
-	9,  // 8: conf.Bootstrap.chains:type_name -> pkg.config.Chain
-	10, // 9: conf.Bootstrap.source:type_name -> pkg.config.Source
-	11, // 10: conf.Market.intervals:type_name -> google.protobuf.Duration
-	11, // 11: conf.Market.backfill_wait:type_name -> google.protobuf.Duration
-	11, // 12: conf.Rankings.refresh_interval:type_name -> google.protobuf.Duration
-	11, // 13: conf.Rankings.candle_interval:type_name -> google.protobuf.Duration
-	11, // 14: conf.Rankings.reorg_window:type_name -> google.protobuf.Duration
-	15, // [15:15] is the sub-list for method output_type
-	15, // [15:15] is the sub-list for method input_type
-	15, // [15:15] is the sub-list for extension type_name
-	15, // [15:15] is the sub-list for extension extendee
-	0,  // [0:15] is the sub-list for field type_name
+	6,  // 5: conf.Bootstrap.live:type_name -> pkg.config.Live
+	7,  // 6: conf.Bootstrap.metrics:type_name -> pkg.config.Metrics
+	8,  // 7: conf.Bootstrap.chains:type_name -> pkg.config.Chain
+	9,  // 8: conf.Bootstrap.source:type_name -> pkg.config.Source
+	10, // 9: conf.Market.intervals:type_name -> google.protobuf.Duration
+	10, // 10: conf.Market.backfill_wait:type_name -> google.protobuf.Duration
+	11, // [11:11] is the sub-list for method output_type
+	11, // [11:11] is the sub-list for method input_type
+	11, // [11:11] is the sub-list for extension type_name
+	11, // [11:11] is the sub-list for extension extendee
+	0,  // [0:11] is the sub-list for field type_name
 }
 
 func init() { file_conf_conf_proto_init() }
@@ -497,7 +412,7 @@ func file_conf_conf_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_conf_conf_proto_rawDesc), len(file_conf_conf_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   4,
+			NumMessages:   3,
 			NumExtensions: 0,
 			NumServices:   0,
 		},
