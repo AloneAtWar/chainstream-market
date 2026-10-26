@@ -1,3 +1,16 @@
+# Where chain topics are read from: kafka or file.
+# kafka: each chain's topic on the kafka brokers below.
+# file: <file.dir>/<topic>.jsonl, one stream.v1.StreamRecord in protobuf JSON
+#   per line, as chainstream-evm writes with output.type file and
+#   output.file.format protojson. The file is followed as it grows; a
+#   record's offset is its index among the non-blank lines.
+source:
+  driver: kafka
+  file:
+    dir: data
+    poll_interval: 200ms
+
+# Kafka brokers, used with source.driver kafka and live.driver kafka.
 kafka:
   brokers:
     - 127.0.0.1:9092
@@ -135,6 +148,15 @@ api:
 # market-api streams them to WebSocket clients at /v1/stream.
 live:
   enabled: false
+  # Transport from market-engine to market-api: kafka, on each chain's
+  # live_topic, or redis, on a Pub/Sub channel named after it.
+  driver: kafka
+  redis:
+    addr: 127.0.0.1:6379
+    username: ""
+    password: ""
+    database: 0
+    dial_timeout: 5s
   # Blocks further than this behind the clock are not pushed, so a catch-up
   # does not flood clients; a negative value pushes every block.
   max_lag: 10m

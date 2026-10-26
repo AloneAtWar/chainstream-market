@@ -13,10 +13,10 @@ func Validate(bootstrap *Bootstrap) error {
 	if bootstrap == nil {
 		return errors.New("conf: bootstrap config is required")
 	}
-	kafka := bootstrap.GetKafka()
-	if len(kafka.GetBrokers()) == 0 {
-		return errors.New("conf: kafka.brokers is required")
+	if err := validateTransports(bootstrap); err != nil {
+		return err
 	}
+	kafka := bootstrap.GetKafka()
 	for _, broker := range kafka.GetBrokers() {
 		if strings.TrimSpace(broker) == "" {
 			return errors.New("conf: kafka.brokers must not contain empty values")
@@ -124,6 +124,43 @@ func Validate(bootstrap *Bootstrap) error {
 		}
 	}
 	return validateLiveTopics(bootstrap)
+}
+
+// validateTransports checks source.driver and live.driver, and that the
+// kafka brokers or Redis server they use are set.
+func validateTransports(bootstrap *Bootstrap) error {
+	live := bootstrap.GetLive()
+	needsKafka := false
+	switch bootstrap.GetSource().GetDriver() {
+	case SourceKafka:
+		needsKafka = true
+	case SourceFile:
+		if strings.TrimSpace(bootstrap.GetSource().GetFile().GetDir()) == "" {
+			return errors.New("conf: source.file.dir is required")
+		}
+		if bootstrap.GetSource().GetFile().GetPollInterval().AsDuration() < 0 {
+			return errors.New("conf: source.file.poll_interval must be positive")
+		}
+	default:
+		return fmt.Errorf("conf: unsupported source.driver %q", bootstrap.GetSource().GetDriver())
+	}
+	switch live.GetDriver() {
+	case LiveKafka:
+		needsKafka = needsKafka || live.GetEnabled()
+	case LiveRedis:
+		if live.GetEnabled() && strings.TrimSpace(live.GetRedis().GetAddr()) == "" {
+			return errors.New("conf: live.redis.addr is required")
+		}
+		if live.GetRedis().GetDatabase() < 0 || live.GetRedis().GetDialTimeout().AsDuration() < 0 {
+			return errors.New("conf: live.redis settings must be positive")
+		}
+	default:
+		return fmt.Errorf("conf: unsupported live.driver %q", live.GetDriver())
+	}
+	if needsKafka && len(bootstrap.GetKafka().GetBrokers()) == 0 {
+		return errors.New("conf: kafka.brokers is required")
+	}
+	return nil
 }
 
 // validateRetention checks that ages are not negative, that the cold tier

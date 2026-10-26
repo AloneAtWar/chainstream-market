@@ -16,6 +16,7 @@ import (
 	"github.com/AloneAtWar/chainstream-market/internal/source"
 	"github.com/AloneAtWar/chainstream-market/internal/storage"
 	streamv1 "github.com/AloneAtWar/chainstream-market/proto/stream/v1"
+	"github.com/alicebob/miniredis/v2"
 	"github.com/coder/websocket"
 	"github.com/shopspring/decimal"
 	"github.com/twmb/franz-go/pkg/kfake"
@@ -183,11 +184,45 @@ func storedModel(memory *storage.Memory, channels []string) *streamModel {
 	return model
 }
 
-// TestSmokeLiveThroughKafka runs market-engine with a live publisher over a
-// kfake cluster, and a hub serving a real WebSocket client. A reorg replaces
+// TestSmokeLiveThroughKafka runs market-engine over a kfake cluster with a
+// live publisher on the same cluster, and a hub serving a real WebSocket
+// client. A reorg replaces
 // two blocks; the client, applying messages in order, must end with exactly
 // the trades and candles market-engine stored.
 func TestSmokeLiveThroughKafka(t *testing.T) {
+	smokeLive(t, func(brokers []string) (Sink, Feed) {
+		sink, err := NewKafkaSink(KafkaOptions{Brokers: brokers})
+		if err != nil {
+			t.Fatalf("NewKafkaSink() error = %v", err)
+		}
+		feed, err := NewKafkaFeed(KafkaOptions{Brokers: brokers, FetchMaxWait: 20 * time.Millisecond})
+		if err != nil {
+			t.Fatalf("NewKafkaFeed() error = %v", err)
+		}
+		return sink, feed
+	})
+}
+
+// TestSmokeLiveThroughRedis is TestSmokeLiveThroughKafka with live updates
+// carried over Redis Pub/Sub.
+func TestSmokeLiveThroughRedis(t *testing.T) {
+	server := miniredis.RunT(t)
+	smokeLive(t, func([]string) (Sink, Feed) {
+		options := RedisOptions{Addr: server.Addr()}
+		sink, err := NewRedisSink(options)
+		if err != nil {
+			t.Fatalf("NewRedisSink() error = %v", err)
+		}
+		feed, err := NewRedisFeed(options)
+		if err != nil {
+			t.Fatalf("NewRedisFeed() error = %v", err)
+		}
+		return sink, feed
+	})
+}
+
+func smokeLive(t *testing.T, transport func(brokers []string) (Sink, Feed)) {
+	t.Helper()
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	cluster, err := kfake.NewCluster(kfake.NumBrokers(1), kfake.SeedTopics(1, smokeTopic, smokeLiveTopic))
@@ -208,9 +243,10 @@ func TestSmokeLiveThroughKafka(t *testing.T) {
 		}
 	}
 
+	sink, feed := transport(brokers)
 	intervals := []time.Duration{time.Minute, time.Hour}
 	hub, err := NewHub(HubOptions{
-		Brokers: brokers, FetchMaxWait: 20 * time.Millisecond, Topics: map[uint64]string{1: smokeLiveTopic},
+		Feed: feed, Topics: map[uint64]string{1: smokeLiveTopic},
 		Intervals: intervals, Throttle: 10 * time.Millisecond, ClientBuffer: 1024, MaxSubscriptions: 10,
 	})
 	if err != nil {
@@ -258,13 +294,15 @@ func TestSmokeLiveThroughKafka(t *testing.T) {
 			return nil, false
 		}
 	}
-	// The hub starts at the end of the live topic; probe until it consumes.
+	// The hub starts at the end of the live topic; probe until it follows.
 	deadline := time.Now().Add(10 * time.Second)
 	for probing := true; probing; {
 		if time.Now().After(deadline) {
 			t.Fatal("hub never consumed the probe")
 		}
-		produce(smokeLiveTopic, []byte(`{"type":"block","chain_id":1,"height":1}`))
+		if sendErr := sink.Send(ctx, smokeLiveTopic, [][]byte{[]byte(`{"type":"block","chain_id":1,"height":1}`)}); sendErr != nil {
+			t.Fatalf("Send() error = %v", sendErr)
+		}
 		for {
 			payload, ok := read(500 * time.Millisecond)
 			if !ok {
@@ -303,7 +341,7 @@ func TestSmokeLiveThroughKafka(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewProcessor() error = %v", err)
 	}
-	publisher, err := NewPublisher(PublisherOptions{Brokers: brokers, Topics: map[uint64]string{1: smokeLiveTopic}, MaxLag: -1})
+	publisher, err := NewPublisher(PublisherOptions{Sink: sink, Topics: map[uint64]string{1: smokeLiveTopic}, MaxLag: -1})
 	if err != nil {
 		t.Fatalf("NewPublisher() error = %v", err)
 	}

@@ -24,6 +24,9 @@ chains:
 	if config.Storage.Driver != StorageMemory {
 		t.Fatalf("storage driver = %q", config.Storage.Driver)
 	}
+	if config.Source.Driver != SourceKafka || config.Live.Driver != LiveKafka {
+		t.Fatalf("source driver = %q, live driver = %q", config.Source.Driver, config.Live.Driver)
+	}
 	if config.Holders.ReconcileEvery != defaultHoldersReconcileEvery || config.Holders.RpcBatchSize != defaultRPCBatchSize ||
 		config.Holders.HistoryDepth != defaultHistoryDepth {
 		t.Fatalf("holders defaults = %+v", config.Holders)
@@ -81,6 +84,11 @@ func TestParseRejectsInvalidConfig(t *testing.T) {
 		"policy without cold":    "kafka: {brokers: [b]}\nstorage: {driver: clickhouse, clickhouse: {addr: [c], retention: {storage_policy: hot_cold}}}\nchains: [{name: eth, chain_id: 1, topic: a}]",
 		"cold without policy":    "kafka: {brokers: [b]}\nstorage: {driver: clickhouse, clickhouse: {addr: [c], retention: {cold_after_days: 7}}}\nchains: [{name: eth, chain_id: 1, topic: a}]",
 		"retention interval":     "kafka: {brokers: [b]}\nstorage: {driver: clickhouse, clickhouse: {addr: [c], retention: {candle_days: {2m: 30}}}}\nchains: [{name: eth, chain_id: 1, topic: a}]",
+		"unknown source":         "kafka: {brokers: [b]}\nsource: {driver: nats}\nchains: [{name: eth, chain_id: 1, topic: a}]",
+		"file source no dir":     "source: {driver: file}\nchains: [{name: eth, chain_id: 1, topic: a}]",
+		"unknown live":           "kafka: {brokers: [b]}\nlive: {driver: nats}\nchains: [{name: eth, chain_id: 1, topic: a}]",
+		"redis live no addr":     "kafka: {brokers: [b]}\nlive: {enabled: true, driver: redis}\nchains: [{name: eth, chain_id: 1, topic: a}]",
+		"kafka live no brokers":  "source: {driver: file, file: {dir: d}}\nlive: {enabled: true}\nchains: [{name: eth, chain_id: 1, topic: a}]",
 		"rankings candles short": "kafka: {brokers: [b]}\nstorage: {driver: clickhouse, clickhouse: {addr: [c], retention: {candle_days: {5m: 1}}}}\nchains: [{name: eth, chain_id: 1, topic: a}]",
 	}
 	for name, raw := range tests {
@@ -120,6 +128,29 @@ chains:
 	config.Live.Enabled = false
 	if topics := config.LiveTopics(); topics != nil {
 		t.Fatalf("disabled LiveTopics() = %v", topics)
+	}
+}
+
+// TestParseWithoutKafka reads chain topics from files and pushes live
+// updates through Redis, so no kafka brokers are needed.
+func TestParseWithoutKafka(t *testing.T) {
+	config, err := Parse([]byte(`
+source:
+  driver: file
+  file: {dir: data}
+live:
+  enabled: true
+  driver: redis
+  redis: {addr: 127.0.0.1:6379}
+chains:
+  - {name: eth, chain_id: 1, topic: chainstream-eth}
+`))
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	if config.Source.File.PollInterval.AsDuration() != defaultSourcePollInterval ||
+		config.Live.Redis.DialTimeout.AsDuration() != defaultRedisDialTimeout {
+		t.Fatalf("source = %+v, live = %+v", config.Source, config.Live)
 	}
 }
 

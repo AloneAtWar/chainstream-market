@@ -1,6 +1,7 @@
 package live
 
 import (
+	"context"
 	"encoding/json"
 	"strconv"
 	"strings"
@@ -17,13 +18,21 @@ const (
 func newTestHub(t *testing.T, buffer int) *Hub {
 	t.Helper()
 	hub, err := NewHub(HubOptions{
-		Topics: map[uint64]string{1: "chainstream-eth-live"}, Intervals: []time.Duration{time.Minute, time.Hour},
+		Feed: idleFeed{}, Topics: map[uint64]string{1: "chainstream-eth-live"}, Intervals: []time.Duration{time.Minute, time.Hour},
 		Throttle: time.Second, ClientBuffer: buffer, MaxSubscriptions: 4,
 	})
 	if err != nil {
 		t.Fatalf("NewHub() error = %v", err)
 	}
 	return hub
+}
+
+// idleFeed delivers nothing; the tests dispatch updates themselves.
+type idleFeed struct{}
+
+func (idleFeed) Run(ctx context.Context, _ []string, _ func(string, []byte)) error {
+	<-ctx.Done()
+	return nil
 }
 
 // received drains the client's queue as "type channel" lines, with the

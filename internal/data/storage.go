@@ -68,14 +68,18 @@ func openBackend[Config any](
 ) (Backend, func(), error) {
 	opener, ok := drivers[driver]
 	if !ok {
-		return Backend{}, nil, fmt.Errorf("%s %q has no %s backend; use one of: %s",
-			setting, driver, kind, strings.Join(slices.Sorted(maps.Keys(drivers)), ", "))
+		return Backend{}, nil, fmt.Errorf("%s %q has no %s backend; use one of: %s", setting, driver, kind, driverNames(drivers))
 	}
 	store, cleanup, err := opener(ctx, config, logger)
 	if err != nil {
 		return Backend{}, nil, fmt.Errorf("%s %q: %w", setting, driver, err)
 	}
 	return Backend{Setting: setting, Driver: driver, store: store}, cleanup, nil
+}
+
+// driverNames lists the drivers of a setting.
+func driverNames[Driver any](drivers map[string]Driver) string {
+	return strings.Join(slices.Sorted(maps.Keys(drivers)), ", ")
 }
 
 // NewMarketBackend opens the market backend storage.driver names.

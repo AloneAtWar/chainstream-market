@@ -24,8 +24,10 @@ func wireApp(contextContext context.Context, bootstrap *conf.Bootstrap, logger *
 	metricsServer := server.NewMetricsServer(metrics, logger)
 	v := bootstrap.Chains
 	registry := bootstrap.Registry
-	kafka := bootstrap.Kafka
-	sources := data.NewSources(kafka)
+	sources, err := data.NewSources(bootstrap)
+	if err != nil {
+		return nil, nil, err
+	}
 	state := conf.NewState(bootstrap)
 	stateBackend, cleanup, err := data.NewStateBackend(contextContext, state, logger)
 	if err != nil {

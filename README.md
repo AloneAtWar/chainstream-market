@@ -19,10 +19,10 @@ Market data services built on the [chainstream-evm](https://github.com/AloneAtWa
 | `internal/holders` | holder-indexer's handler: transfer deltas, balanceOf seeding and reconciliation. |
 | `internal/registry` | market-registry's handler: asset and pool facts to token and pool metadata. |
 | `internal/rankings` | market-rankings' refresher: reads the ClickHouse output and commits one chain's rankings. |
-| `internal/live` | Realtime push: market-engine's live topic publisher and market-api's WebSocket hub. |
+| `internal/live` | Realtime push: market-engine's live topic publisher and market-api's WebSocket hub, over a Kafka or Redis Pub/Sub transport. |
 | `internal/rpc` | Minimal JSON-RPC client for batched `balanceOf` calls. |
 | `internal/market` | Per-chain processor: pool state, base/quote orientation, the USD price graph and candles. |
-| `internal/source` | Kafka reader for partition zero of a chain topic. |
+| `internal/source` | Chain topic readers: Kafka partition zero, or a followed file of protobuf JSON records. |
 | `internal/storage` | Output models (oriented trades, token prices, candles), store interfaces and the in-memory backend. |
 | `internal/storage/chstore` | ClickHouse output store and schema, through GORM. |
 | `internal/storage/chraw` | ClickHouse raw fact store and schema for ch-loader, through GORM. |
@@ -37,7 +37,7 @@ Market data services built on the [chainstream-evm](https://github.com/AloneAtWa
 
 ## market-engine
 
-Each chain runs its own engine, which reads the chain topic in offset order without a consumer group. After each record the engine saves a checkpoint (offset, height, hash), so a restart resumes at the next unapplied record. If a checkpoint falls outside Kafka retention, the engine stops rather than skipping data.
+Each chain runs its own engine, which reads the chain topic in offset order without a consumer group. `source.driver` decides where the topic is read from: `kafka`, or `file`, which follows `<source.file.dir>/<topic>.jsonl` with one `StreamRecord` in protobuf JSON per line, such as chainstream-evm's file output writes with `output.file.format: protojson`. A file record's offset is its index among the non-blank lines, so checkpoints work the same way; a file lets the whole pipeline run without Kafka, or replay a recorded stream. After each record the engine saves a checkpoint (offset, height, hash), so a restart resumes at the next unapplied record. If a checkpoint falls outside Kafka retention, the engine stops rather than skipping data.
 
 The engine only orders records; a `Handler` does the work. market-engine's handler runs the market processor and writes its output, and holder-indexer's handler updates balances. Each record ends with `Handler.Commit`, which saves the checkpoint with everything the record changed.
 
@@ -140,10 +140,12 @@ Queries go straight to ClickHouse, which is fast enough at local scale. Add a Re
 With `live.enabled: true`, market-engine publishes what each block derived to a live topic per chain, and market-api streams it to WebSocket clients at `GET /v1/stream`. Unfinalized data is pushed at once and corrected after a reorg, the same way it is stored.
 
 ```
-chain topic -> market-engine -> {topic}-live (Kafka) -> market-api hub -> WebSocket clients
+chain topic -> market-engine -> {topic}-live (Kafka or Redis) -> market-api hub -> WebSocket clients
 ```
 
-**Publishing.** After a block's output is stored and before its checkpoint is committed, market-engine writes the block's oriented trades and every candle bucket it changed to `chains[].live_topic` (default `<topic>-live`), as JSON records on partition 0. A revert writes the height it rolled back to and a reset for every candle series the reverted blocks touched. A failed write stops the engine like a failed store write, so a record is published at least once; a replay republishes the same values, which clients overwrite. Blocks older than `live.max_lag` are skipped so that a catch-up does not push history; reverts are always published. Topics are created on first write when the broker allows auto-creation; otherwise create them with one partition.
+`live.driver` picks the transport. `kafka` writes `{topic}-live` on partition 0 of the kafka brokers; `redis` publishes to the Redis Pub/Sub channel of the same name on `live.redis`. Either way the hub only follows what is published while it runs, so the two behave the same for clients. Redis needs no topics and suits a deployment without Kafka, for example with `source.driver: file`.
+
+**Publishing.** After a block's output is stored and before its checkpoint is committed, market-engine writes the block's oriented trades and every candle bucket it changed to `chains[].live_topic` (default `<topic>-live`), as JSON records, through the transport. A revert writes the height it rolled back to and a reset for every candle series the reverted blocks touched. A failed write stops the engine like a failed store write, so a record is published at least once; a replay republishes the same values, which clients overwrite. Blocks older than `live.max_lag` are skipped so that a catch-up does not push history; reverts are always published. With Kafka, topics are created on first write when the broker allows auto-creation; otherwise create them with one partition.
 
 **Fan-out.** market-api reads each live topic from its end, without a consumer group, so every instance serves its own clients. Trades go out as soon as their block arrives. Candle buckets and the chain head are coalesced and sent every `live.candle_throttle`, each bucket once at its latest value. A client that falls `live.client_buffer` messages behind is disconnected (close code 1013) rather than silently skipping corrections; it should reconnect and load history again.
 
