@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
+	"gorm.io/gorm"
 )
 
 // Retention ages rows out of the tables by their block time, or a candle's
@@ -153,7 +153,7 @@ func (retention Retention) RawTTL() []TableTTL {
 // ApplyRetention sets the TTL of market-engine's tables. Only market-engine
 // calls it, so readers that open the store leave the TTL alone.
 func (store *Store) ApplyRetention(ctx context.Context, retention Retention) error {
-	return ApplyTTL(ctx, store.conn, retention, retention.EngineTTL())
+	return ApplyTTL(ctx, store.db, retention, retention.EngineTTL())
 }
 
 // tableTTL finds the TTL clause in a table's CREATE statement, which
@@ -163,19 +163,20 @@ var tableTTL = regexp.MustCompile(`\) TTL (.*?)(?: SETTINGS |$)`)
 // ApplyTTL gives each table retention's storage policy and its TTL rules,
 // or removes its TTL when it has no rules. A table whose TTL already matches
 // is left alone: changing a TTL rewrites the table's parts in the background.
-func ApplyTTL(ctx context.Context, conn driver.Conn, retention Retention, ttls []TableTTL) error {
+func ApplyTTL(ctx context.Context, db *gorm.DB, retention Retention, ttls []TableTTL) error {
 	if err := retention.Validate(); err != nil {
 		return err
 	}
+	db = db.WithContext(ctx)
 	for _, ttl := range ttls {
 		var create, policy string
-		if err := conn.QueryRow(ctx, `SELECT create_table_query, storage_policy FROM system.tables
-			WHERE database = currentDatabase() AND name = ?`, ttl.Table).Scan(&create, &policy); err != nil {
+		if err := db.Raw(`SELECT create_table_query, storage_policy FROM system.tables
+			WHERE database = currentDatabase() AND name = ?`, ttl.Table).Row().Scan(&create, &policy); err != nil {
 			return fmt.Errorf("clickhouse retention: read %s: %w", ttl.Table, err)
 		}
 		if retention.StoragePolicy != "" && policy != retention.StoragePolicy {
-			if err := conn.Exec(ctx, fmt.Sprintf("ALTER TABLE %s MODIFY SETTING storage_policy = '%s'",
-				ttl.Table, retention.StoragePolicy)); err != nil {
+			if err := db.Exec(fmt.Sprintf("ALTER TABLE %s MODIFY SETTING storage_policy = '%s'",
+				ttl.Table, retention.StoragePolicy)).Error; err != nil {
 				return fmt.Errorf("clickhouse retention: set %s storage policy: %w", ttl.Table, err)
 			}
 		}
@@ -184,7 +185,7 @@ func ApplyTTL(ctx context.Context, conn driver.Conn, retention Retention, ttls [
 			current = match[1]
 		}
 		want := strings.Join(ttl.Rules, ", ")
-		same, err := sameTTL(ctx, conn, current, want)
+		same, err := sameTTL(db, current, want)
 		if err != nil {
 			return fmt.Errorf("clickhouse retention: compare %s TTL: %w", ttl.Table, err)
 		}
@@ -195,7 +196,7 @@ func ApplyTTL(ctx context.Context, conn driver.Conn, retention Retention, ttls [
 		if want != "" {
 			statement = "ALTER TABLE " + ttl.Table + " MODIFY TTL " + want
 		}
-		if err := conn.Exec(ctx, statement); err != nil {
+		if err := db.Exec(statement).Error; err != nil {
 			return fmt.Errorf("clickhouse retention: set %s TTL: %w", ttl.Table, err)
 		}
 	}
@@ -204,12 +205,12 @@ func ApplyTTL(ctx context.Context, conn driver.Conn, retention Retention, ttls [
 
 // sameTTL compares two TTL clauses as ClickHouse formats them, since a
 // stored clause reads differently from the one that set it.
-func sameTTL(ctx context.Context, conn driver.Conn, current, want string) (bool, error) {
+func sameTTL(db *gorm.DB, current, want string) (bool, error) {
 	if current == "" || want == "" {
 		return current == want, nil
 	}
 	var same bool
-	err := conn.QueryRow(ctx, `SELECT formatQuerySingleLine(?) = formatQuerySingleLine(?)`,
-		"ALTER TABLE t MODIFY TTL "+current, "ALTER TABLE t MODIFY TTL "+want).Scan(&same)
+	err := db.Raw(`SELECT formatQuerySingleLine(?) = formatQuerySingleLine(?)`,
+		"ALTER TABLE t MODIFY TTL "+current, "ALTER TABLE t MODIFY TTL "+want).Row().Scan(&same)
 	return same, err
 }

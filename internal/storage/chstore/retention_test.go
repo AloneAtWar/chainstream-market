@@ -88,7 +88,7 @@ func outputAt(height int64, closePrice string, blockTime time.Time) storage.Bloc
 func optimize(t *testing.T, store *Store, tables ...string) {
 	t.Helper()
 	for _, table := range tables {
-		if err := store.conn.Exec(context.Background(), "OPTIMIZE TABLE "+table+" FINAL"); err != nil {
+		if err := store.db.WithContext(context.Background()).Exec("OPTIMIZE TABLE " + table + " FINAL").Error; err != nil {
 			t.Fatalf("optimize %s: %v", table, err)
 		}
 	}
@@ -126,8 +126,8 @@ func TestRetentionAgesRowsOut(t *testing.T) {
 	// Old prices rolled up into their latest row.
 	var height int64
 	var price decimal.Decimal
-	if err := store.conn.QueryRow(ctx, `SELECT block_height, price_usd FROM token_prices
-		WHERE block_time < ?`, now.Add(-time.Hour)).Scan(&height, &price); err != nil {
+	if err := store.db.WithContext(ctx).Raw(`SELECT block_height, price_usd FROM token_prices
+		WHERE block_time < ?`, now.Add(-time.Hour)).Row().Scan(&height, &price); err != nil {
 		t.Fatalf("read old price: %v", err)
 	}
 	if got := count(t, store, "token_prices"); got != 2 || height != 101 {
@@ -138,8 +138,8 @@ func TestRetentionAgesRowsOut(t *testing.T) {
 	// The old 1h bucket keeps its last version; the old 1m bucket is gone.
 	var trades uint32
 	var closePrice decimal.Decimal
-	if err := store.conn.QueryRow(ctx, `SELECT update_height, close, trades FROM candles
-		WHERE open_time < ? AND interval_seconds = 3600`, now.Add(-24*time.Hour)).Scan(&height, &closePrice, &trades); err != nil {
+	if err := store.db.WithContext(ctx).Raw(`SELECT update_height, close, trades FROM candles
+		WHERE open_time < ? AND interval_seconds = 3600`, now.Add(-24*time.Hour)).Row().Scan(&height, &closePrice, &trades); err != nil {
 		t.Fatalf("read old candle: %v", err)
 	}
 	if height != 101 || trades != 2 {
@@ -162,8 +162,8 @@ func TestRetentionAgesRowsOut(t *testing.T) {
 func createQuery(t *testing.T, store *Store, table string) string {
 	t.Helper()
 	var create string
-	if err := store.conn.QueryRow(context.Background(), `SELECT create_table_query FROM system.tables
-		WHERE database = currentDatabase() AND name = ?`, table).Scan(&create); err != nil {
+	if err := store.db.WithContext(context.Background()).Raw(`SELECT create_table_query FROM system.tables
+		WHERE database = currentDatabase() AND name = ?`, table).Row().Scan(&create); err != nil {
 		t.Fatalf("read %s: %v", table, err)
 	}
 	return create
@@ -174,8 +174,8 @@ func TestApplyRetentionChangesOnlyWhatDiffers(t *testing.T) {
 	store, _ := openTestStore(t)
 	mutations := func() uint64 {
 		var rows uint64
-		if err := store.conn.QueryRow(ctx,
-			"SELECT count() FROM system.mutations WHERE database = currentDatabase()").Scan(&rows); err != nil {
+		if err := store.db.WithContext(ctx).Raw(
+			"SELECT count() FROM system.mutations WHERE database = currentDatabase()").Row().Scan(&rows); err != nil {
 			t.Fatalf("count mutations: %v", err)
 		}
 		return rows
@@ -225,10 +225,10 @@ func TestRetentionMovesToCold(t *testing.T) {
 	ctx := context.Background()
 	store, _ := openTestStore(t)
 	var policy, volume, disk string
-	lookupErr := store.conn.QueryRow(ctx, `SELECT policy_name, volume_name, disks[1] FROM system.storage_policies
+	lookupErr := store.db.WithContext(ctx).Raw(`SELECT policy_name, volume_name, disks[1] FROM system.storage_policies
 		WHERE volume_name != 'default' AND policy_name IN (
 			SELECT policy_name FROM system.storage_policies WHERE volume_name = 'default')
-		LIMIT 1`).Scan(&policy, &volume, &disk)
+		LIMIT 1`).Row().Scan(&policy, &volume, &disk)
 	if lookupErr != nil {
 		t.Skipf("no storage policy with a default and a cold volume: %v", lookupErr)
 	}
@@ -249,7 +249,7 @@ func TestRetentionMovesToCold(t *testing.T) {
 		}
 	}
 	optimize(t, store, "trades")
-	rows, err := store.conn.Query(ctx, "SELECT block_height, _disk_name FROM trades")
+	rows, err := store.db.WithContext(ctx).Raw("SELECT block_height, _disk_name FROM trades").Rows()
 	if err != nil {
 		t.Fatalf("read disks: %v", err)
 	}

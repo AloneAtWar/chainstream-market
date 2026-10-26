@@ -10,55 +10,52 @@ import (
 
 	"github.com/AloneAtWar/chainstream-market/internal/storage"
 	"github.com/AloneAtWar/chainstream-market/internal/storage/chstore"
-	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
+	"gorm.io/gorm"
 )
 
 // tables lists every fact table; each is deleted by block_height.
 var tables = []string{"raw_transfers", "raw_trades", "oracle_updates", "asset_facts", "pool_facts"}
 
-// Store writes raw facts as plain inserts and deletes by height. It keeps no
-// per-chain state, so one Store serves every chain.
+// Store writes raw facts as plain inserts through GORM and deletes by
+// height. It keeps no per-chain state, so one Store serves every chain.
 type Store struct {
-	conn driver.Conn
+	db *gorm.DB
 }
 
 // Open connects, and creates the database and tables if needed.
 func Open(ctx context.Context, options chstore.Options) (*Store, error) {
-	conn, err := chstore.Connect(ctx, options)
+	db, err := chstore.Connect(ctx, options)
 	if err != nil {
 		return nil, err
 	}
-	store := &Store{conn: conn}
+	store := &Store{db: db}
 	for _, statement := range schema {
-		if err := conn.Exec(ctx, statement); err != nil {
-			return nil, errors.Join(fmt.Errorf("clickhouse raw store: migrate: %w", err), conn.Close())
+		if err := db.WithContext(ctx).Exec(statement).Error; err != nil {
+			return nil, errors.Join(fmt.Errorf("clickhouse raw store: migrate: %w", err), chstore.Close(db))
 		}
 	}
 	return store, nil
 }
 
 func (store *Store) Close() error {
-	return store.conn.Close()
+	return chstore.Close(store.db)
 }
 
 func (store *Store) LoadRawCheckpoint(ctx context.Context, chainID uint64) (storage.Checkpoint, bool, error) {
-	rows, err := store.conn.Query(ctx, `
-		SELECT kafka_offset, block_height, block_hash, updated_at
-		FROM raw_checkpoints WHERE chain_id = ?
-		ORDER BY kafka_offset DESC LIMIT 1`, chainID)
+	var rows []checkpointRow
+	err := store.db.WithContext(ctx).Select("kafka_offset, block_height, block_hash, updated_at").
+		Where("chain_id = ?", chainID).Order("kafka_offset DESC").Limit(1).Find(&rows).Error
 	if err != nil {
 		return storage.Checkpoint{}, false, fmt.Errorf("clickhouse raw store: load checkpoint: %w", err)
 	}
-	defer rows.Close() //nolint:errcheck // rows.Err reports read failures
-	if !rows.Next() {
-		return storage.Checkpoint{}, false, rows.Err()
+	if len(rows) == 0 {
+		return storage.Checkpoint{}, false, nil
 	}
-	checkpoint := storage.Checkpoint{ChainID: chainID}
-	if err := rows.Scan(&checkpoint.Offset, &checkpoint.Height, &checkpoint.Hash, &checkpoint.UpdatedAt); err != nil {
-		return storage.Checkpoint{}, false, fmt.Errorf("clickhouse raw store: scan checkpoint: %w", err)
-	}
-	checkpoint.UpdatedAt = checkpoint.UpdatedAt.UTC()
-	return checkpoint, true, nil
+	row := rows[0]
+	return storage.Checkpoint{
+		ChainID: chainID, Offset: row.KafkaOffset, Height: row.BlockHeight, Hash: row.BlockHash,
+		UpdatedAt: row.UpdatedAt.UTC(),
+	}, true, nil
 }
 
 func (store *Store) SaveRawCheckpoint(ctx context.Context, checkpoint storage.Checkpoint) error {
@@ -69,14 +66,16 @@ func (store *Store) SaveRawCheckpoint(ctx context.Context, checkpoint storage.Ch
 	if updatedAt.IsZero() {
 		updatedAt = time.Now()
 	}
-	return store.insert(ctx, "raw_checkpoints", func(batch driver.Batch) error {
-		return batch.Append(checkpoint.ChainID, checkpoint.Offset, checkpoint.Height, checkpoint.Hash, updatedAt.UTC())
-	})
+	return store.insert(ctx, "raw_checkpoints", &[]checkpointRow{{
+		ChainID: checkpoint.ChainID, KafkaOffset: checkpoint.Offset, BlockHeight: checkpoint.Height,
+		BlockHash: checkpoint.Hash, UpdatedAt: updatedAt.UTC(),
+	}})
 }
 
 func (store *Store) DeleteRawAbove(ctx context.Context, chainID uint64, height int64) error {
 	for _, table := range tables {
-		if err := store.conn.Exec(ctx, "DELETE FROM "+table+" WHERE chain_id = ? AND block_height > ?", chainID, height); err != nil {
+		if err := store.db.WithContext(ctx).Exec("DELETE FROM "+table+" WHERE chain_id = ? AND block_height > ?",
+			chainID, height).Error; err != nil {
 			return fmt.Errorf("clickhouse raw store: delete %s above %d: %w", table, height, err)
 		}
 	}
@@ -91,129 +90,124 @@ func (store *Store) WriteRaw(ctx context.Context, blocks []storage.RawBlock) err
 			return errors.New("clickhouse raw store: block chain id is required")
 		}
 	}
-	writers := []struct {
-		table string
-		rows  func(storage.RawBlock) int
-		fill  func(driver.Batch, storage.RawBlock) error
-	}{
-		{"raw_transfers", func(block storage.RawBlock) int { return len(block.Transfers) }, appendTransfers},
-		{"raw_trades", func(block storage.RawBlock) int { return len(block.Trades) }, appendTrades},
-		{"oracle_updates", func(block storage.RawBlock) int { return len(block.Oracles) }, appendOracles},
-		{"asset_facts", func(block storage.RawBlock) int { return len(block.Assets) }, appendAssets},
-		{"pool_facts", func(block storage.RawBlock) int { return len(block.Pools) }, appendPools},
+	var (
+		transfers []transferRow
+		trades    []tradeRow
+		oracles   []oracleRow
+		assets    []assetRow
+		pools     []poolRow
+	)
+	for _, block := range blocks {
+		transfers = appendTransfers(transfers, block)
+		trades = appendTrades(trades, block)
+		oracles = appendOracles(oracles, block)
+		assets = appendAssets(assets, block)
+		pools = appendPools(pools, block)
 	}
-	for _, writer := range writers {
-		total := 0
-		for _, block := range blocks {
-			total += writer.rows(block)
-		}
-		if total == 0 {
+	writes := []struct {
+		table string
+		count int
+		rows  any
+	}{
+		{"raw_transfers", len(transfers), &transfers},
+		{"raw_trades", len(trades), &trades},
+		{"oracle_updates", len(oracles), &oracles},
+		{"asset_facts", len(assets), &assets},
+		{"pool_facts", len(pools), &pools},
+	}
+	for _, write := range writes {
+		if write.count == 0 {
 			continue
 		}
-		if err := store.insert(ctx, writer.table, func(batch driver.Batch) error {
-			for _, block := range blocks {
-				if err := writer.fill(batch, block); err != nil {
-					return err
-				}
-			}
-			return nil
-		}); err != nil {
+		if err := store.insert(ctx, write.table, write.rows); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func appendTransfers(batch driver.Batch, block storage.RawBlock) error {
+func appendTransfers(rows []transferRow, block storage.RawBlock) []transferRow {
 	for _, transfer := range block.Transfers {
-		if err := batch.Append(
-			block.ChainID, block.Height, block.BlockTime, transfer.TransactionHash, transfer.TransactionIndex,
-			transfer.LogIndex, transfer.Token, transfer.From, transfer.To, transfer.Amount,
-		); err != nil {
-			return err
-		}
+		rows = append(rows, transferRow{
+			ChainID: block.ChainID, BlockHeight: block.Height, BlockTime: block.BlockTime,
+			TransactionHash: transfer.TransactionHash, TransactionIndex: transfer.TransactionIndex,
+			LogIndex: transfer.LogIndex, Token: transfer.Token, FromAddress: transfer.From, ToAddress: transfer.To,
+			Amount: transfer.Amount,
+		})
 	}
-	return nil
+	return rows
 }
 
-func appendTrades(batch driver.Batch, block storage.RawBlock) error {
+func appendTrades(rows []tradeRow, block storage.RawBlock) []tradeRow {
 	for _, trade := range block.Trades {
-		assets := make([]string, len(trade.Amounts))
-		raws := make([]string, len(trade.Amounts))
-		values := make([]string, len(trade.Amounts))
-		decimals := make([]uint32, len(trade.Amounts))
-		known := make([]bool, len(trade.Amounts))
+		row := tradeRow{
+			ChainID: block.ChainID, BlockHeight: block.Height, BlockTime: block.BlockTime,
+			TransactionHash: trade.TransactionHash, TransactionIndex: trade.TransactionIndex,
+			LogIndex: trade.LogIndex, OperationIndex: trade.OperationIndex, Protocol: trade.Protocol,
+			DexAddress: trade.DexAddress, PoolID: trade.PoolID, Action: trade.Action, Sender: trade.Sender,
+			Trader: trade.Trader, Recipient: trade.Recipient,
+			AmountAssets: make([]string, len(trade.Amounts)), AmountRaw: make([]string, len(trade.Amounts)),
+			AmountValues: make([]string, len(trade.Amounts)), AmountDecimals: make([]uint32, len(trade.Amounts)),
+			AmountDecimalsKnown: make([]bool, len(trade.Amounts)), ReservesAfter: trade.ReservesAfter,
+			SqrtPriceX96: trade.SqrtPriceX96, Liquidity: trade.Liquidity, Tick: trade.Tick, ActiveBinID: trade.ActiveBinID,
+		}
 		for index, amount := range trade.Amounts {
-			assets[index], raws[index], values[index] = amount.Asset, amount.Raw, amount.Value
-			decimals[index], known[index] = amount.Decimals, amount.DecimalsKnown
+			row.AmountAssets[index], row.AmountRaw[index], row.AmountValues[index] = amount.Asset, amount.Raw, amount.Value
+			row.AmountDecimals[index], row.AmountDecimalsKnown[index] = amount.Decimals, amount.DecimalsKnown
 		}
-		reserves := trade.ReservesAfter
-		if reserves == nil {
-			reserves = []string{}
+		if row.ReservesAfter == nil {
+			row.ReservesAfter = []string{}
 		}
-		if err := batch.Append(
-			block.ChainID, block.Height, block.BlockTime, trade.TransactionHash, trade.TransactionIndex,
-			trade.LogIndex, trade.OperationIndex, trade.Protocol, trade.DexAddress, trade.PoolID, trade.Action,
-			trade.Sender, trade.Trader, trade.Recipient, assets, raws, values, decimals, known,
-			reserves, trade.SqrtPriceX96, trade.Liquidity, trade.Tick, trade.ActiveBinID,
-		); err != nil {
-			return err
-		}
+		rows = append(rows, row)
 	}
-	return nil
+	return rows
 }
 
-func appendOracles(batch driver.Batch, block storage.RawBlock) error {
+func appendOracles(rows []oracleRow, block storage.RawBlock) []oracleRow {
 	for _, update := range block.Oracles {
-		if err := batch.Append(
-			block.ChainID, block.Height, block.BlockTime, update.TransactionHash, update.TransactionIndex,
-			update.LogIndex, update.Feed, update.Answer, update.RoundID, update.UpdatedAt,
-		); err != nil {
-			return err
-		}
+		rows = append(rows, oracleRow{
+			ChainID: block.ChainID, BlockHeight: block.Height, BlockTime: block.BlockTime,
+			TransactionHash: update.TransactionHash, TransactionIndex: update.TransactionIndex,
+			LogIndex: update.LogIndex, Feed: update.Feed, Answer: update.Answer, RoundID: update.RoundID,
+			UpdatedAt: update.UpdatedAt,
+		})
 	}
-	return nil
+	return rows
 }
 
-func appendAssets(batch driver.Batch, block storage.RawBlock) error {
+func appendAssets(rows []assetRow, block storage.RawBlock) []assetRow {
 	for _, fact := range block.Assets {
-		if err := batch.Append(
-			block.ChainID, block.Height, block.BlockTime, fact.Address, fact.Standard, fact.Recognition,
-			fact.MetadataComplete, fact.Type, fact.SourceHeight, fact.DeploymentHeight, fact.DeploymentTime,
-			fact.DeploymentTxIdx, fact.DeploymentTxHash, fact.DeploymentTrace, fact.MetadataJSON,
-		); err != nil {
-			return err
-		}
+		rows = append(rows, assetRow{
+			ChainID: block.ChainID, BlockHeight: block.Height, BlockTime: block.BlockTime, Address: fact.Address,
+			Standard: fact.Standard, Recognition: fact.Recognition, MetadataComplete: fact.MetadataComplete,
+			Type: fact.Type, SourceHeight: fact.SourceHeight, DeploymentHeight: fact.DeploymentHeight,
+			DeploymentTime: fact.DeploymentTime, DeploymentTxIndex: fact.DeploymentTxIdx,
+			DeploymentTxHash: fact.DeploymentTxHash, DeploymentTraceID: fact.DeploymentTrace,
+			MetadataJSON: fact.MetadataJSON,
+		})
 	}
-	return nil
+	return rows
 }
 
-func appendPools(batch driver.Batch, block storage.RawBlock) error {
+func appendPools(rows []poolRow, block storage.RawBlock) []poolRow {
 	for _, fact := range block.Pools {
 		tokens := fact.TokenAddresses
 		if tokens == nil {
 			tokens = []string{}
 		}
-		if err := batch.Append(
-			block.ChainID, block.Height, block.BlockTime, fact.PoolID, fact.Protocol, fact.DexAddress,
-			tokens, fact.SourceHeight, fact.SourceTime, fact.Created, fact.MetadataJSON,
-		); err != nil {
-			return err
-		}
+		rows = append(rows, poolRow{
+			ChainID: block.ChainID, BlockHeight: block.Height, BlockTime: block.BlockTime, PoolID: fact.PoolID,
+			Protocol: fact.Protocol, DexAddress: fact.DexAddress, TokenAddresses: tokens,
+			SourceHeight: fact.SourceHeight, SourceTime: fact.SourceTime, Created: fact.Created,
+			MetadataJSON: fact.MetadataJSON,
+		})
 	}
-	return nil
+	return rows
 }
 
-func (store *Store) insert(ctx context.Context, table string, fill func(driver.Batch) error) error {
-	batch, err := store.conn.PrepareBatch(ctx, "INSERT INTO "+table)
-	if err != nil {
-		return fmt.Errorf("clickhouse raw store: prepare %s: %w", table, err)
-	}
-	if err := fill(batch); err != nil {
-		return errors.Join(fmt.Errorf("clickhouse raw store: append %s: %w", table, err), batch.Abort())
-	}
-	if err := batch.Send(); err != nil {
-		return fmt.Errorf("clickhouse raw store: send %s: %w", table, err)
+func (store *Store) insert(ctx context.Context, table string, rows any) error {
+	if err := chstore.Insert(ctx, store.db, rows); err != nil {
+		return fmt.Errorf("clickhouse raw store: insert %s: %w", table, err)
 	}
 	return nil
 }
@@ -242,31 +236,23 @@ func (store *Store) Transfers(ctx context.Context, query storage.TransferQuery) 
 		filters = append(filters, "block_height < ?")
 		args = append(args, query.BeforeHeight)
 	}
-	args = append(args, uint64(query.Limit))
-	rows, err := store.conn.Query(ctx, `
-		SELECT block_height, block_time, transaction_hash, transaction_index, log_index,
-			token, from_address, to_address, amount
-		FROM raw_transfers
-		WHERE `+strings.Join(filters, " AND ")+`
-		ORDER BY block_height DESC, log_index DESC
-		LIMIT ?`, args...)
+	var rows []transferRow
+	err := store.db.WithContext(ctx).Select(`block_height, block_time, transaction_hash, transaction_index,
+		log_index, token, from_address, to_address, amount`).
+		Where(strings.Join(filters, " AND "), args...).
+		Order("block_height DESC, log_index DESC").Limit(query.Limit).Find(&rows).Error
 	if err != nil {
 		return nil, fmt.Errorf("clickhouse raw store: query transfers: %w", err)
 	}
-	defer rows.Close() //nolint:errcheck // rows.Err reports read failures
-	var transfers []storage.Transfer
-	for rows.Next() {
-		var transfer storage.Transfer
-		if err := rows.Scan(&transfer.BlockHeight, &transfer.BlockTime, &transfer.TransactionHash,
-			&transfer.TransactionIndex, &transfer.LogIndex, &transfer.Token, &transfer.From, &transfer.To,
-			&transfer.Amount); err != nil {
-			return nil, fmt.Errorf("clickhouse raw store: scan transfer: %w", err)
-		}
-		transfer.BlockTime = transfer.BlockTime.UTC()
-		transfers = append(transfers, transfer)
+	if len(rows) == 0 {
+		return nil, nil
 	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("clickhouse raw store: read transfers: %w", err)
+	transfers := make([]storage.Transfer, len(rows))
+	for index, row := range rows {
+		transfers[index] = storage.Transfer{BlockHeight: row.BlockHeight, BlockTime: row.BlockTime.UTC(), RawTransfer: storage.RawTransfer{
+			TransactionHash: row.TransactionHash, TransactionIndex: row.TransactionIndex, LogIndex: row.LogIndex,
+			Token: row.Token, From: row.FromAddress, To: row.ToAddress, Amount: row.Amount,
+		}}
 	}
 	return transfers, nil
 }
@@ -280,5 +266,5 @@ var (
 // it, so market-api, which opens the store to read transfers, leaves the TTL
 // alone.
 func (store *Store) ApplyRetention(ctx context.Context, retention chstore.Retention) error {
-	return chstore.ApplyTTL(ctx, store.conn, retention, retention.RawTTL())
+	return chstore.ApplyTTL(ctx, store.db, retention, retention.RawTTL())
 }

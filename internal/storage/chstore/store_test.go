@@ -30,7 +30,7 @@ func openTestStore(t *testing.T) (*Store, Options) {
 		t.Fatalf("Open() error = %v", err)
 	}
 	t.Cleanup(func() {
-		if err := store.conn.Exec(context.Background(), "DROP DATABASE IF EXISTS "+options.Database); err != nil {
+		if err := store.db.WithContext(context.Background()).Exec("DROP DATABASE IF EXISTS " + options.Database).Error; err != nil {
 			t.Errorf("drop database: %v", err)
 		}
 		if err := store.Close(); err != nil {
@@ -69,7 +69,7 @@ func testOutput(height int64, closePrice string) storage.BlockOutput {
 func count(t *testing.T, store *Store, table string) uint64 {
 	t.Helper()
 	var rows uint64
-	if err := store.conn.QueryRow(context.Background(), "SELECT count() FROM "+table).Scan(&rows); err != nil {
+	if err := store.db.WithContext(context.Background()).Raw("SELECT count() FROM " + table).Row().Scan(&rows); err != nil {
 		t.Fatalf("count %s: %v", table, err)
 	}
 	return rows
@@ -97,7 +97,7 @@ func TestStoreWritesRewindsAndReplays(t *testing.T) {
 	// The current candle is the newest version; a rewind restores the older one.
 	var closePrice decimal.Decimal
 	latest := "SELECT argMax(close, update_height) FROM candles WHERE key = '0xmeme'"
-	if err := store.conn.QueryRow(ctx, latest).Scan(&closePrice); err != nil {
+	if err := store.db.WithContext(ctx).Raw(latest).Row().Scan(&closePrice); err != nil {
 		t.Fatalf("latest candle: %v", err)
 	}
 	assertDecimalEqual(t, closePrice, "0.06")
@@ -105,7 +105,7 @@ func TestStoreWritesRewindsAndReplays(t *testing.T) {
 		t.Fatalf("Rewind() error = %v", err)
 	}
 	assertCounts(t, store, 1)
-	if err := store.conn.QueryRow(ctx, latest).Scan(&closePrice); err != nil {
+	if err := store.db.WithContext(ctx).Raw(latest).Row().Scan(&closePrice); err != nil {
 		t.Fatalf("latest candle: %v", err)
 	}
 	assertDecimalEqual(t, closePrice, "0.03")
@@ -134,10 +134,10 @@ func TestStoreWritesRewindsAndReplays(t *testing.T) {
 
 	var side, source string
 	var priceUSD decimal.Decimal
-	if err := store.conn.QueryRow(ctx, "SELECT toString(side), price_usd FROM trades").Scan(&side, &priceUSD); err != nil {
+	if err := store.db.WithContext(ctx).Raw("SELECT toString(side), price_usd FROM trades").Row().Scan(&side, &priceUSD); err != nil {
 		t.Fatalf("read trade: %v", err)
 	}
-	if err := store.conn.QueryRow(ctx, "SELECT toString(source) FROM token_prices").Scan(&source); err != nil {
+	if err := store.db.WithContext(ctx).Raw("SELECT toString(source) FROM token_prices").Row().Scan(&source); err != nil {
 		t.Fatalf("read price: %v", err)
 	}
 	if side != "buy" || source != "graph" {
@@ -182,14 +182,14 @@ func TestReplayedTradesFollowTheirRevision(t *testing.T) {
 	}
 	atHeight := func() uint64 {
 		var rows uint64
-		if err := store.conn.QueryRow(ctx, "SELECT count() FROM trades WHERE block_height = 100").Scan(&rows); err != nil {
+		if err := store.db.WithContext(ctx).Raw("SELECT count() FROM trades WHERE block_height = 100").Row().Scan(&rows); err != nil {
 			t.Fatalf("count trades: %v", err)
 		}
 		return rows
 	}
 	pricesAtHeight := func() uint64 {
 		var rows uint64
-		if err := store.conn.QueryRow(ctx, "SELECT count() FROM token_prices WHERE block_height = 100").Scan(&rows); err != nil {
+		if err := store.db.WithContext(ctx).Raw("SELECT count() FROM token_prices WHERE block_height = 100").Row().Scan(&rows); err != nil {
 			t.Fatalf("count prices: %v", err)
 		}
 		return rows
@@ -210,16 +210,16 @@ func TestMigrateAddsRevisionHeight(t *testing.T) {
 	ctx := context.Background()
 	store, options := openTestStore(t)
 	for _, table := range []string{"trades", "token_prices"} {
-		if err := store.conn.Exec(ctx, "ALTER TABLE "+table+" DROP COLUMN revision_height"); err != nil {
+		if err := store.db.WithContext(ctx).Exec("ALTER TABLE " + table + " DROP COLUMN revision_height").Error; err != nil {
 			t.Fatalf("drop %s column: %v", table, err)
 		}
 	}
-	if err := store.conn.Exec(ctx, `INSERT INTO token_prices (chain_id, token, block_height, block_time)
-		VALUES (1, '0xmeme', 100, now()), (1, '0xmeme', 101, now())`); err != nil {
+	if err := store.db.WithContext(ctx).Exec(`INSERT INTO token_prices (chain_id, token, block_height, block_time)
+		VALUES (1, '0xmeme', 100, now()), (1, '0xmeme', 101, now())`).Error; err != nil {
 		t.Fatalf("insert old prices: %v", err)
 	}
-	if err := store.conn.Exec(ctx, `INSERT INTO trades (chain_id, block_height, block_time, side)
-		VALUES (1, 100, now(), 'buy'), (1, 101, now(), 'buy')`); err != nil {
+	if err := store.db.WithContext(ctx).Exec(`INSERT INTO trades (chain_id, block_height, block_time, side)
+		VALUES (1, 100, now(), 'buy'), (1, 101, now(), 'buy')`).Error; err != nil {
 		t.Fatalf("insert old rows: %v", err)
 	}
 	reopened, err := Open(ctx, options)
@@ -235,7 +235,7 @@ func TestMigrateAddsRevisionHeight(t *testing.T) {
 		t.Fatalf("Rewind() error = %v", err)
 	}
 	var revision int64
-	if err := store.conn.QueryRow(ctx, "SELECT max(revision_height) FROM trades").Scan(&revision); err != nil {
+	if err := store.db.WithContext(ctx).Raw("SELECT max(revision_height) FROM trades").Row().Scan(&revision); err != nil {
 		t.Fatalf("read revision: %v", err)
 	}
 	if got := count(t, store, "trades"); got != 1 || revision != 100 {

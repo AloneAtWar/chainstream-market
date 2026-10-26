@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"github.com/AloneAtWar/chainstream-market/internal/storage"
+	"github.com/AloneAtWar/chainstream-market/internal/storage/chstore"
+	"github.com/shopspring/decimal"
 )
 
 // historyPoll is how often History rereads ch-loader's checkpoint while it
@@ -61,46 +63,42 @@ func (history *History) RawTrades(ctx context.Context, chainID uint64, tokens []
 }
 
 func (store *Store) rawTrades(ctx context.Context, chainID uint64, tokens []string, from, through int64) ([]storage.RawTradeAt, error) {
-	rows, err := store.conn.Query(ctx, `
-		SELECT block_height, block_time, transaction_hash, transaction_index, log_index, operation_index,
-			protocol, dex_address, pool_id, action, sender, trader, recipient,
-			amount_assets, amount_raw, amount_values, amount_decimals, amount_decimals_known,
-			reserves_after, sqrt_price_x96, liquidity, tick, active_bin_id
-		FROM raw_trades
-		WHERE chain_id = ? AND block_height >= ? AND block_height <= ? AND hasAny(amount_assets, ?)
-		ORDER BY block_height, log_index, operation_index`, chainID, from, through, tokens)
+	var rows []tradeRow
+	err := store.db.WithContext(ctx).Select(`block_height, block_time, transaction_hash, transaction_index,
+		log_index, operation_index, protocol, dex_address, pool_id, action, sender, trader, recipient,
+		amount_assets, amount_raw, amount_values, amount_decimals, amount_decimals_known,
+		reserves_after, sqrt_price_x96, liquidity, tick, active_bin_id`).
+		Where("chain_id = ? AND block_height >= ? AND block_height <= ? AND hasAny(amount_assets, ?)",
+			chainID, from, through, chstore.ArrayParam[string](tokens)).
+		Order("block_height, log_index, operation_index").Find(&rows).Error
 	if err != nil {
 		return nil, fmt.Errorf("clickhouse raw store: query trades: %w", err)
 	}
-	defer rows.Close() //nolint:errcheck // rows.Err reports read failures
-	var trades []storage.RawTradeAt
-	for rows.Next() {
-		var trade storage.RawTradeAt
-		var assets, raws, values []string
-		var decimals []uint32
-		var known []bool
-		if err := rows.Scan(&trade.Height, &trade.BlockTime, &trade.TransactionHash, &trade.TransactionIndex,
-			&trade.LogIndex, &trade.OperationIndex, &trade.Protocol, &trade.DexAddress, &trade.PoolID,
-			&trade.Action, &trade.Sender, &trade.Trader, &trade.Recipient,
-			&assets, &raws, &values, &decimals, &known,
-			&trade.ReservesAfter, &trade.SqrtPriceX96, &trade.Liquidity, &trade.Tick, &trade.ActiveBinID); err != nil {
-			return nil, fmt.Errorf("clickhouse raw store: scan trade: %w", err)
-		}
-		if len(raws) != len(assets) || len(values) != len(assets) || len(decimals) != len(assets) || len(known) != len(assets) {
+	if len(rows) == 0 {
+		return nil, nil
+	}
+	trades := make([]storage.RawTradeAt, len(rows))
+	for index, row := range rows {
+		count := len(row.AmountAssets)
+		if len(row.AmountRaw) != count || len(row.AmountValues) != count || len(row.AmountDecimals) != count ||
+			len(row.AmountDecimalsKnown) != count {
 			return nil, errors.New("clickhouse raw store: trade amount arrays differ in length")
 		}
-		trade.BlockTime = trade.BlockTime.UTC()
-		trade.Amounts = make([]storage.RawAmount, len(assets))
-		for index := range assets {
-			trade.Amounts[index] = storage.RawAmount{
-				Asset: assets[index], Raw: raws[index], Value: values[index],
-				Decimals: decimals[index], DecimalsKnown: known[index],
+		trade := storage.RawTradeAt{Height: row.BlockHeight, BlockTime: row.BlockTime.UTC()}
+		trade.TransactionHash, trade.TransactionIndex = row.TransactionHash, row.TransactionIndex
+		trade.LogIndex, trade.OperationIndex = row.LogIndex, row.OperationIndex
+		trade.Protocol, trade.DexAddress, trade.PoolID, trade.Action = row.Protocol, row.DexAddress, row.PoolID, row.Action
+		trade.Sender, trade.Trader, trade.Recipient = row.Sender, row.Trader, row.Recipient
+		trade.ReservesAfter, trade.SqrtPriceX96, trade.Liquidity = row.ReservesAfter, row.SqrtPriceX96, row.Liquidity
+		trade.Tick, trade.ActiveBinID = row.Tick, row.ActiveBinID
+		trade.Amounts = make([]storage.RawAmount, count)
+		for amount := range count {
+			trade.Amounts[amount] = storage.RawAmount{
+				Asset: row.AmountAssets[amount], Raw: row.AmountRaw[amount], Value: row.AmountValues[amount],
+				Decimals: row.AmountDecimals[amount], DecimalsKnown: row.AmountDecimalsKnown[amount],
 			}
 		}
-		trades = append(trades, trade)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("clickhouse raw store: read trades: %w", err)
+		trades[index] = trade
 	}
 	return trades, nil
 }
@@ -112,30 +110,29 @@ func (history *History) PriceHistory(ctx context.Context, chainID uint64, tokens
 	if len(tokens) == 0 {
 		return nil, nil
 	}
-	rows, err := history.store.conn.Query(ctx, `
+	var rows []struct {
+		Token       string
+		BlockHeight int64
+		PriceUSD    decimal.Decimal `gorm:"column:price_usd"`
+		Hops        uint8
+	}
+	err := history.store.db.WithContext(ctx).Raw(`
 		SELECT token, block_height, price_usd, hops
 		FROM token_prices
 		WHERE chain_id = ? AND token IN ? AND block_height >= ? AND block_height <= ?
 		UNION ALL
-		SELECT token, max(block_height), argMax(price_usd, block_height), argMax(hops, block_height)
+		SELECT token, max(block_height) AS block_height, argMax(price_usd, block_height) AS price_usd,
+			argMax(hops, block_height) AS hops
 		FROM token_prices
 		WHERE chain_id = ? AND token IN ? AND block_height < ?
-		GROUP BY token`, chainID, tokens, from, through, chainID, tokens, from)
+		GROUP BY token
+		SETTINGS prefer_column_name_to_alias = 1`, chainID, tokens, from, through, chainID, tokens, from).Scan(&rows).Error
 	if err != nil {
 		return nil, fmt.Errorf("clickhouse raw store: query prices: %w", err)
 	}
-	defer rows.Close() //nolint:errcheck // rows.Err reports read failures
 	prices := make(map[string][]storage.PricePoint)
-	for rows.Next() {
-		var token string
-		var point storage.PricePoint
-		if err := rows.Scan(&token, &point.Height, &point.USD, &point.Hops); err != nil {
-			return nil, fmt.Errorf("clickhouse raw store: scan price: %w", err)
-		}
-		prices[token] = append(prices[token], point)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("clickhouse raw store: read prices: %w", err)
+	for _, row := range rows {
+		prices[row.Token] = append(prices[row.Token], storage.PricePoint{Height: row.BlockHeight, USD: row.PriceUSD, Hops: row.Hops})
 	}
 	for token, points := range prices {
 		slices.SortStableFunc(points, func(left, right storage.PricePoint) int {

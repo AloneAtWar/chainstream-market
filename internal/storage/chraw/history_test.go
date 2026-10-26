@@ -90,7 +90,7 @@ func TestHistoryReadsStoredPrices(t *testing.T) {
 		t.Fatalf("Open() error = %v", err)
 	}
 	t.Cleanup(func() {
-		if dropErr := raw.conn.Exec(context.Background(), "DROP DATABASE IF EXISTS "+options.Database); dropErr != nil {
+		if dropErr := raw.db.WithContext(context.Background()).Exec("DROP DATABASE IF EXISTS " + options.Database).Error; dropErr != nil {
 			t.Errorf("drop database: %v", dropErr)
 		}
 		if closeErr := raw.Close(); closeErr != nil {

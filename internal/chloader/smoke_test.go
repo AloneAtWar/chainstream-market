@@ -2,6 +2,7 @@ package chloader
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -61,9 +62,9 @@ func newSmoke(t *testing.T) *smoke {
 		t.Fatalf("Open() error = %v", err)
 	}
 	t.Cleanup(func() {
-		conn, connErr := chstore.Connect(context.Background(), options)
+		db, connErr := chstore.Connect(context.Background(), options)
 		if connErr == nil {
-			connErr = conn.Exec(context.Background(), "DROP DATABASE IF EXISTS "+options.Database)
+			connErr = errors.Join(db.Exec("DROP DATABASE IF EXISTS "+options.Database).Error, chstore.Close(db))
 		}
 		if connErr != nil {
 			t.Errorf("drop database: %v", connErr)
