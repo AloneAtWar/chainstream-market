@@ -1,0 +1,253 @@
+package data
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"os"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/AloneAtWar/chainstream-market/internal/pkg/model"
+	"github.com/AloneAtWar/chainstream-market/internal/pkg/pgdb"
+	"github.com/shopspring/decimal"
+)
+
+// openRepo connects to POSTGRES_DSN in a fresh schema, or skips when it is
+// unset.
+func openRepo(t *testing.T) *rankingRepo {
+	t.Helper()
+	dsn := os.Getenv("POSTGRES_DSN")
+	if dsn == "" {
+		t.Skip("POSTGRES_DSN not set")
+	}
+	schema := fmt.Sprintf("rankings_test_%d", time.Now().UnixNano())
+	db, err := pgdb.Open(context.Background(), pgdb.Options{DSN: dsn, Schema: schema})
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	t.Cleanup(func() {
+		if err := db.Exec("DROP SCHEMA IF EXISTS " + schema + " CASCADE").Error; err != nil {
+			t.Errorf("drop schema: %v", err)
+		}
+		pgdb.Close(db)
+	})
+	return &rankingRepo{db: db}
+}
+
+func testAddress(digit string) string { return "0x" + strings.Repeat(digit, 40) }
+
+var (
+	tokenAA = testAddress("a")
+	tokenBB = testAddress("b")
+	tokenCC = testAddress("c")
+	tokenDD = testAddress("d")
+	tokenEE = testAddress("e")
+)
+
+func registryToken(address, symbol string, deployment *model.Deployment) model.Token {
+	name := symbol + " token"
+	return model.Token{
+		Address: address, Standard: "erc20", Recognition: "recognized", MetadataComplete: true,
+		Name: &name, Symbol: &symbol, Created: deployment != nil, Deployment: deployment, SourceHeight: 1,
+	}
+}
+
+// seedTokens writes registry_tokens rows as market-registry would.
+func seedTokens(t *testing.T, repo *rankingRepo, tokens ...model.Token) {
+	t.Helper()
+	for _, token := range tokens {
+		var deployment *string
+		if token.Deployment != nil {
+			raw, err := json.Marshal(token.Deployment)
+			if err != nil {
+				t.Fatal(err)
+			}
+			deployment = pgdb.JSONText(raw)
+		}
+		if err := repo.db.Exec(`INSERT INTO registry_tokens (chain_id, address, standard, recognition, metadata_complete,
+				name, symbol, created, deployment, source_height, first_height, updated_height)
+			VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?::jsonb, ?, 1, 1)`,
+			token.Address, token.Standard, token.Recognition, token.MetadataComplete, token.Name, token.Symbol,
+			token.Created, deployment, token.SourceHeight).Error; err != nil {
+			t.Fatalf("seed token %s: %v", token.Address, err)
+		}
+	}
+}
+
+func seedHolders(t *testing.T, repo *rankingRepo, balances map[model.HolderKey]int64) {
+	t.Helper()
+	// holder-indexer keeps holder_counts with the balances.
+	counts := make(map[string]int64)
+	for key, balance := range balances {
+		if err := repo.db.Exec(`INSERT INTO holder_balances (chain_id, token, holder, balance, verified_height)
+			VALUES (1, ?, ?, ?, 1)`, key.Token, key.Holder, balance).Error; err != nil {
+			t.Fatalf("seed holding: %v", err)
+		}
+		if balance > 0 {
+			counts[key.Token]++
+		}
+	}
+	for token, count := range counts {
+		if err := repo.db.Exec(`INSERT INTO holder_counts (chain_id, token, holders) VALUES (1, ?, ?)`, token, count).Error; err != nil {
+			t.Fatalf("seed holder count: %v", err)
+		}
+	}
+}
+
+func quote(token, price, liquidity string, height int64, at time.Time) model.TokenQuote {
+	return model.TokenQuote{
+		Token: token, PriceUSD: decimal.RequireFromString(price), LiquidityUSD: decimal.RequireFromString(liquidity),
+		BlockHeight: height, BlockTime: at,
+	}
+}
+
+func activity(token, volume string, trades int64, open, closePrice string) model.TokenActivity {
+	return model.TokenActivity{
+		Token: token, VolumeUSD: decimal.RequireFromString(volume), Trades: trades,
+		Open: decimal.RequireFromString(open), Close: decimal.RequireFromString(closePrice),
+	}
+}
+
+func listTokens(t *testing.T, repo *rankingRepo, query model.TokenListQuery) []model.RankedToken {
+	t.Helper()
+	query.ChainID = 1
+	if query.Limit == 0 {
+		query.Limit = 10
+	}
+	tokens, err := pgdb.TokenList(context.Background(), repo.db, query)
+	if err != nil {
+		t.Fatalf("TokenList(%+v) error = %v", query, err)
+	}
+	return tokens
+}
+
+func assertOrder(t *testing.T, tokens []model.RankedToken, want ...string) {
+	t.Helper()
+	got := make([]string, len(tokens))
+	for index, token := range tokens {
+		got[index] = token.Token
+	}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("tokens = %v, want %v", got, want)
+	}
+}
+
+func TestRankingsRefreshAndList(t *testing.T) {
+	ctx := context.Background()
+	repo := openRepo(t)
+	if _, ok, err := repo.LoadRankingCursor(ctx, 1); err != nil || ok {
+		t.Fatalf("empty LoadRankingCursor() = %v, %v", ok, err)
+	}
+	seedTokens(t, repo,
+		registryToken(tokenAA, "USDC", &model.Deployment{BlockHeight: 5, BlockTime: 50}),
+		registryToken(tokenBB, "PEPE", nil),
+		registryToken(tokenCC, "pepe2", &model.Deployment{BlockHeight: 9, BlockTime: 90}),
+		registryToken(tokenDD, "USDT", nil),
+	)
+	seedHolders(t, repo, map[model.HolderKey]int64{
+		{Token: tokenAA, Holder: "0x1"}: 10, {Token: tokenAA, Holder: "0x2"}: 20,
+		{Token: tokenAA, Holder: "0x3"}: 30, {Token: tokenAA, Holder: "0x4"}: 0,
+		{Token: tokenBB, Holder: "0x1"}: 5,
+	})
+
+	day := time.Date(2026, 3, 10, 0, 0, 0, 0, time.UTC)
+	refreshedAt := day.Add(time.Minute)
+	if err := repo.CommitRankings(ctx, model.RankingRefresh{
+		ChainID: 1, Head: day, RefreshedAt: refreshedAt,
+		Quotes: []model.TokenQuote{
+			quote(tokenAA, "1", "5000", 100, day),
+			quote(tokenBB, "0.001", "200", 101, day),
+			quote(tokenCC, "2", "50", 99, day.Add(-2*time.Hour)),
+		},
+		Activity: []model.TokenActivity{
+			activity(tokenAA, "1000", 10, "1", "1.1"),
+			activity(tokenBB, "50", 4, "0.002", "0.001"),
+			activity(tokenEE, "5", 1, "3", "3"),
+		},
+	}); err != nil {
+		t.Fatalf("CommitRankings() error = %v", err)
+	}
+
+	byVolume := listTokens(t, repo, model.TokenListQuery{Sort: model.SortVolume24h})
+	assertOrder(t, byVolume, tokenAA, tokenBB, tokenEE, tokenCC)
+	top := byVolume[0]
+	if !top.Ranked || top.Symbol == nil || *top.Symbol != "USDC" || top.Holders != 3 || top.Trades24h != 10 ||
+		top.CreatedHeight == nil || *top.CreatedHeight != 5 || *top.CreatedTime != 50 ||
+		top.PriceHeight == nil || *top.PriceHeight != 100 || !top.RefreshedAt.Equal(refreshedAt) {
+		t.Fatalf("top token = %+v", top)
+	}
+	assertDecimalString(t, top.PriceChange24h, "0.1")
+	assertDecimalString(t, top.Volume24hUSD, "1000")
+	assertDecimalString(t, *top.PriceUSD, "1")
+	if traded := byVolume[2]; traded.PriceUSD != nil || traded.Symbol != nil || !traded.LiquidityUSD.IsZero() {
+		t.Fatalf("unpriced token = %+v", traded)
+	}
+	assertDecimalString(t, byVolume[1].PriceChange24h, "-0.5")
+
+	assertOrder(t, listTokens(t, repo, model.TokenListQuery{Sort: model.SortPriceChange24h, Ascending: true}),
+		tokenBB, tokenCC, tokenEE, tokenAA)
+	assertOrder(t, listTokens(t, repo, model.TokenListQuery{Sort: model.SortLiquidity, Limit: 2, Offset: 1}),
+		tokenBB, tokenCC)
+	assertOrder(t, listTokens(t, repo, model.TokenListQuery{Sort: model.SortHolders, Limit: 2}), tokenAA, tokenBB)
+	assertOrder(t, listTokens(t, repo, model.TokenListQuery{Sort: model.SortCreated}), tokenCC, tokenAA)
+	assertOrder(t, listTokens(t, repo, model.TokenListQuery{MinLiquidityUSD: decimal.NewFromInt(100)}), tokenAA, tokenBB)
+
+	// Symbol search is a case-insensitive prefix match with exact matches
+	// first, then ranked tokens, then the sort.
+	assertOrder(t, listTokens(t, repo, model.TokenListQuery{Search: "Pepe"}), tokenBB, tokenCC)
+	assertOrder(t, listTokens(t, repo, model.TokenListQuery{Search: "pepe2"}), tokenCC)
+	usd := listTokens(t, repo, model.TokenListQuery{Search: "usd"})
+	assertOrder(t, usd, tokenAA, tokenDD)
+	if usd[1].Ranked || usd[1].Name == nil || usd[1].Holders != 0 {
+		t.Fatalf("unranked search result = %+v", usd[1])
+	}
+	assertOrder(t, listTokens(t, repo, model.TokenListQuery{Search: "%"}))
+	assertOrder(t, listTokens(t, repo, model.TokenListQuery{Search: strings.ToUpper(tokenDD)}), tokenDD)
+	assertOrder(t, listTokens(t, repo, model.TokenListQuery{Search: tokenEE}), tokenEE)
+	assertOrder(t, listTokens(t, repo, model.TokenListQuery{Search: testAddress("f")}))
+
+	head, ok, err := repo.LoadRankingCursor(ctx, 1)
+	if err != nil || !ok || !head.Equal(day) {
+		t.Fatalf("LoadRankingCursor() = %s, %v, %v", head, ok, err)
+	}
+	recent, err := repo.RankedSince(ctx, 1, day.Add(-time.Hour))
+	if err != nil || len(recent) != 2 {
+		t.Fatalf("RankedSince() = %v, %v", recent, err)
+	}
+
+	// The next refresh rescans from an hour back: 0xbb's price was reorged
+	// away and it no longer trades, so it leaves; 0xcc's older price stays;
+	// 0xee no longer trades and has no price.
+	if err := repo.CommitRankings(ctx, model.RankingRefresh{
+		ChainID: 1, Since: day.Add(-time.Hour), Head: day.Add(time.Minute), RefreshedAt: refreshedAt.Add(time.Minute),
+		Quotes:   []model.TokenQuote{quote(tokenAA, "1.2", "6000", 105, day.Add(time.Minute))},
+		Activity: []model.TokenActivity{activity(tokenAA, "1200", 12, "1", "1.2")},
+	}); err != nil {
+		t.Fatalf("second CommitRankings() error = %v", err)
+	}
+	after := listTokens(t, repo, model.TokenListQuery{Sort: model.SortLiquidity})
+	assertOrder(t, after, tokenAA, tokenCC)
+	assertDecimalString(t, after[0].LiquidityUSD, "6000")
+	assertDecimalString(t, after[0].PriceChange24h, "0.2")
+	if after[1].Trades24h != 0 || !after[1].Volume24hUSD.IsZero() || after[1].PriceUSD == nil {
+		t.Fatalf("idle token = %+v", after[1])
+	}
+
+	// A full scan (zero Since) drops every price it did not return.
+	if err := repo.CommitRankings(ctx, model.RankingRefresh{ChainID: 1, Head: day.Add(2 * time.Minute)}); err != nil {
+		t.Fatalf("empty CommitRankings() error = %v", err)
+	}
+	assertOrder(t, listTokens(t, repo, model.TokenListQuery{}))
+	if _, err := pgdb.TokenList(ctx, repo.db, model.TokenListQuery{ChainID: 1}); err == nil {
+		t.Fatal("TokenList() without a limit error = nil")
+	}
+}
+
+func assertDecimalString(t *testing.T, got decimal.Decimal, want string) {
+	t.Helper()
+	if !got.Equal(decimal.RequireFromString(want)) {
+		t.Fatalf("decimal = %s, want %s", got, want)
+	}
+}

@@ -1,0 +1,40 @@
+# market-rankings rolls market-engine's ClickHouse output, holder-indexer's
+# holder counts and market-registry's metadata into the token_rankings table
+# that market-api lists, refreshing every chain on its own. Durations may be
+# written as Go durations such as 500ms or 5m; any ${NAME} or ${NAME:default}
+# is read from the environment.
+
+# market-engine's output database, which market-rankings only reads.
+clickhouse:
+  addr:
+    - 127.0.0.1:9000
+  database: market
+  username: default
+  password: ""
+  dial_timeout: 5s
+
+# The database of token_rankings and of the holder and registry tables it
+# is joined with. Every service creates all of the shared tables, so they
+# can start in any order.
+postgres:
+  dsn: postgres://market:market@127.0.0.1:5432/market
+  schema: public
+
+rankings:
+  refresh_interval: 1m
+  # Token candle size summed for the 24h columns: one of market-engine's
+  # market.intervals, whose candles market-engine keeps for 2 days or more.
+  candle_interval: 5m
+  # Latest prices from this far behind the last refresh's chain head are
+  # read again, so a reorg that moved them is picked up.
+  reorg_window: 1h
+
+# Prometheus metrics at /metrics on addr; empty turns them off.
+metrics:
+  addr: ""
+
+# The chains to rank; only name and chain_id are read.
+chains:
+  - {name: eth, chain_id: 1}
+  - {name: bsc, chain_id: 56}
+  - {name: base, chain_id: 8453}

@@ -8,10 +8,10 @@ package main
 
 import (
 	"context"
-	"github.com/AloneAtWar/chainstream-market/internal/biz"
-	"github.com/AloneAtWar/chainstream-market/internal/conf"
-	"github.com/AloneAtWar/chainstream-market/internal/data"
-	"github.com/AloneAtWar/chainstream-market/internal/server"
+	"github.com/AloneAtWar/chainstream-market/internal/app/engine/conf"
+	"github.com/AloneAtWar/chainstream-market/internal/app/engine/data"
+	"github.com/AloneAtWar/chainstream-market/internal/app/engine/server"
+	"github.com/AloneAtWar/chainstream-market/internal/pkg/source"
 	"github.com/go-kratos/kratos/v2"
 	"log/slog"
 )
@@ -20,46 +20,41 @@ import (
 
 // wireApp initializes the Kratos application.
 func wireApp(contextContext context.Context, bootstrap *conf.Bootstrap, logger *slog.Logger) (*kratos.App, func(), error) {
-	metrics := bootstrap.Metrics
-	metricsServer := server.NewMetricsServer(metrics, logger)
 	v := bootstrap.Chains
 	market := bootstrap.Market
-	sources, err := data.NewSources(bootstrap)
+	metrics := bootstrap.Metrics
+	configSource := bootstrap.Source
+	kafka := bootstrap.Kafka
+	sources, err := source.NewSources(configSource, kafka)
 	if err != nil {
 		return nil, nil, err
 	}
 	storage := bootstrap.Storage
-	marketBackend, cleanup, err := data.NewMarketBackend(contextContext, storage, logger)
+	output, cleanup, err := data.NewOutput(contextContext, storage, logger)
 	if err != nil {
 		return nil, nil, err
 	}
-	output, err := data.NewOutput(contextContext, marketBackend, storage)
-	if err != nil {
-		cleanup()
-		return nil, nil, err
-	}
-	memory := data.NewMemory()
 	state := conf.NewState(bootstrap)
-	stateBackend, cleanup2, err := data.NewStateBackend(contextContext, state, logger)
+	stateStore, cleanup2, err := data.NewState(contextContext, state, logger)
 	if err != nil {
 		cleanup()
 		return nil, nil, err
 	}
-	stateStore := data.NewStateStore(stateBackend)
-	notifier, cleanup3, err := data.NewPublisher(bootstrap)
+	history, cleanup3, err := data.NewHistory(contextContext, storage, market, logger)
 	if err != nil {
 		cleanup2()
 		cleanup()
 		return nil, nil, err
 	}
-	history, cleanup4, err := data.NewHistory(contextContext, storage, market, logger)
+	live := bootstrap.Live
+	notifier, cleanup4, err := data.NewPublisher(live, kafka, v)
 	if err != nil {
 		cleanup3()
 		cleanup2()
 		cleanup()
 		return nil, nil, err
 	}
-	runners, err := biz.NewMarketEngines(contextContext, v, market, sources, output, memory, stateStore, notifier, history, logger)
+	v2, err := server.NewServers(contextContext, v, market, metrics, sources, output, stateStore, history, notifier, logger)
 	if err != nil {
 		cleanup4()
 		cleanup3()
@@ -67,7 +62,6 @@ func wireApp(contextContext context.Context, bootstrap *conf.Bootstrap, logger *
 		cleanup()
 		return nil, nil, err
 	}
-	v2 := server.NewWorkerServers(metricsServer, runners)
 	app := newApp(v2)
 	return app, func() {
 		cleanup4()

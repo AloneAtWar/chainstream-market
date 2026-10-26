@@ -13,31 +13,18 @@ Market data services built on the [chainstream-evm](https://github.com/AloneAtWa
 | `cmd/ch-loader` | Consumes the same chain topics and copies their raw facts, every ERC-20 transfer among them, into ClickHouse. |
 | `cmd/market-registry` | Consumes the same chain topics and keeps the latest token and pool metadata in PostgreSQL. |
 | `cmd/market-rankings` | Periodically rolls prices, 24h activity, holder counts and metadata into the PostgreSQL token rankings. |
-| `internal/api` | market-api handlers. |
-| `internal/chloader` | ch-loader's handler: converts each block's facts and writes them in batches. |
-| `internal/holders` | holder-indexer's handler: transfer deltas, balanceOf seeding and reconciliation. |
-| `internal/registry` | market-registry's handler: asset and pool facts to token and pool metadata. |
-| `internal/rankings` | market-rankings' refresher: reads the ClickHouse output and commits one chain's rankings. |
-| `internal/live` | Realtime push: market-engine's live topic publisher and market-api's WebSocket hub, over a Kafka or Redis Pub/Sub transport. |
-| `internal/market` | Per-chain processor: pool state, base/quote orientation, the USD price graph and candles, and the `chainsync.Handler` that runs it and writes its output. |
-| `internal/storage` | Store interfaces, the roles the commands depend on, and the in-memory backend. |
-| `internal/storage/chstore` | market-engine's ClickHouse output store and its queries, through GORM. |
-| `internal/storage/chraw` | ch-loader's ClickHouse raw fact store and its queries, through GORM. |
-| `internal/storage/pgstore` | PostgreSQL (through GORM) queries over checkpoints, market state, holder balances and the token and pool registry. |
-| `internal/conf` | Configuration: the `Bootstrap` proto in `conf.proto`, loaded with Kratos config, plus defaults and validation. |
-| `internal/data` | wire providers for the stores, Kafka sources and live publisher, built from the config. Stores are opened by the driver the config names and provided by role; see [Storage backends](#storage-backends). |
-| `internal/biz` | wire providers for each command's handlers and the workers they run. |
-| `internal/service` | wire provider for market-api's HTTP handler. |
-| `internal/server` | Kratos transport servers: HTTP, metrics and the long-running workers. |
+| `internal/app/<component>` | One component per command, each with its own configuration and layers: `engine` (market-engine), `api` (market-api), `holder` (holder-indexer), `loader` (ch-loader), `registry` (market-registry) and `rankings` (market-rankings). See [Components](#components). |
+| `internal/pkg/config` | The config loader, and the sections more than one component reads in `common.proto`: the chain source, Kafka, the databases, live push, metrics and the chains. |
 | `internal/pkg/model` | The data the components exchange: block output (oriented trades, token prices, candles), holder balances, token and pool metadata, raw facts and rankings. |
-| `internal/pkg/chdb` | The shared ClickHouse connection, the DDL of every table in it and their retention TTLs. |
-| `internal/pkg/pgdb` | The shared PostgreSQL connection and the DDL of every table in it. Each service creates them all under an advisory lock, so services can start in any order. |
+| `internal/pkg/chdb` | The shared ClickHouse connection, the DDL of every table in it, their retention TTLs, and the row models and writes of the tables more than one component touches. |
+| `internal/pkg/pgdb` | The shared PostgreSQL connection, the DDL of every table in it, and the row models and queries of the tables more than one component touches. Each service creates the tables under an advisory lock, so services can start in any order. |
 | `internal/pkg/chainsync` | Per-chain ordered apply loop: reverts, continuity checks and checkpoints, driving a `Handler`. Shared by every command that consumes chain topics. |
 | `internal/pkg/source` | Chain topic readers: Kafka partition zero, or a followed file of protobuf JSON records. |
 | `internal/pkg/asset` | Token addresses every command shares: the per-chain catalog of USD anchors, quote preferences and aliases, and chainstream-evm's asset metadata. |
 | `internal/pkg/rpc` | Contract reads over oh-my-blockchain's EVM SDK: `balanceOf` pinned to a block hash, and calls at the latest block. Adds the indexers' failure rules and metrics. |
 | `internal/pkg/chainlink` | Resolves Chainlink feed proxies to the aggregators of every phase. |
 | `internal/pkg/contract` | Contract ABIs copied into the repo (ERC-20, Chainlink's EACAggregatorProxy) and the abigen bindings generated from them. |
+| `internal/pkg/live` | Realtime push: market-engine's live topic publisher and market-api's WebSocket hub, over a Kafka or Redis Pub/Sub transport. |
 | `internal/pkg/transport` | Kratos servers every command shares: HTTP, and a Runner for long-lived work. |
 | `internal/pkg/metrics` | Prometheus metrics every command serves at `/metrics`. |
 | `deploy/` | docker-compose stack: infrastructure, chainstream-evm, every service, Prometheus and Grafana. |
@@ -67,7 +54,7 @@ Rows are keyed by `(chain_id, height)`. A revert deletes every row above `rollba
 
 ### Retention and cold storage
 
-Every fact table except `blocks` is partitioned by month (`candles` by interval and month). `storage.clickhouse.retention` turns that into TTLs, in whole days of block time (a candle's open time); zero keeps rows. market-engine sets the TTLs of `trades`, `token_prices` and `candles` at startup, and ch-loader those of its raw tables. market-api and market-rankings open the same tables without touching them.
+Every fact table except `blocks` is partitioned by month (`candles` by interval and month). `storage.clickhouse.retention` turns that into TTLs, in whole days of block time (a candle's open time); zero keeps rows. market-engine sets the TTLs of `trades`, `token_prices` and `candles` at startup, and ch-loader, from its own `clickhouse.retention`, those of its raw tables. market-api and market-rankings open the same tables without touching them.
 
 | Setting | Effect |
 | --- | --- |
@@ -114,7 +101,7 @@ Computation stays in memory, so PostgreSQL is written once per block and never r
 ## market-api
 
 ```sh
-go run ./cmd/market-api -conf configs/config.yaml   # needs storage.driver: clickhouse
+go run ./cmd/market-api -conf configs/market-api.yaml   # needs clickhouse.addr and postgres.dsn
 ```
 
 | Endpoint | Returns |
@@ -124,18 +111,18 @@ go run ./cmd/market-api -conf configs/config.yaml   # needs storage.driver: clic
 | `GET /v1/chains/{chain}/pools/{pool}/candles?interval=1m` | Pool candles. |
 | `GET /v1/chains/{chain}/tokens/{token}/trades` | Recent trades with the token as base, newest first. |
 | `GET /v1/chains/{chain}/pools/{pool}/trades` | Recent trades in the pool. |
-| `GET /v1/chains/{chain}/tokens/{token}/holders` | Holder count and the largest holders. `balance_raw` is in raw token units; when market-registry knows the token's decimals, `decimals` and a converted `balance` are added. Served only with `state.driver: postgres`. |
-| `GET /v1/chains/{chain}/tokens/{token}` | Token metadata from market-registry: standard, recognition, name, symbol, decimals, deployment and the raw metadata JSON. Served only with `state.driver: postgres`. |
-| `GET /v1/chains/{chain}/tokens/{token}/pools` | Pools that trade the token, most recently observed first. Accepts `limit`. Served only with `state.driver: postgres`. |
-| `GET /v1/chains/{chain}/pools/{pool}` | Pool metadata: protocol, DEX, tokens and the raw metadata JSON. Served only with `state.driver: postgres`. |
-| `GET /v1/chains/{chain}/tokens?sort=volume_24h` | The token list from market-rankings, see [market-rankings](#market-rankings). Served only with `state.driver: postgres`. |
+| `GET /v1/chains/{chain}/tokens/{token}/holders` | Holder count and the largest holders. `balance_raw` is in raw token units; when market-registry knows the token's decimals, `decimals` and a converted `balance` are added. |
+| `GET /v1/chains/{chain}/tokens/{token}` | Token metadata from market-registry: standard, recognition, name, symbol, decimals, deployment and the raw metadata JSON. |
+| `GET /v1/chains/{chain}/tokens/{token}/pools` | Pools that trade the token, most recently observed first. Accepts `limit`. |
+| `GET /v1/chains/{chain}/pools/{pool}` | Pool metadata: protocol, DEX, tokens and the raw metadata JSON. |
+| `GET /v1/chains/{chain}/tokens?sort=volume_24h` | The token list from market-rankings, see [market-rankings](#market-rankings). |
 | `GET /v1/chains/{chain}/tokens/{token}/transfers` | The token's ERC-20 transfers from ch-loader, newest first. `holder` narrows them to one party. |
 | `GET /v1/chains/{chain}/holders/{holder}/transfers` | Transfers to or from the holder across tokens, newest first. `token` narrows them to one token. |
 | `GET /v1/stream` | WebSocket stream of live trades and candles, see [Live push](#live-push). Served only with `live.enabled`. |
 | `GET /healthz` | 204 when the process is up. |
 
 - `{chain}` is the numeric chain ID. For prices, candles and trades the native pseudo-address is an alias for the wrapped token; holders and registry routes take addresses as they are.
-- Candles accept `from` and `to` (unix seconds, `from <= open_time < to`) and `limit`. `interval` must be one of `market.intervals`. Buckets with no trades are omitted, and each returned bucket opens at the previous close.
+- Candles accept `from` and `to` (unix seconds, `from <= open_time < to`) and `limit`. `interval` must be one of `api.intervals`, which must be among market-engine's `market.intervals`. Buckets with no trades are omitted, and each returned bucket opens at the previous close.
 - Trades accept `limit` and `before_height` for paging backwards.
 - Transfers accept `limit`, `before_height` and `before_log_index`. A full page returns `next: {before_height, before_log_index}`; pass both back to continue without skipping the rest of a block. Amounts are raw token units in `amount_raw`, and the native pseudo-address is not mapped, since only ERC-20 transfers are stored.
 - Decimal values are returned as strings.
@@ -167,7 +154,7 @@ chain topic -> market-engine -> {topic}-live (Kafka or Redis) -> market-api hub 
 | --- | --- |
 | `trades:<chain>:pool:<pool>` | The pool's trades, like `/pools/{pool}/trades`. |
 | `trades:<chain>:token:<token>` | Trades with the token as base, like `/tokens/{token}/trades`. |
-| `candles:<chain>:pool:<pool>:<interval>` | Pool candles. `interval` is one of `market.intervals`. |
+| `candles:<chain>:pool:<pool>:<interval>` | Pool candles. `interval` is one of `api.intervals`. |
 | `candles:<chain>:token:<token>:<interval>` | The token's aggregated candles. |
 
 Addresses are lowercased and token aliases, such as the native pseudo-address, map to the wrapped token. The `subscribed` reply lists the channels as the server spells them, and messages use that spelling. A connection holds at most `live.max_subscriptions` channels; an invalid request gets an `error` message and changes nothing.
@@ -189,7 +176,7 @@ Browsers on another origin must be listed in `live.allowed_origins`, for example
 ## holder-indexer
 
 ```sh
-go run ./cmd/holder-indexer -conf configs/config.yaml   # needs state.driver: postgres and chains[].rpc_url
+go run ./cmd/holder-indexer -conf configs/holder-indexer.yaml   # needs postgres.dsn and chains[].rpc_url
 ```
 
 holder-indexer reads each chain topic on its own checkpoint and keeps every ERC-20 holding it has seen.
@@ -211,7 +198,7 @@ Balances live only in PostgreSQL, so memory does not grow with the number of hol
 ## market-registry
 
 ```sh
-go run ./cmd/market-registry -conf configs/config.yaml   # needs state.driver: postgres
+go run ./cmd/market-registry -conf configs/market-registry.yaml   # needs postgres.dsn
 ```
 
 market-registry reads each chain topic on its own checkpoint and keeps the latest metadata for every asset (`AssetFact`) and pool (`PoolFact`) it has seen.
@@ -232,7 +219,7 @@ market-registry reads each chain topic on its own checkpoint and keeps the lates
 ## market-rankings
 
 ```sh
-go run ./cmd/market-rankings -conf configs/config.yaml   # needs storage.driver: clickhouse and state.driver: postgres
+go run ./cmd/market-rankings -conf configs/market-rankings.yaml   # needs clickhouse.addr and postgres.dsn
 ```
 
 market-rankings keeps `token_rankings` in PostgreSQL, a rollup that market-api's token list reads with one indexed query. Every `rankings.refresh_interval` it rebuilds each chain's rows and commits them in one transaction:
@@ -261,10 +248,10 @@ Name, symbol and decimals come from market-registry. The response includes `refr
 ## ch-loader
 
 ```sh
-go run ./cmd/ch-loader -conf configs/config.yaml   # needs storage.driver: clickhouse
+go run ./cmd/ch-loader -conf configs/ch-loader.yaml   # needs clickhouse.addr
 ```
 
-ch-loader reads each chain topic on its own checkpoint and stores the facts chainstream-evm published, without deriving anything. Addresses are lowercased; everything else is as published. It writes these tables in the `storage.clickhouse` database:
+ch-loader reads each chain topic on its own checkpoint and stores the facts chainstream-evm published, without deriving anything. Addresses are lowercased; everything else is as published. It writes these tables in the `clickhouse` database:
 
 | Table | Rows |
 | --- | --- |
@@ -280,11 +267,11 @@ Fact tables are sorted by `(chain_id, block_height, ...)`, where `block_height` 
 - **Checkpoint in ClickHouse.** ClickHouse has no transactions, so a flush inserts the facts first and the checkpoint after them. The checkpoint lives in the same database as the facts, so dropping or restoring that database moves them together, and ch-loader needs no PostgreSQL.
 - **Replays.** A crash can leave facts above the checkpoint. After a restart, the first block or revert deletes everything above the checkpoint's next height before inserting, so a replay leaves one copy. A flush that failed part way is cleared the same way before it is retried.
 - **Reorgs.** A revert drops buffered blocks above `rollback_to` and deletes stored facts above it with lightweight `DELETE`. Raw facts need no undo history, so any depth of reorg can be reverted.
-- **Batching.** Blocks older than `ch_loader.batch_lag` (catching up) are buffered and written together once `flush_rows` facts or `flush_interval` accumulate, one insert per table. Newer blocks are written on their own commit, so the API sees them right away. A clean stop writes the buffer.
+- **Batching.** Blocks older than `loader.batch_lag` (catching up) are buffered and written together once `flush_rows` facts or `flush_interval` accumulate, one insert per table. Newer blocks are written on their own commit, so the API sees them right away. A clean stop writes the buffer.
 
 ## Pricing and candles
 
-Each block goes through `internal/market` in three steps:
+Each block goes through market-engine's processor (`internal/app/engine/biz`) in three steps:
 
 1. **Pool state.** Every two-token trade updates its pool:
    - Constant-product pools use `reserves_after`.
@@ -353,7 +340,7 @@ The output is the same as for held trades: rows keep their own block height, bel
 All state is journaled by height. A revert undoes it exactly, as long as the reorg stays above the finalized height and within `history_depth` blocks. A deeper reorg stops the engine. State is computed in memory and persisted per block when `state.driver` is `postgres`; see [State](#state).
 
 ```sh
-go run ./cmd/market-engine -conf configs/config.yaml
+go run ./cmd/market-engine -conf configs/market-engine.yaml
 ```
 
 ## Local stack
@@ -376,9 +363,9 @@ make down    # stop, keeping data; make clean also drops the volumes
 | 8123, 9000 | ClickHouse HTTP and native, user `default` without password, database `market` |
 | 5432 | PostgreSQL, `market:market@localhost:5432/market` |
 
-The node must answer `eth_call` by block hash (EIP-1898) near the head, for holder-indexer, and serve the Chainlink proxies market-engine resolves at startup. chainstream-evm starts at the chain tip unless `ETH_START_HEIGHT` is set, and keeps its cursor in Redis afterwards. Its config is `deploy/evm/config.yaml`; the services share `deploy/config.yaml`. A service that cannot start, such as market-engine without a reachable node, restarts until it can.
+The node must answer `eth_call` by block hash (EIP-1898) near the head, for holder-indexer, and serve the Chainlink proxies market-engine resolves at startup. chainstream-evm starts at the chain tip unless `ETH_START_HEIGHT` is set, and keeps its cursor in Redis afterwards. Its config is `deploy/evm/config.yaml`; each service reads its own `deploy/configs/<service>.yaml`. A service that cannot start, such as market-engine without a reachable node, restarts until it can.
 
-The topics are created by `kafka-init` with one partition and no retention limit, since every consumer resumes from its own committed offset. To add a chain, add a chainstream-evm service with its own config and topic, the topics to `kafka-init`, and the chain to `deploy/config.yaml`.
+The topics are created by `kafka-init` with one partition and no retention limit, since every consumer resumes from its own committed offset. To add a chain, add a chainstream-evm service with its own config and topic, the topics to `kafka-init`, and the chain to each file in `deploy/configs`.
 
 ## Metrics
 
@@ -406,11 +393,11 @@ The config file may read the environment: `${NAME}` is replaced by the variable,
 Requires Go 1.26.10 and Buf.
 
 ```sh
-make generate   # regenerate internal/conf, the abigen bindings, wire_gen.go and proto/stream/v1, and tidy both modules
+make generate   # regenerate the config protos, the abigen bindings, wire_gen.go and proto/stream/v1, and tidy both modules
 make verify     # buf lint, gofmt, golangci-lint, go test -race
 ```
 
-Every command follows chainstream-evm's layout. `main.go` loads `-conf` into `conf.Bootstrap` with Kratos config, and `wire.go` lists the provider sets that `wireApp` assembles into a `kratos.App`. Change a constructor or a provider set, then run `make wire` (or `go generate ./cmd/...`) to rewrite the `wire_gen.go` files; change `internal/conf/conf.proto`, then run `make config`. CI runs `make generate` and fails when it changes or adds any file.
+Every command follows chainstream-evm's layout. `main.go` loads `-conf` (default `configs/<command>.yaml`) into its component's `conf.Bootstrap` with Kratos config, and `wire.go` lists the component's provider sets that `wireApp` assembles into a `kratos.App`. Change a constructor or a provider set, then run `make wire` (or `go generate ./cmd/...`) to rewrite the `wire_gen.go` files; change a component's `conf/conf.proto` or `internal/pkg/config/common.proto`, then run `make config`. CI runs `make generate` and fails when it changes or adds any file.
 
 ### Chain calls
 
@@ -418,21 +405,23 @@ Every read from a node goes through [oh-my-blockchain](https://github.com/AloneA
 
 oh-my-blockchain is private. Locally, set `GOPRIVATE=github.com/AloneAtWar` and give git access to it, for example with `git config --global url."git@github.com:".insteadOf "https://github.com/"`. CI needs the repository secret `OMB_SSH_PRIVATE_KEY`, an SSH key with read access to oh-my-blockchain, as in chainstream-evm.
 
-### Storage backends
+### Components
 
-Commands depend on storage roles, the interfaces in `internal/storage` such as `storage.Output`, `storage.Reader`, `storage.RawStore` or `storage.HolderStore`, never on a concrete store. `internal/data/storage.go` maps each driver name to an opener:
+Each command is one component in `internal/app/<component>`, laid out the same way:
 
-| Setting | Backend | Drivers | Roles it serves |
-| --- | --- | --- | --- |
-| `storage.driver` | market | `memory`, `clickhouse` | `Output` (both); `Reader`, `RankingSource` (clickhouse) |
-| `storage.driver` | raw | `clickhouse` | `RawStore`, `TransferReader`, backfill `History` |
-| `state.driver` | state | `memory`, `postgres` | none (memory); `StateStore`, `HolderStore`/`HolderReader`, `RegistryStore`/`RegistryReader`, `RankingStore`/`RankingReader` (postgres) |
+| Package | What it holds |
+| --- | --- |
+| `conf` | The component's `Bootstrap` proto in `conf.proto`, with its defaults and validation. It is read from the component's own `configs/<command>.yaml`; only sections several components share, such as `chains` or `clickhouse`, come from `internal/pkg/config/common.proto`. |
+| `biz` | The handler or refresher that does the work, and the repository interfaces it persists through. |
+| `data` | The repositories over ClickHouse and PostgreSQL, and the other sources the component reads, such as the chain topics or the live feed. |
+| `service` | market-api only: the HTTP handler over the readers `data` provides. |
+| `server` | The Kratos servers: one runner per chain, market-api's HTTP server and live hub, and metrics. |
 
-wire provides each role by asserting it on the backend the setting opened, so a command whose driver does not serve a role it needs fails at startup with, for example, `state.driver "memory" does not provide storage.HolderStore`. market-api's holder, registry and ranking routes are optional and left out when the state backend does not serve them.
+A component never imports another one, and `internal/pkg` never imports `internal/app`; golangci-lint's depguard rules fail the build otherwise. A table one component writes and another reads, such as `token_prices` or `holder_counts`, has its row model and shared queries in `internal/pkg/chdb` or `internal/pkg/pgdb`, so each side, and its tests, reach it without the other component.
 
-To add a backend, implement the roles it serves, add its settings to `conf.proto` and their validation, and list its opener in the driver map of its setting. Nothing in `internal/biz`, `internal/service` or `cmd/` changes.
+Most components name their one database directly (`clickhouse:` or `postgres:`). market-engine keeps two drivers: `storage.driver` (`memory` or `clickhouse`) for its output and `state.driver` (`memory` or `postgres`) for its state, so it can run without either database.
 
-PostgreSQL and ClickHouse are reached through GORM. The schemas stay hand-written DDL in each store's `schema.go` rather than GORM migrations, since they rely on partial and GIN indexes, ClickHouse engines, sort keys and TTLs that model tags cannot express.
+PostgreSQL and ClickHouse are reached through GORM. The schemas stay hand-written DDL in `internal/pkg/chdb/schema.go` and `internal/pkg/pgdb/schema.go` rather than GORM migrations, since they rely on partial and GIN indexes, ClickHouse engines, sort keys and TTLs that model tags cannot express.
 
 The ClickHouse tests, including ch-loader's end-to-end run over an in-process kfake broker, run only when `CLICKHOUSE_ADDR` is set, for example `CLICKHOUSE_ADDR=127.0.0.1:9000 make test`. The PostgreSQL tests run only when `POSTGRES_DSN` is set, for example `POSTGRES_DSN=postgres://market:market@127.0.0.1:5432/market make test`. market-engine's late-trade run over kfake needs both. CI starts both services.
 

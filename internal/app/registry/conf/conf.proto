@@ -1,0 +1,27 @@
+syntax = "proto3";
+
+package app.registry.conf;
+
+option go_package = "github.com/AloneAtWar/chainstream-market/internal/app/registry/conf;conf";
+
+import "pkg/config/common.proto";
+
+// Bootstrap is market-registry's configuration; configs/market-registry.yaml
+// documents every setting. Durations may be written as Go durations such as
+// 500ms or 5m.
+message Bootstrap {
+  pkg.config.Source source = 1;
+  pkg.config.Kafka kafka = 2;
+  // postgres is the database the registry tables live in.
+  pkg.config.Postgres postgres = 3;
+  pkg.config.Metrics metrics = 4;
+  repeated pkg.config.Chain chains = 5;
+  Registry registry = 6;
+}
+
+// Registry tunes how market-registry keeps token and pool metadata.
+message Registry {
+  // history_depth is how many recent blocks stay revertible in addition to
+  // everything above the finalized height.
+  int64 history_depth = 1;
+}

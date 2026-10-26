@@ -12,6 +12,8 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/AloneAtWar/chainstream-market/internal/pkg/config"
+	"github.com/go-kratos/kratos/v2/transport"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/collectors"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -165,3 +167,12 @@ func (recorder *statusRecorder) WriteHeader(status int) {
 // Unwrap lets http.ResponseController and the WebSocket upgrade reach the
 // underlying writer's Flush and Hijack.
 func (recorder *statusRecorder) Unwrap() http.ResponseWriter { return recorder.ResponseWriter }
+
+// Servers returns the server of /metrics on the metrics section's addr, or
+// none when it is empty, to start a component's list of Kratos servers.
+func Servers(metrics *config.Metrics, logger *slog.Logger) []transport.Server {
+	if metrics.GetAddr() == "" {
+		return nil
+	}
+	return []transport.Server{NewServer(metrics.GetAddr(), logger)}
+}

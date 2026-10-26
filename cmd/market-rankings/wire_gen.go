@@ -8,10 +8,9 @@ package main
 
 import (
 	"context"
-	"github.com/AloneAtWar/chainstream-market/internal/biz"
-	"github.com/AloneAtWar/chainstream-market/internal/conf"
-	"github.com/AloneAtWar/chainstream-market/internal/data"
-	"github.com/AloneAtWar/chainstream-market/internal/server"
+	"github.com/AloneAtWar/chainstream-market/internal/app/rankings/conf"
+	"github.com/AloneAtWar/chainstream-market/internal/app/rankings/data"
+	"github.com/AloneAtWar/chainstream-market/internal/app/rankings/server"
 	"github.com/go-kratos/kratos/v2"
 	"log/slog"
 )
@@ -20,42 +19,24 @@ import (
 
 // wireApp initializes the Kratos application.
 func wireApp(contextContext context.Context, bootstrap *conf.Bootstrap, logger *slog.Logger) (*kratos.App, func(), error) {
-	metrics := bootstrap.Metrics
-	metricsServer := server.NewMetricsServer(metrics, logger)
 	v := bootstrap.Chains
 	rankings := bootstrap.Rankings
-	storage := bootstrap.Storage
-	marketBackend, cleanup, err := data.NewMarketBackend(contextContext, storage, logger)
+	metrics := bootstrap.Metrics
+	clickHouse := bootstrap.Clickhouse
+	postgres := bootstrap.Postgres
+	dataData, cleanup, err := data.NewData(contextContext, clickHouse, postgres, logger)
 	if err != nil {
 		return nil, nil, err
 	}
-	rankingSource, err := data.NewRankingSource(marketBackend)
-	if err != nil {
-		cleanup()
-		return nil, nil, err
-	}
-	state := conf.NewState(bootstrap)
-	stateBackend, cleanup2, err := data.NewStateBackend(contextContext, state, logger)
+	rankingSource := data.NewRankingSource(dataData)
+	rankingRepo := data.NewRankingRepo(dataData)
+	v2, err := server.NewServers(v, rankings, metrics, rankingSource, rankingRepo, logger)
 	if err != nil {
 		cleanup()
 		return nil, nil, err
 	}
-	rankingStore, err := data.NewRankingStore(stateBackend)
-	if err != nil {
-		cleanup2()
-		cleanup()
-		return nil, nil, err
-	}
-	runners, err := biz.NewRefreshers(v, rankings, rankingSource, rankingStore, logger)
-	if err != nil {
-		cleanup2()
-		cleanup()
-		return nil, nil, err
-	}
-	v2 := server.NewWorkerServers(metricsServer, runners)
 	app := newApp(v2)
 	return app, func() {
-		cleanup2()
 		cleanup()
 	}, nil
 }

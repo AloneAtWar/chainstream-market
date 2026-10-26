@@ -14,6 +14,7 @@ import (
 	"runtime"
 	"time"
 
+	"github.com/AloneAtWar/chainstream-market/internal/pkg/config"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/stdlib"
 	"gorm.io/driver/postgres"
@@ -74,7 +75,7 @@ func newLogger(slogger *slog.Logger) logger.Interface {
 	if slogger == nil {
 		return logger.Discard
 	}
-	return logger.NewSlogLogger(slogger.With("component", "pgstore"), logger.Config{
+	return logger.NewSlogLogger(slogger.With("component", "postgres"), logger.Config{
 		SlowThreshold:             time.Second,
 		LogLevel:                  logger.Warn,
 		IgnoreRecordNotFoundError: true,
@@ -115,4 +116,14 @@ func Close(db *gorm.DB) {
 	if pool, err := db.DB(); err == nil {
 		_ = pool.Close()
 	}
+}
+
+// OpenConfig connects to the database the postgres section names, creating
+// the schema and tables if needed, for a component's data layer.
+func OpenConfig(ctx context.Context, postgres *config.Postgres, logger *slog.Logger) (*gorm.DB, func(), error) {
+	db, err := Open(ctx, Options{DSN: postgres.GetDsn(), Schema: postgres.GetSchema(), Logger: logger})
+	if err != nil {
+		return nil, nil, err
+	}
+	return db, func() { Close(db) }, nil
 }

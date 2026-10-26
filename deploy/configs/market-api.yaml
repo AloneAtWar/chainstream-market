@@ -1,0 +1,25 @@
+# market-api in the docker-compose stack; configs/market-api.yaml documents
+# each setting. ${NAME} and ${NAME:default} come from the environment
+# (deploy/.env).
+clickhouse:
+  addr: [clickhouse:9000]
+  database: market
+  username: default
+  password: ""
+
+postgres:
+  dsn: postgres://market:market@postgres:5432/market
+
+live:
+  enabled: true
+  allowed_origins: ["localhost:*", "127.0.0.1:*"]
+
+kafka:
+  brokers: [kafka:9092]
+  client_id: market-api
+
+metrics:
+  addr: ":9100"
+
+chains:
+  - {name: eth, chain_id: 1, topic: chainstream-eth}

@@ -1,0 +1,45 @@
+# market-registry keeps the latest token and pool metadata of every chain
+# in PostgreSQL, where market-api and market-rankings read it. Durations may
+# be written as Go durations such as 500ms or 5m; any ${NAME} or
+# ${NAME:default} is read from the environment.
+
+# Where chain topics are read from: kafka or file.
+# kafka: each chain's topic on the kafka brokers below.
+# file: <file.dir>/<topic>.jsonl, one stream.v1.StreamRecord in protobuf JSON
+#   per line, as chainstream-evm writes with output.type file and
+#   output.file.format protojson. The file is followed as it grows; a
+#   record's offset is its index among the non-blank lines.
+source:
+  driver: kafka
+  file:
+    dir: data
+    poll_interval: 200ms
+
+kafka:
+  brokers:
+    - 127.0.0.1:9092
+  client_id: market-registry
+  # Must be >= chainstream-evm's max_message_bytes.
+  fetch_max_bytes: 104857600
+  fetch_max_wait: 500ms
+
+# The database of the registry tables. Every service creates all of the
+# shared tables, so they can start in any order.
+postgres:
+  dsn: postgres://market:market@127.0.0.1:5432/market
+  schema: public
+
+registry:
+  # How many recent blocks stay revertible in addition to everything above
+  # the finalized height.
+  history_depth: 256
+
+# Prometheus metrics at /metrics on addr; empty turns them off.
+metrics:
+  addr: ""
+
+# One chainstream-evm topic per chain, each consumed in order.
+chains:
+  - {name: eth, chain_id: 1, topic: chainstream-eth}
+  - {name: bsc, chain_id: 56, topic: chainstream-bsc}
+  - {name: base, chain_id: 8453, topic: chainstream-base}

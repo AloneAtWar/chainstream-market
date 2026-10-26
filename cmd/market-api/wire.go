@@ -6,10 +6,10 @@ import (
 	"context"
 	"log/slog"
 
-	"github.com/AloneAtWar/chainstream-market/internal/conf"
-	"github.com/AloneAtWar/chainstream-market/internal/data"
-	"github.com/AloneAtWar/chainstream-market/internal/server"
-	"github.com/AloneAtWar/chainstream-market/internal/service"
+	"github.com/AloneAtWar/chainstream-market/internal/app/api/conf"
+	"github.com/AloneAtWar/chainstream-market/internal/app/api/data"
+	"github.com/AloneAtWar/chainstream-market/internal/app/api/server"
+	"github.com/AloneAtWar/chainstream-market/internal/app/api/service"
 	"github.com/go-kratos/kratos/v2"
 	"github.com/google/wire"
 )
@@ -20,7 +20,7 @@ func wireApp(context.Context, *conf.Bootstrap, *slog.Logger) (*kratos.App, func(
 		conf.ProviderSet,
 		data.ProviderSet,
 		service.ProviderSet,
-		server.APISet,
+		server.ProviderSet,
 		newApp,
 	))
 }

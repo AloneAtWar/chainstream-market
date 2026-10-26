@@ -1,0 +1,36 @@
+syntax = "proto3";
+
+package app.api.conf;
+
+option go_package = "github.com/AloneAtWar/chainstream-market/internal/app/api/conf;conf";
+
+import "google/protobuf/duration.proto";
+import "pkg/config/common.proto";
+
+// Bootstrap is market-api's configuration; configs/market-api.yaml
+// documents every setting. Durations may be written as Go durations such as
+// 500ms or 5m.
+message Bootstrap {
+  API api = 1;
+  // clickhouse holds market-engine's output and ch-loader's raw tables. Its
+  // retention is not read: the writers apply it.
+  pkg.config.ClickHouse clickhouse = 2;
+  // postgres holds the tables of holder-indexer, market-registry and
+  // market-rankings.
+  pkg.config.Postgres postgres = 3;
+  pkg.config.Live live = 4;
+  // kafka carries live updates with live.driver kafka.
+  pkg.config.Kafka kafka = 5;
+  pkg.config.Metrics metrics = 6;
+  // chains name the live topics to follow; only name, chain_id, topic and
+  // live_topic are read.
+  repeated pkg.config.Chain chains = 7;
+}
+
+// API configures the HTTP server.
+message API {
+  string addr = 1;
+  // intervals are the candle sizes served, which must be among
+  // market-engine's market.intervals.
+  repeated google.protobuf.Duration intervals = 2;
+}

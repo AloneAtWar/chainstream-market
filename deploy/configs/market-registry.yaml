@@ -1,0 +1,14 @@
+# market-registry for the docker-compose stack; configs/market-registry.yaml
+# documents each setting.
+kafka:
+  brokers: [kafka:9092]
+  client_id: market-registry
+
+postgres:
+  dsn: postgres://market:market@postgres:5432/market
+
+metrics:
+  addr: ":9100"
+
+chains:
+  - {name: eth, chain_id: 1, topic: chainstream-eth}

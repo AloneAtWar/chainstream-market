@@ -8,10 +8,10 @@ package main
 
 import (
 	"context"
-	"github.com/AloneAtWar/chainstream-market/internal/biz"
-	"github.com/AloneAtWar/chainstream-market/internal/conf"
-	"github.com/AloneAtWar/chainstream-market/internal/data"
-	"github.com/AloneAtWar/chainstream-market/internal/server"
+	"github.com/AloneAtWar/chainstream-market/internal/app/loader/conf"
+	"github.com/AloneAtWar/chainstream-market/internal/app/loader/data"
+	"github.com/AloneAtWar/chainstream-market/internal/app/loader/server"
+	"github.com/AloneAtWar/chainstream-market/internal/pkg/source"
 	"github.com/go-kratos/kratos/v2"
 	"log/slog"
 )
@@ -20,30 +20,26 @@ import (
 
 // wireApp initializes the Kratos application.
 func wireApp(contextContext context.Context, bootstrap *conf.Bootstrap, logger *slog.Logger) (*kratos.App, func(), error) {
-	metrics := bootstrap.Metrics
-	metricsServer := server.NewMetricsServer(metrics, logger)
 	v := bootstrap.Chains
-	chLoader := bootstrap.ChLoader
-	sources, err := data.NewSources(bootstrap)
+	loader := bootstrap.Loader
+	metrics := bootstrap.Metrics
+	configSource := bootstrap.Source
+	kafka := bootstrap.Kafka
+	sources, err := source.NewSources(configSource, kafka)
 	if err != nil {
 		return nil, nil, err
 	}
-	storage := bootstrap.Storage
-	rawBackend, cleanup, err := data.NewRawBackend(contextContext, storage, logger)
+	clickHouse := bootstrap.Clickhouse
+	db, cleanup, err := data.NewDB(contextContext, clickHouse, logger)
 	if err != nil {
 		return nil, nil, err
 	}
-	rawStore, err := data.NewRawStore(contextContext, rawBackend, storage)
+	rawRepo := data.NewRawRepo(db)
+	v2, err := server.NewServers(v, loader, metrics, sources, rawRepo, logger)
 	if err != nil {
 		cleanup()
 		return nil, nil, err
 	}
-	runners, err := biz.NewLoaderEngines(v, chLoader, sources, rawStore, logger)
-	if err != nil {
-		cleanup()
-		return nil, nil, err
-	}
-	v2 := server.NewWorkerServers(metricsServer, runners)
 	app := newApp(v2)
 	return app, func() {
 		cleanup()

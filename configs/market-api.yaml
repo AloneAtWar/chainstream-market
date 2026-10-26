@@ -1,0 +1,67 @@
+# market-api serves over HTTP what the other components store: market-engine's
+# prices, candles and trades and ch-loader's transfers from ClickHouse, and
+# holder-indexer's holders, market-registry's token and pool metadata and
+# market-rankings' token lists from PostgreSQL. With live.enabled it also
+# streams market-engine's live updates to WebSocket clients at /v1/stream.
+# Durations may be written as Go durations such as 500ms or 5m; any ${NAME}
+# or ${NAME:default} is read from the environment.
+
+api:
+  addr: ":8080"
+  # Candle sizes served; each must be one of market-engine's
+  # market.intervals.
+  intervals: [1m, 5m, 15m, 1h, 4h, 24h]
+
+# market-engine's and ch-loader's database. Its retention is not read here.
+clickhouse:
+  addr:
+    - 127.0.0.1:9000
+  database: market
+  username: default
+  password: ""
+  dial_timeout: 5s
+
+# The database of holder-indexer, market-registry and market-rankings.
+postgres:
+  dsn: postgres://market:market@127.0.0.1:5432/market
+  schema: public
+
+# Realtime push from market-engine, whose market-engine.yaml must name the
+# same live.driver.
+live:
+  enabled: false
+  # kafka, on each chain's live_topic, or redis, on a Pub/Sub channel named
+  # after it.
+  driver: kafka
+  redis:
+    addr: 127.0.0.1:6379
+    username: ""
+    password: ""
+    database: 0
+    dial_timeout: 5s
+  # How often each changed candle bucket is sent, at its latest value.
+  # Trades are sent at once.
+  candle_throttle: 250ms
+  # A client this many messages behind is disconnected as too slow.
+  client_buffer: 1024
+  max_subscriptions: 200
+  # Other origins browsers may connect from, e.g. [localhost:5173].
+  allowed_origins: []
+
+# Kafka brokers, used with live.driver kafka.
+kafka:
+  brokers:
+    - 127.0.0.1:9092
+  client_id: market-api
+
+# Prometheus metrics at /metrics on addr; empty turns them off. -metrics-addr
+# overrides it.
+metrics:
+  addr: ""
+
+# The chains whose live topics are followed (default "<topic>-live"); only
+# name, chain_id, topic and live_topic are read.
+chains:
+  - {name: eth, chain_id: 1, topic: chainstream-eth}
+  - {name: bsc, chain_id: 56, topic: chainstream-bsc}
+  - {name: base, chain_id: 8453, topic: chainstream-base}

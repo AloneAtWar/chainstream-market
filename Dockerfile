@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 # One image with every chainstream-market command; pick one as the command,
-# e.g. ["market-engine", "-conf", "/etc/chainstream-market/config.yaml"].
+# e.g. ["market-engine", "-conf", "/etc/chainstream-market/market-engine.yaml"].
 FROM golang:1.26.10-bookworm AS build
 WORKDIR /src
 ENV CGO_ENABLED=0 GOTOOLCHAIN=local GOPRIVATE=github.com/AloneAtWar GONOSUMDB=github.com/AloneAtWar

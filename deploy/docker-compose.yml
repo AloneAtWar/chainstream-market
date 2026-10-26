@@ -13,7 +13,7 @@ x-market: &market
     ETH_RPC_URL: ${ETH_RPC_URL:-http://host.docker.internal:8545}
   extra_hosts: ["host.docker.internal:host-gateway"]
   volumes:
-    - ./config.yaml:/etc/chainstream-market/config.yaml:ro
+    - ./configs:/etc/chainstream-market:ro
   depends_on: &market-deps
     kafka-init: {condition: service_completed_successfully}
     clickhouse: {condition: service_healthy}
@@ -119,27 +119,27 @@ services:
 
   market-engine:
     <<: *market
-    command: ["/usr/local/bin/market-engine", "-conf", "/etc/chainstream-market/config.yaml"]
+    command: ["/usr/local/bin/market-engine", "-conf", "/etc/chainstream-market/market-engine.yaml"]
 
   ch-loader:
     <<: *market
-    command: ["/usr/local/bin/ch-loader", "-conf", "/etc/chainstream-market/config.yaml"]
+    command: ["/usr/local/bin/ch-loader", "-conf", "/etc/chainstream-market/ch-loader.yaml"]
 
   holder-indexer:
     <<: *market
-    command: ["/usr/local/bin/holder-indexer", "-conf", "/etc/chainstream-market/config.yaml"]
+    command: ["/usr/local/bin/holder-indexer", "-conf", "/etc/chainstream-market/holder-indexer.yaml"]
 
   market-registry:
     <<: *market
-    command: ["/usr/local/bin/market-registry", "-conf", "/etc/chainstream-market/config.yaml"]
+    command: ["/usr/local/bin/market-registry", "-conf", "/etc/chainstream-market/market-registry.yaml"]
 
   market-rankings:
     <<: *market
-    command: ["/usr/local/bin/market-rankings", "-conf", "/etc/chainstream-market/config.yaml"]
+    command: ["/usr/local/bin/market-rankings", "-conf", "/etc/chainstream-market/market-rankings.yaml"]
 
   market-api:
     <<: *market
-    command: ["/usr/local/bin/market-api", "-conf", "/etc/chainstream-market/config.yaml"]
+    command: ["/usr/local/bin/market-api", "-conf", "/etc/chainstream-market/market-api.yaml"]
     ports: ["8080:8080"]
 
   prometheus:

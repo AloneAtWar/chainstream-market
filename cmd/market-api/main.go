@@ -14,7 +14,7 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/AloneAtWar/chainstream-market/internal/conf"
+	"github.com/AloneAtWar/chainstream-market/internal/app/api/conf"
 	"github.com/go-kratos/kratos/v2"
 	"github.com/go-kratos/kratos/v2/transport"
 )
@@ -33,7 +33,7 @@ var (
 )
 
 func init() {
-	flag.StringVar(&flagconf, "conf", "configs/config.yaml", "config file or directory, eg: -conf configs/config.yaml")
+	flag.StringVar(&flagconf, "conf", "configs/market-api.yaml", "config file or directory, eg: -conf configs/market-api.yaml")
 	flag.StringVar(&metricsAddr, "metrics-addr", "", "address to serve /metrics on, overriding metrics.addr")
 }
 
