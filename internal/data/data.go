@@ -9,7 +9,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"path/filepath"
 
 	"github.com/AloneAtWar/chainstream-market/internal/conf"
 	"github.com/AloneAtWar/chainstream-market/internal/live"
@@ -34,7 +33,6 @@ var ProviderSet = wire.NewSet(
 	NewHistory,
 	NewStateStore,
 	NewHolderStore,
-	NewRegistryStore,
 	NewRankingStore,
 	NewStateReaders,
 	NewMemory,
@@ -47,48 +45,9 @@ var ProviderSet = wire.NewSet(
 // state.
 func NewMemory() *storage.Memory { return storage.NewMemory() }
 
-// Sources opens chain topics through the driver source.driver names.
-type Sources struct {
-	open func(topic string, start int64) (source.Source, error)
-}
-
-// sourceDrivers open a chain topic at an offset, by source.driver.
-var sourceDrivers = map[string]func(bootstrap *conf.Bootstrap) func(topic string, start int64) (source.Source, error){
-	config.SourceKafka: func(bootstrap *conf.Bootstrap) func(string, int64) (source.Source, error) {
-		kafka := bootstrap.GetKafka()
-		options := source.KafkaOptions{
-			Brokers: kafka.GetBrokers(), ClientID: kafka.GetClientId(),
-			FetchMaxBytes: kafka.GetFetchMaxBytes(), FetchMaxWait: kafka.GetFetchMaxWait().AsDuration(),
-		}
-		return func(topic string, start int64) (source.Source, error) {
-			topicOptions := options
-			topicOptions.Topic = topic
-			return source.NewKafka(topicOptions, start)
-		}
-	},
-	config.SourceFile: func(bootstrap *conf.Bootstrap) func(string, int64) (source.Source, error) {
-		file := bootstrap.GetSource().GetFile()
-		return func(topic string, start int64) (source.Source, error) {
-			return source.NewFile(source.FileOptions{
-				Path: filepath.Join(file.GetDir(), topic+".jsonl"), PollInterval: file.GetPollInterval().AsDuration(),
-			}, start)
-		}
-	},
-}
-
 // NewSources reads chain topics with the driver source.driver names.
-func NewSources(bootstrap *conf.Bootstrap) (*Sources, error) {
-	driver := bootstrap.GetSource().GetDriver()
-	open, ok := sourceDrivers[driver]
-	if !ok {
-		return nil, fmt.Errorf("source.driver %q is not supported; use one of: %s", driver, driverNames(sourceDrivers))
-	}
-	return &Sources{open: open(bootstrap)}, nil
-}
-
-// Opener returns the engine's opener of topic.
-func (sources *Sources) Opener(topic string) func(start int64) (source.Source, error) {
-	return func(start int64) (source.Source, error) { return sources.open(topic, start) }
+func NewSources(bootstrap *conf.Bootstrap) (*source.Sources, error) {
+	return source.NewSources(bootstrap.GetSource(), bootstrap.GetKafka())
 }
 
 // liveDrivers open the live transport live.driver names: the sink

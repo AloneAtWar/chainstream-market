@@ -120,11 +120,6 @@ ch_loader:
   flush_rows: 100000
   flush_interval: 2s
 
-# market-registry keeps token and pool metadata in the state.postgres
-# database; it needs state.driver: postgres.
-registry:
-  history_depth: 256
-
 # market-rankings rolls market-engine's ClickHouse output, holder counts and
 # registry metadata into the token_rankings table that market-api lists; it
 # needs storage.driver: clickhouse and state.driver: postgres.

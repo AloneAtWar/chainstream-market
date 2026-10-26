@@ -24,7 +24,7 @@ import (
 // the market backend, which market-engine writes and market-api and
 // market-rankings read, and the raw backend ch-loader writes; state.driver
 // opens the state backend, which keeps market-engine's state and the tables
-// of holder-indexer, market-registry and market-rankings.
+// of holder-indexer and market-rankings.
 //
 // A backend serves every storage role, such as storage.Output or
 // storage.HolderStore, that it implements, and the commands depend on roles
@@ -220,11 +220,6 @@ func NewStateStore(backend *StateBackend) storage.StateStore {
 // NewHolderStore returns holder-indexer's store.
 func NewHolderStore(backend *StateBackend) (storage.HolderStore, error) {
 	return Role[storage.HolderStore](backend.Backend)
-}
-
-// NewRegistryStore returns market-registry's store.
-func NewRegistryStore(backend *StateBackend) (storage.RegistryStore, error) {
-	return Role[storage.RegistryStore](backend.Backend)
 }
 
 // NewRankingStore returns market-rankings' store.

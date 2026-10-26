@@ -36,7 +36,7 @@ func Open(ctx context.Context, options pgdb.Options) (*Store, error) {
 func (store *Store) Close() { pgdb.Close(store.db) }
 
 func (store *Store) Load(ctx context.Context, chainID uint64) (chainsync.Checkpoint, bool, error) {
-	checkpoint, _, ok, err := loadCheckpoint(store.db.WithContext(ctx), engineCheckpoints, chainID)
+	checkpoint, _, ok, err := pgdb.LoadCheckpoint(store.db.WithContext(ctx), pgdb.EngineCheckpoints, chainID)
 	return checkpoint, ok, err
 }
 
@@ -49,7 +49,7 @@ func (store *Store) Save(ctx context.Context, checkpoint chainsync.Checkpoint) e
 // history in one repeatable-read snapshot.
 func (store *Store) LoadState(ctx context.Context, chainID uint64) (state storage.State, ok bool, err error) {
 	err = store.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		state.Checkpoint, state.PrunedThrough, ok, err = loadCheckpoint(tx, engineCheckpoints, chainID)
+		state.Checkpoint, state.PrunedThrough, ok, err = pgdb.LoadCheckpoint(tx, pgdb.EngineCheckpoints, chainID)
 		if err != nil || !ok {
 			return err
 		}
@@ -92,9 +92,9 @@ func (store *Store) Commit(ctx context.Context, checkpoint chainsync.Checkpoint,
 	}
 	chainID := int64(checkpoint.ChainID)
 	err := store.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		run := runner{tx: tx}
+		run := pgdb.Runner{Tx: tx}
 		if delta.Reverted {
-			run.exec(`DELETE FROM engine_state_undo WHERE chain_id = ? AND block_height > ?`, chainID, delta.RevertTo)
+			run.Exec(`DELETE FROM engine_state_undo WHERE chain_id = ? AND block_height > ?`, chainID, delta.RevertTo)
 		}
 		if len(delta.Undo) > 0 {
 			heights := make([]int64, len(delta.Undo))
@@ -110,14 +110,14 @@ func (store *Store) Commit(ctx context.Context, checkpoint chainsync.Checkpoint,
 			}
 			// The first write at a height holds the value to revert to, so an
 			// existing row wins.
-			run.exec(`INSERT INTO engine_state_undo (chain_id, block_height, kind, key, prev)
+			run.Exec(`INSERT INTO engine_state_undo (chain_id, block_height, kind, key, prev)
 				SELECT @chain, height, kind, key, prev::jsonb
 				FROM unnest(CAST(@heights AS bigint[]), CAST(@kinds AS text[]), CAST(@keys AS text[]), CAST(@prevs AS text[])) AS undo(height, kind, key, prev)
 				ON CONFLICT DO NOTHING`, map[string]any{
-				"chain": chainID, "heights": array(heights), "kinds": array(kinds), "keys": array(keys), "prevs": array(prevs),
+				"chain": chainID, "heights": pgdb.Array(heights), "kinds": pgdb.Array(kinds), "keys": pgdb.Array(keys), "prevs": pgdb.Array(prevs),
 			})
 		}
-		run.exec(`DELETE FROM engine_state_undo WHERE chain_id = ? AND block_height <= ?`, chainID, delta.PrunedThrough)
+		run.Exec(`DELETE FROM engine_state_undo WHERE chain_id = ? AND block_height <= ?`, chainID, delta.PrunedThrough)
 
 		var upsertKinds, upsertKeys, values, deleteKinds, deleteKeys []string
 		for _, entry := range delta.Entries {
@@ -129,24 +129,24 @@ func (store *Store) Commit(ctx context.Context, checkpoint chainsync.Checkpoint,
 			values = append(values, string(entry.Value))
 		}
 		if len(upsertKeys) > 0 {
-			run.exec(`INSERT INTO engine_state (chain_id, kind, key, value)
+			run.Exec(`INSERT INTO engine_state (chain_id, kind, key, value)
 				SELECT @chain, kind, key, value::jsonb
 				FROM unnest(CAST(@kinds AS text[]), CAST(@keys AS text[]), CAST(@values AS text[])) AS entry(kind, key, value)
 				ON CONFLICT (chain_id, kind, key) DO UPDATE SET value = EXCLUDED.value`, map[string]any{
-				"chain": chainID, "kinds": array(upsertKinds), "keys": array(upsertKeys), "values": array(values),
+				"chain": chainID, "kinds": pgdb.Array(upsertKinds), "keys": pgdb.Array(upsertKeys), "values": pgdb.Array(values),
 			})
 		}
 		if len(deleteKeys) > 0 {
-			run.exec(`DELETE FROM engine_state AS state
+			run.Exec(`DELETE FROM engine_state AS state
 				USING unnest(CAST(@kinds AS text[]), CAST(@keys AS text[])) AS gone(kind, key)
 				WHERE state.chain_id = @chain AND state.kind = gone.kind AND state.key = gone.key`, map[string]any{
-				"chain": chainID, "kinds": array(deleteKinds), "keys": array(deleteKeys),
+				"chain": chainID, "kinds": pgdb.Array(deleteKinds), "keys": pgdb.Array(deleteKeys),
 			})
 		}
-		if run.err != nil {
-			return run.err
+		if run.Err != nil {
+			return run.Err
 		}
-		return saveCheckpoint(tx, engineCheckpoints, checkpoint, delta.PrunedThrough)
+		return pgdb.SaveCheckpoint(tx, pgdb.EngineCheckpoints, checkpoint, delta.PrunedThrough)
 	})
 	if err != nil {
 		return fmt.Errorf("postgres store: commit chain %d offset %d: %w", checkpoint.ChainID, checkpoint.Offset, err)

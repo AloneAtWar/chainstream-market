@@ -8,6 +8,7 @@ import (
 
 	"github.com/AloneAtWar/chainstream-market/internal/pkg/chainsync"
 	"github.com/AloneAtWar/chainstream-market/internal/pkg/model"
+	"github.com/AloneAtWar/chainstream-market/internal/pkg/pgdb"
 	"github.com/AloneAtWar/chainstream-market/internal/storage"
 	"gorm.io/gorm"
 )
@@ -24,7 +25,7 @@ const addHolderCounts = `
 	ON CONFLICT (chain_id, token) DO UPDATE SET holders = c.holders + EXCLUDED.holders`
 
 func (store *Store) LoadHolderCheckpoint(ctx context.Context, chainID uint64) (chainsync.Checkpoint, int64, bool, error) {
-	return loadCheckpoint(store.db.WithContext(ctx), holderCheckpoints, chainID)
+	return pgdb.LoadCheckpoint(store.db.WithContext(ctx), pgdb.HolderCheckpoints, chainID)
 }
 
 func (store *Store) Holdings(ctx context.Context, chainID uint64, keys []model.HolderKey) ([]model.Holding, error) {
@@ -36,7 +37,7 @@ func (store *Store) Holdings(ctx context.Context, chainID uint64, keys []model.H
 	err := store.db.WithContext(ctx).Raw(`SELECT b.token, b.holder, b.balance::text AS balance
 		FROM unnest(CAST(@tokens AS text[]), CAST(@holders AS text[])) AS k(token, holder)
 		JOIN holder_balances b ON b.chain_id = @chain AND b.token = k.token AND b.holder = k.holder`,
-		map[string]any{"chain": int64(chainID), "tokens": array(tokens), "holders": array(holders)}).Scan(&rows).Error
+		map[string]any{"chain": int64(chainID), "tokens": pgdb.Array(tokens), "holders": pgdb.Array(holders)}).Scan(&rows).Error
 	if err != nil {
 		return nil, fmt.Errorf("postgres store: holdings: %w", err)
 	}
@@ -83,18 +84,18 @@ func (store *Store) CommitHolders(ctx context.Context, checkpoint chainsync.Chec
 	}
 	chainID := int64(checkpoint.ChainID)
 	err := store.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		run := runner{tx: tx}
+		run := pgdb.Runner{Tx: tx}
 		if change.Reverted {
 			revert := map[string]any{"chain": chainID, "to": change.RevertTo}
 			// Created rows go first, so the update below only sees holdings
 			// that existed before the reverted blocks.
-			run.exec(`WITH changed AS (
+			run.Exec(`WITH changed AS (
 					DELETE FROM holder_balances AS b USING holder_undo AS u
 					WHERE u.chain_id = @chain AND u.block_height > @to AND u.created
 					  AND b.chain_id = u.chain_id AND b.token = u.token AND b.holder = u.holder
 					RETURNING b.token, b.balance AS old_balance, NULL::numeric AS new_balance
 				)`+addHolderCounts, revert)
-			run.exec(`WITH changed AS (
+			run.Exec(`WITH changed AS (
 					UPDATE holder_balances AS b
 					SET balance = b.balance - u.delta, verified_height = u.prev_verified
 					FROM (
@@ -106,7 +107,7 @@ func (store *Store) CommitHolders(ctx context.Context, checkpoint chainsync.Chec
 					WHERE b.chain_id = @chain AND b.token = u.token AND b.holder = u.holder
 					RETURNING b.token, b.balance + u.delta AS old_balance, b.balance AS new_balance
 				)`+addHolderCounts, revert)
-			run.exec(`DELETE FROM holder_undo WHERE chain_id = ? AND block_height > ?`, chainID, change.RevertTo)
+			run.Exec(`DELETE FROM holder_undo WHERE chain_id = ? AND block_height > ?`, chainID, change.RevertTo)
 		}
 		if len(change.Created) > 0 {
 			tokens := make([]string, len(change.Created))
@@ -119,18 +120,18 @@ func (store *Store) CommitHolders(ctx context.Context, checkpoint chainsync.Chec
 					verified[index] = &change.Height
 				}
 			}
-			run.exec(`WITH changed AS (
+			run.Exec(`WITH changed AS (
 					INSERT INTO holder_balances (chain_id, token, holder, balance, verified_height)
 					SELECT @chain, token, holder, balance::numeric, verified
 					FROM unnest(CAST(@tokens AS text[]), CAST(@holders AS text[]), CAST(@balances AS text[]), CAST(@verified AS bigint[])) AS s(token, holder, balance, verified)
 					RETURNING token, NULL::numeric AS old_balance, balance AS new_balance
 				)`+addHolderCounts, map[string]any{
-				"chain": chainID, "tokens": array(tokens), "holders": array(holders),
-				"balances": array(balances), "verified": array(verified),
+				"chain": chainID, "tokens": pgdb.Array(tokens), "holders": pgdb.Array(holders),
+				"balances": pgdb.Array(balances), "verified": pgdb.Array(verified),
 			})
-			run.exec(`INSERT INTO holder_undo (chain_id, block_height, token, holder, delta, created)
+			run.Exec(`INSERT INTO holder_undo (chain_id, block_height, token, holder, delta, created)
 				SELECT @chain, @height, token, holder, 0, true FROM unnest(CAST(@tokens AS text[]), CAST(@holders AS text[])) AS s(token, holder)`,
-				map[string]any{"chain": chainID, "height": change.Height, "tokens": array(tokens), "holders": array(holders)})
+				map[string]any{"chain": chainID, "height": change.Height, "tokens": pgdb.Array(tokens), "holders": pgdb.Array(holders)})
 		}
 		if len(change.Deltas) > 0 {
 			tokens := make([]string, len(change.Deltas))
@@ -142,15 +143,15 @@ func (store *Store) CommitHolders(ctx context.Context, checkpoint chainsync.Chec
 				deltas[index], verified[index] = delta.Delta.String(), delta.Verified
 			}
 			values := map[string]any{
-				"chain": chainID, "height": change.Height, "tokens": array(tokens), "holders": array(holders),
-				"deltas": array(deltas), "verified": array(verified),
+				"chain": chainID, "height": change.Height, "tokens": pgdb.Array(tokens), "holders": pgdb.Array(holders),
+				"deltas": pgdb.Array(deltas), "verified": pgdb.Array(verified),
 			}
 			// The undo row captures verified_height before the update changes it.
-			run.exec(`INSERT INTO holder_undo (chain_id, block_height, token, holder, delta, created, prev_verified)
+			run.Exec(`INSERT INTO holder_undo (chain_id, block_height, token, holder, delta, created, prev_verified)
 				SELECT @chain, @height, d.token, d.holder, d.delta::numeric, false, b.verified_height
 				FROM unnest(CAST(@tokens AS text[]), CAST(@holders AS text[]), CAST(@deltas AS text[])) AS d(token, holder, delta)
 				JOIN holder_balances b ON b.chain_id = @chain AND b.token = d.token AND b.holder = d.holder`, values)
-			run.exec(`WITH changed AS (
+			run.Exec(`WITH changed AS (
 					UPDATE holder_balances AS b
 					SET balance = b.balance + d.delta::numeric,
 					    verified_height = CASE WHEN d.verified THEN @height ELSE b.verified_height END
@@ -159,11 +160,11 @@ func (store *Store) CommitHolders(ctx context.Context, checkpoint chainsync.Chec
 					RETURNING b.token, b.balance - d.delta::numeric AS old_balance, b.balance AS new_balance
 				)`+addHolderCounts, values)
 		}
-		run.exec(`DELETE FROM holder_undo WHERE chain_id = ? AND block_height <= ?`, chainID, change.PrunedThrough)
-		if run.err != nil {
-			return run.err
+		run.Exec(`DELETE FROM holder_undo WHERE chain_id = ? AND block_height <= ?`, chainID, change.PrunedThrough)
+		if run.Err != nil {
+			return run.Err
 		}
-		return saveCheckpoint(tx, holderCheckpoints, checkpoint, change.PrunedThrough)
+		return pgdb.SaveCheckpoint(tx, pgdb.HolderCheckpoints, checkpoint, change.PrunedThrough)
 	})
 	if err != nil {
 		return fmt.Errorf("postgres store: commit holders chain %d offset %d: %w", checkpoint.ChainID, checkpoint.Offset, err)

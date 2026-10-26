@@ -1,4 +1,4 @@
-// Package registry keeps the latest token and pool metadata from a chain
+// Package biz is market-registry's business layer: it keeps the latest token and pool metadata from a chain
 // topic's asset and pool facts.
 //
 // A fact replaces the stored metadata unless the stored metadata was read at
@@ -6,7 +6,7 @@
 // undo a newer one. Whether a contract was created, and its deployment, are
 // kept whatever the height. Every block records the rows it touched as they
 // were before it, so a reorg restores them.
-package registry
+package biz
 
 import (
 	"bytes"
@@ -20,16 +20,24 @@ import (
 	"github.com/AloneAtWar/chainstream-market/internal/pkg/asset"
 	"github.com/AloneAtWar/chainstream-market/internal/pkg/chainsync"
 	"github.com/AloneAtWar/chainstream-market/internal/pkg/model"
-	"github.com/AloneAtWar/chainstream-market/internal/storage"
 	streamv1 "github.com/AloneAtWar/chainstream-market/proto/stream/v1"
 )
 
 // ErrReorgTooDeep means a revert reaches below the retained undo history.
 var ErrReorgTooDeep = errors.New("registry: reorg deeper than retained history")
 
+// RegistryRepo persists token and pool metadata. CommitRegistry applies a
+// change and saves the checkpoint atomically.
+type RegistryRepo interface {
+	// LoadRegistryCheckpoint returns the last committed checkpoint and the
+	// highest height whose undo history was pruned.
+	LoadRegistryCheckpoint(ctx context.Context, chainID uint64) (chainsync.Checkpoint, int64, bool, error)
+	CommitRegistry(ctx context.Context, checkpoint chainsync.Checkpoint, change model.RegistryChange) error
+}
+
 type Options struct {
 	ChainID uint64
-	Store   storage.RegistryStore
+	Repo    RegistryRepo
 	// HistoryDepth is how many blocks of undo history to keep in addition
 	// to everything above the finalized height.
 	HistoryDepth int64
@@ -46,8 +54,8 @@ type Registry struct {
 }
 
 func New(options Options) (*Registry, error) {
-	if options.ChainID == 0 || options.Store == nil {
-		return nil, errors.New("registry: chain id and store are required")
+	if options.ChainID == 0 || options.Repo == nil {
+		return nil, errors.New("registry: chain id and repo are required")
 	}
 	if options.HistoryDepth <= 0 {
 		return nil, errors.New("registry: history depth must be positive")
@@ -60,7 +68,7 @@ func New(options Options) (*Registry, error) {
 }
 
 func (registry *Registry) Restore(ctx context.Context, chainID uint64) (chainsync.Checkpoint, bool, error) {
-	checkpoint, prunedThrough, ok, err := registry.options.Store.LoadRegistryCheckpoint(ctx, chainID)
+	checkpoint, prunedThrough, ok, err := registry.options.Repo.LoadRegistryCheckpoint(ctx, chainID)
 	if err != nil || !ok {
 		return chainsync.Checkpoint{}, false, err
 	}
@@ -118,7 +126,7 @@ func (registry *Registry) Revert(_ context.Context, rollbackTo int64) error {
 func (registry *Registry) Commit(ctx context.Context, checkpoint chainsync.Checkpoint) error {
 	change := registry.pending
 	change.PrunedThrough = registry.prunedThrough
-	if err := registry.options.Store.CommitRegistry(ctx, checkpoint, change); err != nil {
+	if err := registry.options.Repo.CommitRegistry(ctx, checkpoint, change); err != nil {
 		return err
 	}
 	registry.pending = model.RegistryChange{}

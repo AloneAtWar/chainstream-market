@@ -13,7 +13,7 @@ x-market: &market
     ETH_RPC_URL: ${ETH_RPC_URL:-http://host.docker.internal:8545}
   extra_hosts: ["host.docker.internal:host-gateway"]
   volumes:
-    - ./config.yaml:/etc/chainstream-market/config.yaml:ro
+    - ./configs:/etc/chainstream-market:ro
   depends_on: &market-deps
     kafka-init: {condition: service_completed_successfully}
     clickhouse: {condition: service_healthy}
@@ -131,7 +131,7 @@ services:
 
   market-registry:
     <<: *market
-    command: ["/usr/local/bin/market-registry", "-conf", "/etc/chainstream-market/config.yaml"]
+    command: ["/usr/local/bin/market-registry", "-conf", "/etc/chainstream-market/market-registry.yaml"]
 
   market-rankings:
     <<: *market

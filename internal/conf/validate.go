@@ -67,9 +67,6 @@ func (bootstrap *Bootstrap) Validate() error {
 		holders.GetRpcBatchSize() < 0 || holders.GetRpcTimeout().AsDuration() < 0 {
 		return errors.New("conf: holders settings must be positive")
 	}
-	if bootstrap.GetRegistry().GetHistoryDepth() < 0 {
-		return errors.New("conf: registry.history_depth must be positive")
-	}
 	rankings := bootstrap.GetRankings()
 	if rankings.GetRefreshInterval().AsDuration() < 0 || rankings.GetReorgWindow().AsDuration() < 0 {
 		return errors.New("conf: rankings durations must be positive")

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/AloneAtWar/chainstream-market/internal/pkg/model"
+	"github.com/AloneAtWar/chainstream-market/internal/pkg/pgdb"
 	"github.com/AloneAtWar/chainstream-market/internal/storage"
 	"github.com/shopspring/decimal"
 	"gorm.io/gorm"
@@ -45,13 +46,13 @@ func (store *Store) CommitRankings(ctx context.Context, refresh model.RankingRef
 	}
 	chainID := int64(refresh.ChainID)
 	err := store.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		run := &runner{tx: tx}
+		run := &pgdb.Runner{Tx: tx}
 		queueQuotes(run, chainID, refresh)
 		queueActivity(run, chainID, refresh.Activity)
-		run.exec(`DELETE FROM token_rankings WHERE chain_id = ? AND price_height IS NULL AND trades_24h = 0`, chainID)
+		run.Exec(`DELETE FROM token_rankings WHERE chain_id = ? AND price_height IS NULL AND trades_24h = 0`, chainID)
 		// holder-indexer keeps holder_counts current, so this is one lookup per
 		// ranked token. A token missing there has no holders.
-		run.exec(`UPDATE token_rankings AS r SET holders = c.holders
+		run.Exec(`UPDATE token_rankings AS r SET holders = c.holders
 			FROM (
 				SELECT k.token, COALESCE(h.holders, 0) AS holders
 				FROM token_rankings AS k
@@ -59,7 +60,7 @@ func (store *Store) CommitRankings(ctx context.Context, refresh model.RankingRef
 				WHERE k.chain_id = @chain
 			) AS c
 			WHERE r.chain_id = @chain AND r.token = c.token AND r.holders <> c.holders`, map[string]any{"chain": chainID})
-		run.exec(`UPDATE token_rankings AS r SET created_height = d.height, created_time = d.created_at
+		run.Exec(`UPDATE token_rankings AS r SET created_height = d.height, created_time = d.created_at
 			FROM (
 				SELECT k.token, (t.deployment->>'block_height')::bigint AS height, (t.deployment->>'block_time')::bigint AS created_at
 				FROM token_rankings AS k
@@ -68,8 +69,8 @@ func (store *Store) CommitRankings(ctx context.Context, refresh model.RankingRef
 			) AS d
 			WHERE r.chain_id = @chain AND r.token = d.token
 			  AND (r.created_height, r.created_time) IS DISTINCT FROM (d.height, d.created_at)`, map[string]any{"chain": chainID})
-		if run.err != nil {
-			return run.err
+		if run.Err != nil {
+			return run.Err
 		}
 		refreshedAt := refresh.RefreshedAt
 		if refreshedAt.IsZero() {
@@ -86,7 +87,7 @@ func (store *Store) CommitRankings(ctx context.Context, refresh model.RankingRef
 	return nil
 }
 
-func queueQuotes(run *runner, chainID int64, refresh model.RankingRefresh) {
+func queueQuotes(run *pgdb.Runner, chainID int64, refresh model.RankingRefresh) {
 	count := len(refresh.Quotes)
 	tokens, prices, liquidity := make([]string, count), make([]string, count), make([]string, count)
 	heights, times := make([]int64, count), make([]time.Time, count)
@@ -94,7 +95,7 @@ func queueQuotes(run *runner, chainID int64, refresh model.RankingRefresh) {
 		tokens[index], prices[index], liquidity[index] = quote.Token, quote.PriceUSD.String(), quote.LiquidityUSD.String()
 		heights[index], times[index] = quote.BlockHeight, quote.BlockTime
 	}
-	run.exec(`INSERT INTO token_rankings AS r (chain_id, token, price_usd, liquidity_usd, price_height, price_time)
+	run.Exec(`INSERT INTO token_rankings AS r (chain_id, token, price_usd, liquidity_usd, price_height, price_time)
 		SELECT @chain, token, price::numeric, liquidity::numeric, height, priced_at
 		FROM unnest(CAST(@tokens AS text[]), CAST(@prices AS text[]), CAST(@liquidity AS text[]), CAST(@heights AS bigint[]), CAST(@times AS timestamptz[]))
 			AS q(token, price, liquidity, height, priced_at)
@@ -103,22 +104,22 @@ func queueQuotes(run *runner, chainID int64, refresh model.RankingRefresh) {
 		WHERE (r.price_usd, r.liquidity_usd, r.price_height, r.price_time)
 			IS DISTINCT FROM (EXCLUDED.price_usd, EXCLUDED.liquidity_usd, EXCLUDED.price_height, EXCLUDED.price_time)`,
 		map[string]any{
-			"chain": chainID, "tokens": array(tokens), "prices": array(prices), "liquidity": array(liquidity),
-			"heights": array(heights), "times": array(times),
+			"chain": chainID, "tokens": pgdb.Array(tokens), "prices": pgdb.Array(prices), "liquidity": pgdb.Array(liquidity),
+			"heights": pgdb.Array(heights), "times": pgdb.Array(times),
 		})
 	// A token the scan covered but did not return has no price rows left.
 	var since *time.Time
 	if !refresh.Since.IsZero() {
 		since = &refresh.Since
 	}
-	run.exec(`UPDATE token_rankings
+	run.Exec(`UPDATE token_rankings
 		SET price_usd = NULL, price_height = NULL, price_time = NULL, liquidity_usd = 0
 		WHERE chain_id = @chain AND price_height IS NOT NULL
 		  AND (CAST(@since AS timestamptz) IS NULL OR price_time >= @since) AND NOT (token = ANY(CAST(@tokens AS text[])))`,
-		map[string]any{"chain": chainID, "since": since, "tokens": array(tokens)})
+		map[string]any{"chain": chainID, "since": since, "tokens": pgdb.Array(tokens)})
 }
 
-func queueActivity(run *runner, chainID int64, activity []model.TokenActivity) {
+func queueActivity(run *pgdb.Runner, chainID int64, activity []model.TokenActivity) {
 	count := len(activity)
 	tokens, volumes, changes := make([]string, count), make([]string, count), make([]string, count)
 	trades := make([]int64, count)
@@ -126,10 +127,10 @@ func queueActivity(run *runner, chainID int64, activity []model.TokenActivity) {
 		tokens[index], volumes[index], trades[index] = row.Token, row.VolumeUSD.String(), row.Trades
 		changes[index] = priceChange(row.Open, row.Close).String()
 	}
-	run.exec(`UPDATE token_rankings SET volume_24h_usd = 0, trades_24h = 0, price_change_24h = 0
+	run.Exec(`UPDATE token_rankings SET volume_24h_usd = 0, trades_24h = 0, price_change_24h = 0
 		WHERE chain_id = @chain AND (volume_24h_usd <> 0 OR trades_24h <> 0 OR price_change_24h <> 0)
-		  AND NOT (token = ANY(CAST(@tokens AS text[])))`, map[string]any{"chain": chainID, "tokens": array(tokens)})
-	run.exec(`INSERT INTO token_rankings AS r (chain_id, token, volume_24h_usd, trades_24h, price_change_24h)
+		  AND NOT (token = ANY(CAST(@tokens AS text[])))`, map[string]any{"chain": chainID, "tokens": pgdb.Array(tokens)})
+	run.Exec(`INSERT INTO token_rankings AS r (chain_id, token, volume_24h_usd, trades_24h, price_change_24h)
 		SELECT @chain, token, volume::numeric, trades, change::numeric
 		FROM unnest(CAST(@tokens AS text[]), CAST(@volumes AS text[]), CAST(@trades AS bigint[]), CAST(@changes AS text[])) AS a(token, volume, trades, change)
 		ON CONFLICT (chain_id, token) DO UPDATE SET volume_24h_usd = EXCLUDED.volume_24h_usd,
@@ -137,8 +138,8 @@ func queueActivity(run *runner, chainID int64, activity []model.TokenActivity) {
 		WHERE (r.volume_24h_usd, r.trades_24h, r.price_change_24h)
 			IS DISTINCT FROM (EXCLUDED.volume_24h_usd, EXCLUDED.trades_24h, EXCLUDED.price_change_24h)`,
 		map[string]any{
-			"chain": chainID, "tokens": array(tokens), "volumes": array(volumes), "trades": array(trades),
-			"changes": array(changes),
+			"chain": chainID, "tokens": pgdb.Array(tokens), "volumes": pgdb.Array(volumes), "trades": pgdb.Array(trades),
+			"changes": pgdb.Array(changes),
 		})
 }
 

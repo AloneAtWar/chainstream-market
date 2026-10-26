@@ -33,7 +33,6 @@ var (
 		storage.StateStore
 		storage.HolderStore
 		storage.HolderReader
-		storage.RegistryStore
 		storage.RegistryReader
 		storage.RankingStore
 		storage.RankingReader
@@ -88,9 +87,8 @@ func TestMemoryStateBackend(t *testing.T) {
 		t.Fatalf("NewStateReaders() = %+v, want none", readers)
 	}
 	for name, provide := range map[string]func(*StateBackend) error{
-		"storage.HolderStore":   func(backend *StateBackend) error { _, err := NewHolderStore(backend); return err },
-		"storage.RegistryStore": func(backend *StateBackend) error { _, err := NewRegistryStore(backend); return err },
-		"storage.RankingStore":  func(backend *StateBackend) error { _, err := NewRankingStore(backend); return err },
+		"storage.HolderStore":  func(backend *StateBackend) error { _, err := NewHolderStore(backend); return err },
+		"storage.RankingStore": func(backend *StateBackend) error { _, err := NewRankingStore(backend); return err },
 	} {
 		if err := provide(backend); err == nil || err.Error() != `state.driver "memory" does not provide `+name {
 			t.Errorf("%s error = %v", name, err)

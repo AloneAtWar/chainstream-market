@@ -70,17 +70,30 @@ func (storage *Storage) ApplyDefaults() {
 	if storage.Clickhouse == nil {
 		storage.Clickhouse = &ClickHouse{}
 	}
-	if storage.Clickhouse.Retention == nil {
-		storage.Clickhouse.Retention = &Retention{}
-	}
 	if strings.TrimSpace(storage.Driver) == "" {
 		storage.Driver = StorageMemory
 	}
-	if storage.Driver == StorageClickHouse && storage.Clickhouse.Database == "" {
-		storage.Clickhouse.Database = defaultClickHouseDatabase
+	if storage.Driver == StorageClickHouse {
+		storage.Clickhouse.ApplyDefaults()
+	} else {
+		storage.Clickhouse.applyRetentionDefaults()
 	}
-	if storage.Clickhouse.Retention.ColdVolume == "" {
-		storage.Clickhouse.Retention.ColdVolume = defaultColdVolume
+}
+
+// ApplyDefaults fills the clickhouse section and its retention.
+func (clickhouse *ClickHouse) ApplyDefaults() {
+	if clickhouse.Database == "" {
+		clickhouse.Database = defaultClickHouseDatabase
+	}
+	clickhouse.applyRetentionDefaults()
+}
+
+func (clickhouse *ClickHouse) applyRetentionDefaults() {
+	if clickhouse.Retention == nil {
+		clickhouse.Retention = &Retention{}
+	}
+	if clickhouse.Retention.ColdVolume == "" {
+		clickhouse.Retention.ColdVolume = defaultColdVolume
 	}
 }
 

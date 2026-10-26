@@ -70,9 +70,6 @@ func (bootstrap *Bootstrap) ApplyDefaults() {
 	if bootstrap.Holders == nil {
 		bootstrap.Holders = &Holders{}
 	}
-	if bootstrap.Registry == nil {
-		bootstrap.Registry = &Registry{}
-	}
 	if bootstrap.Rankings == nil {
 		bootstrap.Rankings = &Rankings{}
 	}
@@ -130,9 +127,6 @@ func (bootstrap *Bootstrap) ApplyDefaults() {
 	holders := bootstrap.Holders
 	if holders.HistoryDepth == 0 {
 		holders.HistoryDepth = defaultHistoryDepth
-	}
-	if bootstrap.Registry.HistoryDepth == 0 {
-		bootstrap.Registry.HistoryDepth = defaultHistoryDepth
 	}
 	if holders.ReconcileEvery == 0 {
 		holders.ReconcileEvery = defaultHoldersReconcileEvery

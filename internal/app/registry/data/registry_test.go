@@ -1,4 +1,4 @@
-package registry
+package data
 
 import (
 	"context"
@@ -9,11 +9,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/AloneAtWar/chainstream-market/internal/app/registry/biz"
 	"github.com/AloneAtWar/chainstream-market/internal/pkg/chainsync"
 	"github.com/AloneAtWar/chainstream-market/internal/pkg/model"
 	"github.com/AloneAtWar/chainstream-market/internal/pkg/pgdb"
-	"github.com/AloneAtWar/chainstream-market/internal/storage/pgstore"
 	streamv1 "github.com/AloneAtWar/chainstream-market/proto/stream/v1"
+	"gorm.io/gorm"
 )
 
 const (
@@ -22,32 +23,32 @@ const (
 	pair = "0x3333333333333333333333333333333333333333"
 )
 
-func openStore(t *testing.T) *pgstore.Store {
+func openDB(t *testing.T) *gorm.DB {
 	t.Helper()
 	dsn := os.Getenv("POSTGRES_DSN")
 	if dsn == "" {
 		t.Skip("POSTGRES_DSN not set")
 	}
-	store, err := pgstore.Open(context.Background(), pgdb.Options{
+	db, err := pgdb.Open(context.Background(), pgdb.Options{
 		DSN: dsn, Schema: fmt.Sprintf("registry_test_%d", time.Now().UnixNano()),
 	})
 	if err != nil {
 		t.Fatalf("Open() error = %v", err)
 	}
-	t.Cleanup(store.Close)
-	return store
+	t.Cleanup(func() { pgdb.Close(db) })
+	return db
 }
 
 type fixture struct {
 	t        *testing.T
-	store    *pgstore.Store
-	registry *Registry
+	db       *gorm.DB
+	registry *biz.Registry
 	offset   int64
 }
 
 func newFixture(t *testing.T) *fixture {
 	t.Helper()
-	fixture := &fixture{t: t, store: openStore(t)}
+	fixture := &fixture{t: t, db: openDB(t)}
 	fixture.restart()
 	return fixture
 }
@@ -55,7 +56,7 @@ func newFixture(t *testing.T) *fixture {
 func (f *fixture) restart() {
 	f.t.Helper()
 	var err error
-	f.registry, err = New(Options{ChainID: 1, Store: f.store, HistoryDepth: 8})
+	f.registry, err = biz.New(biz.Options{ChainID: 1, Repo: NewRegistryRepo(f.db), HistoryDepth: 8})
 	if err != nil {
 		f.t.Fatalf("New() error = %v", err)
 	}
@@ -122,11 +123,19 @@ func (f *fixture) commit(height int64, hash string) {
 
 func (f *fixture) token(address string) (model.Token, bool) {
 	f.t.Helper()
-	token, ok, err := f.store.Token(context.Background(), 1, address)
+	var row pgdb.TokenRow
+	err := f.db.Select(pgdb.TokenColumns).Where("chain_id = 1 AND address = ?", address).Take(&row).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return model.Token{}, false
+	}
+	if err != nil {
+		f.t.Fatalf("read token error = %v", err)
+	}
+	token, err := row.Token()
 	if err != nil {
 		f.t.Fatalf("Token() error = %v", err)
 	}
-	return token, ok
+	return token, true
 }
 
 func (f *fixture) symbol(address string) string {
@@ -140,22 +149,24 @@ func (f *fixture) symbol(address string) string {
 
 func (f *fixture) pool(id string) (model.Pool, bool) {
 	f.t.Helper()
-	pool, ok, err := f.store.Pool(context.Background(), 1, id)
-	if err != nil {
-		f.t.Fatalf("Pool() error = %v", err)
+	var row pgdb.PoolRow
+	err := f.db.Select(pgdb.PoolColumns).Where("chain_id = 1 AND pool_id = ?", id).Take(&row).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return model.Pool{}, false
 	}
-	return pool, ok
+	if err != nil {
+		f.t.Fatalf("read pool error = %v", err)
+	}
+	return row.Pool(), true
 }
 
 func (f *fixture) tokenPools(token string) []string {
 	f.t.Helper()
-	pools, err := f.store.TokenPools(context.Background(), 1, token, 10)
+	var ids []string
+	err := f.db.Model(&pgdb.PoolRow{}).Where("chain_id = 1 AND tokens @> ?::text[]", pgdb.Array([]string{token})).
+		Order("source_height DESC, pool_id").Limit(10).Pluck("pool_id", &ids).Error
 	if err != nil {
-		f.t.Fatalf("TokenPools() error = %v", err)
-	}
-	ids := make([]string, len(pools))
-	for index, pool := range pools {
-		ids[index] = pool.PoolID
+		f.t.Fatalf("read token pools error = %v", err)
 	}
 	return ids
 }
@@ -266,7 +277,7 @@ func TestRegistryRevertsAndResumes(t *testing.T) {
 		f.apply(height, []*streamv1.AssetFact{erc20(usdc, "USD Coin", fmt.Sprint("S", height), 6, height)})
 	}
 	f.restart()
-	if err := f.revert(11); !errors.Is(err, ErrReorgTooDeep) {
+	if err := f.revert(11); !errors.Is(err, biz.ErrReorgTooDeep) {
 		t.Fatalf("revert(11) error = %v, want ErrReorgTooDeep", err)
 	}
 	if err := f.revert(12); err != nil {
@@ -294,14 +305,5 @@ func TestRegistryCleansMetadata(t *testing.T) {
 	}
 	if pool, _ := f.pool(pair); pool.Metadata != nil {
 		t.Fatalf("pool metadata = %s", pool.Metadata)
-	}
-}
-
-func TestNewValidatesOptions(t *testing.T) {
-	if _, err := New(Options{Store: nil, ChainID: 1, HistoryDepth: 1}); err == nil {
-		t.Fatal("New() without store error = nil")
-	}
-	if _, err := New(Options{Store: &pgstore.Store{}, ChainID: 1}); err == nil {
-		t.Fatal("New() without history depth error = nil")
 	}
 }

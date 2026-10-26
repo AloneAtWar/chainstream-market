@@ -6,10 +6,9 @@ import (
 	"context"
 	"log/slog"
 
-	"github.com/AloneAtWar/chainstream-market/internal/biz"
-	"github.com/AloneAtWar/chainstream-market/internal/conf"
-	"github.com/AloneAtWar/chainstream-market/internal/data"
-	"github.com/AloneAtWar/chainstream-market/internal/server"
+	"github.com/AloneAtWar/chainstream-market/internal/app/registry/conf"
+	"github.com/AloneAtWar/chainstream-market/internal/app/registry/data"
+	"github.com/AloneAtWar/chainstream-market/internal/app/registry/server"
 	"github.com/go-kratos/kratos/v2"
 	"github.com/google/wire"
 )
@@ -19,8 +18,7 @@ func wireApp(context.Context, *conf.Bootstrap, *slog.Logger) (*kratos.App, func(
 	panic(wire.Build(
 		conf.ProviderSet,
 		data.ProviderSet,
-		biz.RegistrySet,
-		server.WorkerSet,
+		server.ProviderSet,
 		newApp,
 	))
 }

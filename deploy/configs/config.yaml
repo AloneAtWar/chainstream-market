@@ -1,6 +1,7 @@
 # chainstream-market config for the docker-compose stack. Every service
-# reads this file; configs/config.yaml documents each setting. ${NAME} and
-# ${NAME:default} come from the environment (deploy/.env).
+# without a file of its own in this directory reads this file;
+# configs/config.yaml documents each setting. ${NAME} and ${NAME:default}
+# come from the environment (deploy/.env).
 kafka:
   brokers: [kafka:9092]
   client_id: chainstream-market

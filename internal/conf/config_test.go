@@ -33,9 +33,6 @@ chains:
 		bootstrap.Holders.HistoryDepth != defaultHistoryDepth {
 		t.Fatalf("holders defaults = %+v", bootstrap.Holders)
 	}
-	if bootstrap.Registry.HistoryDepth != defaultHistoryDepth {
-		t.Fatalf("registry defaults = %+v", bootstrap.Registry)
-	}
 	if bootstrap.ChLoader.BatchLag.AsDuration() != defaultLoaderBatchLag || bootstrap.ChLoader.FlushRows != defaultLoaderFlushRows ||
 		bootstrap.ChLoader.FlushInterval.AsDuration() != defaultLoaderFlushInterval {
 		t.Fatalf("ch_loader defaults = %+v", bootstrap.ChLoader)
@@ -75,7 +72,6 @@ func TestParseRejectsInvalidConfig(t *testing.T) {
 		"postgres no dsn":        "kafka: {brokers: [b]}\nstate: {driver: postgres}\nchains: [{name: eth, chain_id: 1, topic: a}]",
 		"unknown state":          "kafka: {brokers: [b]}\nstate: {driver: redis}\nchains: [{name: eth, chain_id: 1, topic: a}]",
 		"negative holders":       "kafka: {brokers: [b]}\nholders: {rpc_batch_size: -1}\nchains: [{name: eth, chain_id: 1, topic: a}]",
-		"negative registry":      "kafka: {brokers: [b]}\nregistry: {history_depth: -1}\nchains: [{name: eth, chain_id: 1, topic: a}]",
 		"negative rankings":      "kafka: {brokers: [b]}\nrankings: {refresh_interval: -1s}\nchains: [{name: eth, chain_id: 1, topic: a}]",
 		"unknown candle":         "kafka: {brokers: [b]}\nrankings: {candle_interval: 2m}\nchains: [{name: eth, chain_id: 1, topic: a}]",
 		"negative ch_loader":     "kafka: {brokers: [b]}\nch_loader: {flush_rows: -1}\nchains: [{name: eth, chain_id: 1, topic: a}]",
@@ -312,7 +308,7 @@ func mustLoad(t *testing.T, path string) *Bootstrap {
 
 func TestLoadDeployConfig(t *testing.T) {
 	t.Setenv("ETH_RPC_URL", "http://node:8545")
-	bootstrap := mustLoad(t, filepath.Join("..", "..", "deploy", "config.yaml"))
+	bootstrap := mustLoad(t, filepath.Join("..", "..", "deploy", "configs", "config.yaml"))
 	if bootstrap.Storage.Driver != config.StorageClickHouse || bootstrap.State.Driver != config.StatePostgres || bootstrap.Metrics.Addr != ":9100" {
 		t.Fatalf("config = %+v", bootstrap)
 	}

@@ -212,7 +212,7 @@ Balances live only in PostgreSQL, so memory does not grow with the number of hol
 ## market-registry
 
 ```sh
-go run ./cmd/market-registry -conf configs/config.yaml   # needs state.driver: postgres
+go run ./cmd/market-registry -conf configs/market-registry.yaml   # needs postgres.dsn
 ```
 
 market-registry reads each chain topic on its own checkpoint and keeps the latest metadata for every asset (`AssetFact`) and pool (`PoolFact`) it has seen.
@@ -377,9 +377,9 @@ make down    # stop, keeping data; make clean also drops the volumes
 | 8123, 9000 | ClickHouse HTTP and native, user `default` without password, database `market` |
 | 5432 | PostgreSQL, `market:market@localhost:5432/market` |
 
-The node must answer `eth_call` by block hash (EIP-1898) near the head, for holder-indexer, and serve the Chainlink proxies market-engine resolves at startup. chainstream-evm starts at the chain tip unless `ETH_START_HEIGHT` is set, and keeps its cursor in Redis afterwards. Its config is `deploy/evm/config.yaml`; the services share `deploy/config.yaml`. A service that cannot start, such as market-engine without a reachable node, restarts until it can.
+The node must answer `eth_call` by block hash (EIP-1898) near the head, for holder-indexer, and serve the Chainlink proxies market-engine resolves at startup. chainstream-evm starts at the chain tip unless `ETH_START_HEIGHT` is set, and keeps its cursor in Redis afterwards. Its config is `deploy/evm/config.yaml`; each service reads `deploy/configs/<service>.yaml`, or the shared `deploy/configs/config.yaml` when it has no file of its own. A service that cannot start, such as market-engine without a reachable node, restarts until it can.
 
-The topics are created by `kafka-init` with one partition and no retention limit, since every consumer resumes from its own committed offset. To add a chain, add a chainstream-evm service with its own config and topic, the topics to `kafka-init`, and the chain to `deploy/config.yaml`.
+The topics are created by `kafka-init` with one partition and no retention limit, since every consumer resumes from its own committed offset. To add a chain, add a chainstream-evm service with its own config and topic, the topics to `kafka-init`, and the chain to each file in `deploy/configs`.
 
 ## Metrics
 

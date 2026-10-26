@@ -2,6 +2,7 @@ package pgstore
 
 import (
 	"context"
+	"encoding/json"
 	"math/big"
 	"strings"
 	"testing"
@@ -9,6 +10,7 @@ import (
 
 	"github.com/AloneAtWar/chainstream-market/internal/pkg/chainsync"
 	"github.com/AloneAtWar/chainstream-market/internal/pkg/model"
+	"github.com/AloneAtWar/chainstream-market/internal/pkg/pgdb"
 	"github.com/shopspring/decimal"
 )
 
@@ -27,6 +29,28 @@ func registryToken(address, symbol string, deployment *model.Deployment) model.T
 	return model.Token{
 		Address: address, Standard: "erc20", Recognition: "recognized", MetadataComplete: true,
 		Name: &name, Symbol: &symbol, Created: deployment != nil, Deployment: deployment, SourceHeight: 1,
+	}
+}
+
+// seedTokens writes registry_tokens rows as market-registry would.
+func seedTokens(t *testing.T, store *Store, tokens ...model.Token) {
+	t.Helper()
+	for _, token := range tokens {
+		var deployment *string
+		if token.Deployment != nil {
+			raw, err := json.Marshal(token.Deployment)
+			if err != nil {
+				t.Fatal(err)
+			}
+			deployment = pgdb.JSONText(raw)
+		}
+		if err := store.db.Exec(`INSERT INTO registry_tokens (chain_id, address, standard, recognition, metadata_complete,
+				name, symbol, created, deployment, source_height, first_height, updated_height)
+			VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?::jsonb, ?, 1, 1)`,
+			token.Address, token.Standard, token.Recognition, token.MetadataComplete, token.Name, token.Symbol,
+			token.Created, deployment, token.SourceHeight).Error; err != nil {
+			t.Fatalf("seed token %s: %v", token.Address, err)
+		}
 	}
 }
 
@@ -87,17 +111,12 @@ func TestRankingsRefreshAndList(t *testing.T) {
 	if _, ok, err := store.LoadRankingCursor(ctx, 1); err != nil || ok {
 		t.Fatalf("empty LoadRankingCursor() = %v, %v", ok, err)
 	}
-	if err := store.CommitRegistry(ctx, chainsync.Checkpoint{ChainID: 1, Height: 1}, model.RegistryChange{
-		Height: 1,
-		Tokens: []model.Token{
-			registryToken(tokenAA, "USDC", &model.Deployment{BlockHeight: 5, BlockTime: 50}),
-			registryToken(tokenBB, "PEPE", nil),
-			registryToken(tokenCC, "pepe2", &model.Deployment{BlockHeight: 9, BlockTime: 90}),
-			registryToken(tokenDD, "USDT", nil),
-		},
-	}); err != nil {
-		t.Fatalf("CommitRegistry() error = %v", err)
-	}
+	seedTokens(t, store,
+		registryToken(tokenAA, "USDC", &model.Deployment{BlockHeight: 5, BlockTime: 50}),
+		registryToken(tokenBB, "PEPE", nil),
+		registryToken(tokenCC, "pepe2", &model.Deployment{BlockHeight: 9, BlockTime: 90}),
+		registryToken(tokenDD, "USDT", nil),
+	)
 	seedHolders(t, store, map[model.HolderKey]int64{
 		{Token: tokenAA, Holder: "0x1"}: 10, {Token: tokenAA, Holder: "0x2"}: 20,
 		{Token: tokenAA, Holder: "0x3"}: 30, {Token: tokenAA, Holder: "0x4"}: 0,

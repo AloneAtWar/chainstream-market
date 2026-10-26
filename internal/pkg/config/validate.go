@@ -85,6 +85,22 @@ func (storage *Storage) Validate() error {
 	return nil
 }
 
+// Validate checks that the clickhouse section names a server.
+func (clickhouse *ClickHouse) Validate() error {
+	if len(clickhouse.GetAddr()) == 0 {
+		return errors.New("conf: clickhouse.addr is required")
+	}
+	return nil
+}
+
+// Validate checks that the postgres section names a database.
+func (postgres *Postgres) Validate() error {
+	if strings.TrimSpace(postgres.GetDsn()) == "" {
+		return errors.New("conf: postgres.dsn is required")
+	}
+	return nil
+}
+
 // Validate checks state.driver and the settings of the driver it names.
 func (state *State) Validate() error {
 	switch state.GetDriver() {

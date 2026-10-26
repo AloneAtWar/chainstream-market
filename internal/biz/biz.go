@@ -1,5 +1,5 @@
 // Package biz assembles each command's per-chain work: the engines that
-// apply chain topics through a market, holder, registry or ch-loader
+// apply chain topics through a market, holder or ch-loader
 // handler, and the rankings refreshers. Each command wires one of the sets
 // below; they all produce Runners.
 package biz
@@ -13,7 +13,6 @@ import (
 
 	"github.com/AloneAtWar/chainstream-market/internal/chloader"
 	"github.com/AloneAtWar/chainstream-market/internal/conf"
-	"github.com/AloneAtWar/chainstream-market/internal/data"
 	"github.com/AloneAtWar/chainstream-market/internal/holders"
 	"github.com/AloneAtWar/chainstream-market/internal/market"
 	"github.com/AloneAtWar/chainstream-market/internal/pkg/asset"
@@ -21,8 +20,8 @@ import (
 	"github.com/AloneAtWar/chainstream-market/internal/pkg/chainsync"
 	"github.com/AloneAtWar/chainstream-market/internal/pkg/config"
 	"github.com/AloneAtWar/chainstream-market/internal/pkg/rpc"
+	"github.com/AloneAtWar/chainstream-market/internal/pkg/source"
 	"github.com/AloneAtWar/chainstream-market/internal/rankings"
-	"github.com/AloneAtWar/chainstream-market/internal/registry"
 	"github.com/AloneAtWar/chainstream-market/internal/storage"
 	"github.com/google/wire"
 	"github.com/shopspring/decimal"
@@ -30,11 +29,10 @@ import (
 
 // The provider sets of the commands that consume chain topics.
 var (
-	MarketSet   = wire.NewSet(NewMarketEngines)
-	HolderSet   = wire.NewSet(NewHolderEngines)
-	RegistrySet = wire.NewSet(NewRegistryEngines)
-	LoaderSet   = wire.NewSet(NewLoaderEngines)
-	RankingSet  = wire.NewSet(NewRefreshers)
+	MarketSet  = wire.NewSet(NewMarketEngines)
+	HolderSet  = wire.NewSet(NewHolderEngines)
+	LoaderSet  = wire.NewSet(NewLoaderEngines)
+	RankingSet = wire.NewSet(NewRefreshers)
 )
 
 // Runner is one unit of a command's work, such as one chain's engine. Run
@@ -57,7 +55,7 @@ func NewMarketEngines(
 	ctx context.Context,
 	chains []*config.Chain,
 	marketConfig *conf.Market,
-	sources *data.Sources,
+	sources *source.Sources,
 	output storage.Output,
 	memory *storage.Memory,
 	state storage.StateStore,
@@ -155,7 +153,7 @@ func ResolveFeeds(ctx context.Context, chain *config.Chain, logger *slog.Logger)
 
 // NewHolderEngines builds holder-indexer's balanceOf client, indexer and
 // engine per chain.
-func NewHolderEngines(chains []*config.Chain, holderConfig *conf.Holders, sources *data.Sources, store storage.HolderStore, logger *slog.Logger) (Runners, error) {
+func NewHolderEngines(chains []*config.Chain, holderConfig *conf.Holders, sources *source.Sources, store storage.HolderStore, logger *slog.Logger) (Runners, error) {
 	runners := make(Runners, 0, len(chains))
 	for _, chain := range chains {
 		if strings.TrimSpace(chain.GetRpcUrl()) == "" {
@@ -190,35 +188,12 @@ func NewHolderEngines(chains []*config.Chain, holderConfig *conf.Holders, source
 	return runners, nil
 }
 
-// NewRegistryEngines builds market-registry's handler and engine per chain.
-func NewRegistryEngines(chains []*config.Chain, registryConfig *conf.Registry, sources *data.Sources, store storage.RegistryStore, logger *slog.Logger) (Runners, error) {
-	runners := make(Runners, 0, len(chains))
-	for _, chain := range chains {
-		handler, err := registry.New(registry.Options{
-			ChainID: chain.GetChainId(), Store: store, HistoryDepth: registryConfig.GetHistoryDepth(),
-			Logger: logger.With("chain", chain.GetName()),
-		})
-		if err != nil {
-			return nil, fmt.Errorf("chain %s: %w", chain.GetName(), err)
-		}
-		chainEngine, err := chainsync.New(chainsync.Options{
-			ChainID: chain.GetChainId(), Chain: chain.GetName(), Handler: handler, Logger: logger,
-			Open: sources.Opener(chain.GetTopic()),
-		})
-		if err != nil {
-			return nil, fmt.Errorf("chain %s: %w", chain.GetName(), err)
-		}
-		runners = append(runners, engineRunner(chain, chainEngine))
-	}
-	return runners, nil
-}
-
 // NewLoaderEngines builds ch-loader's loader and engine per chain. A chain that stops cleanly writes its buffered batch, so
 // a restart replays less.
 func NewLoaderEngines(
 	chains []*config.Chain,
 	loaderConfig *conf.ChLoader,
-	sources *data.Sources,
+	sources *source.Sources,
 	store storage.RawStore,
 	logger *slog.Logger,
 ) (Runners, error) {
