@@ -1,6 +1,6 @@
 # chainstream-market config for the docker-compose stack. Every service
 # reads this file; configs/config.yaml documents each setting. ${NAME} and
-# ${NAME:-default} come from the environment (deploy/.env).
+# ${NAME:default} come from the environment (deploy/.env).
 kafka:
   brokers: [kafka:9092]
   client_id: chainstream-market
@@ -34,7 +34,7 @@ chains:
   - name: eth
     chain_id: 1
     topic: chainstream-eth
-    rpc_url: ${ETH_RPC_URL:-http://host.docker.internal:8545}
+    rpc_url: ${ETH_RPC_URL:http://host.docker.internal:8545}
     feeds:
       - {proxy: "0x3E7d1eAB13ad0104d2750B8863b489D65364e32D", token: "0xdac17f958d2ee523a2206206994597c13d831ec7", description: "USDT / USD"}  # USDT
       - {proxy: "0x8fFfFfd4AfB6115b954Bd326cbe7B4BA576818f6", token: "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48", description: "USDC / USD"}  # USDC

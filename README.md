@@ -24,10 +24,14 @@ Market data services built on the [chainstream-evm](https://github.com/AloneAtWa
 | `internal/market` | Per-chain processor: pool state, base/quote orientation, the USD price graph and candles. |
 | `internal/source` | Kafka reader for partition zero of a chain topic. |
 | `internal/storage` | Output models (oriented trades, token prices, candles), store interfaces and the in-memory backend. |
-| `internal/storage/chstore` | ClickHouse output store and schema. |
-| `internal/storage/chraw` | ClickHouse raw fact store and schema for ch-loader. |
-| `internal/storage/pgstore` | PostgreSQL checkpoints, market state, holder balances and the token and pool registry. |
-| `internal/conf` | YAML configuration. |
+| `internal/storage/chstore` | ClickHouse output store and schema, through GORM. |
+| `internal/storage/chraw` | ClickHouse raw fact store and schema for ch-loader, through GORM. |
+| `internal/storage/pgstore` | PostgreSQL (through GORM) checkpoints, market state, holder balances and the token and pool registry. |
+| `internal/conf` | Configuration: the `Bootstrap` proto in `conf.proto`, loaded with Kratos config, plus defaults and validation. |
+| `internal/data` | wire providers for the stores, Kafka sources and live publisher, built from the config. |
+| `internal/biz` | wire providers for each command's handlers and the workers they run. |
+| `internal/service` | wire provider for market-api's HTTP handler. |
+| `internal/server` | Kratos transport servers: HTTP, metrics and the long-running workers. |
 | `internal/metrics` | Prometheus metrics every command serves at `/metrics`. |
 | `deploy/` | docker-compose stack: infrastructure, chainstream-evm, every service, Prometheus and Grafana. |
 
@@ -386,16 +390,20 @@ Every command serves Prometheus metrics at `/metrics` on `metrics.addr`, off by 
 
 The engine metrics come from every consumer: market-engine, ch-loader, holder-indexer and market-registry. chainstream-evm exports its own under `chainstream_evm_`. The Grafana dashboard in `deploy/grafana/dashboards` charts both.
 
-The config file may read the environment: `${NAME}` is replaced by the variable, and `${NAME:-default}` by the default when it is unset or empty.
+The config file may read the environment: `${NAME}` is replaced by the variable, and `${NAME:default}` by the default when it is unset. A variable that is set but empty is used as is.
 
 ## Development
 
 Requires Go 1.26.10 and Buf.
 
 ```sh
-make generate   # regenerate proto/stream/v1 and tidy both modules
+make generate   # regenerate internal/conf, wire_gen.go and proto/stream/v1, and tidy both modules
 make verify     # buf lint, gofmt, golangci-lint, go test -race
 ```
+
+Every command follows chainstream-evm's layout. `main.go` loads `-conf` into `conf.Bootstrap` with Kratos config, and `wire.go` lists the provider sets that `wireApp` assembles into a `kratos.App`. Change a constructor or a provider set, then run `make wire` (or `go generate ./cmd/...`) to rewrite the `wire_gen.go` files; change `internal/conf/conf.proto`, then run `make config`. CI runs `make generate` and fails when it changes or adds any file.
+
+PostgreSQL and ClickHouse are reached through GORM. The schemas stay hand-written DDL in each store's `schema.go` rather than GORM migrations, since they rely on partial and GIN indexes, ClickHouse engines, sort keys and TTLs that model tags cannot express.
 
 The ClickHouse tests, including ch-loader's end-to-end run over an in-process kfake broker, run only when `CLICKHOUSE_ADDR` is set, for example `CLICKHOUSE_ADDR=127.0.0.1:9000 make test`. The PostgreSQL tests run only when `POSTGRES_DSN` is set, for example `POSTGRES_DSN=postgres://market:market@127.0.0.1:5432/market make test`. market-engine's late-trade run over kfake needs both. CI starts both services.
 

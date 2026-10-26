@@ -1,8 +1,9 @@
 APP := market-engine
 VERSION := $(shell git describe --tags --always --dirty)
 GOLANGCI_LINT_VERSION := v2.12.2
+WIRE_VERSION := v0.7.0
 
-.PHONY: build clean docker down generate logs up lint lint-install proto-check test test-race fmt fmt-check verify
+.PHONY: build clean config docker down generate logs up lint lint-install proto-check test test-race fmt fmt-check verify wire
 
 build:
 	go build -trimpath -ldflags "-X main.Version=$(VERSION)" -o bin/$(APP) ./cmd/market-engine
@@ -33,7 +34,13 @@ clean:
 logs:
 	$(COMPOSE) logs -f --tail=100
 
-generate:
+config:
+	buf generate --template buf.gen.config.yaml
+
+wire:
+	go run github.com/google/wire/cmd/wire@$(WIRE_VERSION) ./cmd/...
+
+generate: config wire
 	cd proto && buf generate
 	cd proto && go mod tidy
 	go mod tidy
@@ -58,6 +65,7 @@ lint-install:
 	go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION)
 
 proto-check:
+	buf lint && buf build
 	cd proto && buf lint && buf build
 
 verify: proto-check fmt-check lint test-race

@@ -5,14 +5,20 @@ package pgstore
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
+	"log/slog"
 	"regexp"
+	"runtime"
 	"time"
 
 	"github.com/AloneAtWar/chainstream-market/internal/storage"
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/jackc/pgx/v5/stdlib"
+	"gorm.io/driver/postgres"
+	"gorm.io/gorm"
+	"gorm.io/gorm/logger"
 )
 
 type Options struct {
@@ -21,6 +27,8 @@ type Options struct {
 	DSN string
 	// Schema holds the tables; it is created if needed. Empty uses public.
 	Schema string
+	// Logger receives GORM's slow query and error log; nil discards it.
+	Logger *slog.Logger
 }
 
 var identifier = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
@@ -54,9 +62,11 @@ var schema = []string{
 }
 
 // Store implements storage.CheckpointStore, storage.StateStore and the
-// holder, registry and ranking interfaces.
+// holder, registry and ranking interfaces on GORM. Single-row reads and
+// upserts use GORM's builder; the per-block writes stay set-based SQL run
+// through GORM, so a block of any size is a fixed number of statements.
 type Store struct {
-	pool *pgxpool.Pool
+	db *gorm.DB
 }
 
 // Open connects and creates the schema and tables if needed.
@@ -71,20 +81,40 @@ func Open(ctx context.Context, options Options) (*Store, error) {
 	if !identifier.MatchString(name) {
 		return nil, fmt.Errorf("postgres store: invalid schema name %q", name)
 	}
-	config, err := pgxpool.ParseConfig(options.DSN)
+	config, err := pgx.ParseConfig(options.DSN)
 	if err != nil {
 		return nil, fmt.Errorf("postgres store: parse dsn: %w", err)
 	}
-	config.ConnConfig.RuntimeParams["search_path"] = name
-	pool, err := pgxpool.NewWithConfig(ctx, config)
+	config.RuntimeParams["search_path"] = name
+	pool := stdlib.OpenDB(*config)
+	// pgxpool's default size, which the store used before GORM.
+	pool.SetMaxOpenConns(max(4, runtime.NumCPU()))
+	db, err := gorm.Open(postgres.New(postgres.Config{Conn: pool}), &gorm.Config{
+		Logger:                 newLogger(options.Logger),
+		SkipDefaultTransaction: true,
+	})
 	if err != nil {
-		return nil, fmt.Errorf("postgres store: connect: %w", err)
+		return nil, errors.Join(fmt.Errorf("postgres store: open: %w", err), pool.Close())
 	}
-	if err := migrate(ctx, pool, name); err != nil {
-		pool.Close()
-		return nil, fmt.Errorf("postgres store: migrate: %w", err)
+	db = db.WithContext(ctx)
+	if err := pool.PingContext(ctx); err != nil {
+		return nil, errors.Join(fmt.Errorf("postgres store: connect: %w", err), pool.Close())
 	}
-	return &Store{pool: pool}, nil
+	if err := migrate(db, name); err != nil {
+		return nil, errors.Join(fmt.Errorf("postgres store: migrate: %w", err), pool.Close())
+	}
+	return &Store{db: db.WithContext(context.Background())}, nil
+}
+
+func newLogger(slogger *slog.Logger) logger.Interface {
+	if slogger == nil {
+		return logger.Discard
+	}
+	return logger.NewSlogLogger(slogger.With("component", "pgstore"), logger.Config{
+		SlowThreshold:             time.Second,
+		LogLevel:                  logger.Warn,
+		IgnoreRecordNotFoundError: true,
+	})
 }
 
 // migrate creates the schema and tables in one transaction that holds an
@@ -93,35 +123,38 @@ func Open(ctx context.Context, options Options) (*Store, error) {
 // all but one fail with a duplicate key error in the system catalogs. The
 // lock makes them run one after another, so the later ones find everything
 // already created. It is released when the transaction ends.
-func migrate(ctx context.Context, pool *pgxpool.Pool, name string) (err error) {
-	tx, err := pool.Begin(ctx)
-	if err != nil {
-		return err
-	}
-	defer func() {
-		if err != nil {
-			err = errors.Join(err, rollback(ctx, tx))
+//
+// The tables are created from DDL rather than AutoMigrate: their partial,
+// expression and GIN indexes and the one-time holder_counts backfill are
+// not expressible as model tags, and AutoMigrate would try to alter the
+// NUMERIC(78, 0) and JSONB columns of existing deployments.
+func migrate(db *gorm.DB, name string) error {
+	return db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Exec(`SELECT pg_advisory_xact_lock(hashtextextended(?, 0))`, "chainstream-market/migrate/"+name).Error; err != nil {
+			return fmt.Errorf("lock: %w", err)
 		}
-	}()
-	if _, err = tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, "chainstream-market/migrate/"+name); err != nil {
-		return fmt.Errorf("lock: %w", err)
-	}
-	statements := append([]string{"CREATE SCHEMA IF NOT EXISTS " + name}, schema...)
-	statements = append(statements, holderSchema...)
-	statements = append(statements, registrySchema...)
-	statements = append(statements, rankingSchema...)
-	for _, statement := range statements {
-		if _, err = tx.Exec(ctx, statement); err != nil {
-			return err
+		statements := append([]string{"CREATE SCHEMA IF NOT EXISTS " + name}, schema...)
+		statements = append(statements, holderSchema...)
+		statements = append(statements, registrySchema...)
+		statements = append(statements, rankingSchema...)
+		for _, statement := range statements {
+			if err := tx.Exec(statement).Error; err != nil {
+				return err
+			}
 		}
-	}
-	return tx.Commit(ctx)
+		return nil
+	})
 }
 
-func (store *Store) Close() { store.pool.Close() }
+// Close closes the connection pool.
+func (store *Store) Close() {
+	if pool, err := store.db.DB(); err == nil {
+		_ = pool.Close()
+	}
+}
 
 func (store *Store) Load(ctx context.Context, chainID uint64) (storage.Checkpoint, bool, error) {
-	checkpoint, _, ok, err := store.loadCheckpoint(ctx, store.pool, chainID)
+	checkpoint, _, ok, err := loadCheckpoint(store.db.WithContext(ctx), engineCheckpoints, chainID)
 	return checkpoint, ok, err
 }
 
@@ -130,167 +163,111 @@ func (store *Store) Save(ctx context.Context, checkpoint storage.Checkpoint) err
 	return store.Commit(ctx, checkpoint, storage.StateDelta{})
 }
 
-type querier interface {
-	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
-}
-
-func (*Store) loadCheckpoint(ctx context.Context, db querier, chainID uint64) (storage.Checkpoint, int64, bool, error) {
-	checkpoint := storage.Checkpoint{ChainID: chainID}
-	var prunedThrough int64
-	err := db.QueryRow(ctx,
-		`SELECT kafka_offset, block_height, block_hash, pruned_through, updated_at
-		 FROM engine_checkpoints WHERE chain_id = $1`, int64(chainID),
-	).Scan(&checkpoint.Offset, &checkpoint.Height, &checkpoint.Hash, &prunedThrough, &checkpoint.UpdatedAt)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return storage.Checkpoint{}, 0, false, nil
-	}
-	if err != nil {
-		return storage.Checkpoint{}, 0, false, fmt.Errorf("postgres store: load checkpoint: %w", err)
-	}
-	checkpoint.UpdatedAt = checkpoint.UpdatedAt.UTC()
-	return checkpoint, prunedThrough, true, nil
-}
-
 // LoadState reads the checkpoint, every state entry and the retained undo
 // history in one repeatable-read snapshot.
 func (store *Store) LoadState(ctx context.Context, chainID uint64) (state storage.State, ok bool, err error) {
-	tx, err := store.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly})
+	err = store.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		state.Checkpoint, state.PrunedThrough, ok, err = loadCheckpoint(tx, engineCheckpoints, chainID)
+		if err != nil || !ok {
+			return err
+		}
+		var entries []stateRow
+		if findErr := tx.Model(&stateRow{}).Select("kind, key, value::text AS value").
+			Where("chain_id = ?", int64(chainID)).Order("kind, key").Find(&entries).Error; findErr != nil {
+			return fmt.Errorf("postgres store: load state: %w", findErr)
+		}
+		state.Entries = make([]storage.StateEntry, len(entries))
+		for index, entry := range entries {
+			state.Entries[index] = storage.StateEntry{Kind: entry.Kind, Key: entry.Key, Value: []byte(entry.Value)}
+		}
+		var undo []stateUndoRow
+		if findErr := tx.Model(&stateUndoRow{}).Select("block_height, kind, key, prev::text AS prev").
+			Where("chain_id = ?", int64(chainID)).Order("block_height, kind, key").Find(&undo).Error; findErr != nil {
+			return fmt.Errorf("postgres store: load undo: %w", findErr)
+		}
+		state.Undo = make([]storage.StateUndo, len(undo))
+		for index, row := range undo {
+			state.Undo[index] = storage.StateUndo{Height: row.BlockHeight, Kind: row.Kind, Key: row.Key}
+			if row.Prev != nil {
+				state.Undo[index].Prev = []byte(*row.Prev)
+			}
+		}
+		return nil
+	}, &sql.TxOptions{Isolation: sql.LevelRepeatableRead, ReadOnly: true})
 	if err != nil {
-		return storage.State{}, false, fmt.Errorf("postgres store: begin: %w", err)
-	}
-	defer func() { err = errors.Join(err, rollback(ctx, tx)) }()
-
-	state.Checkpoint, state.PrunedThrough, ok, err = store.loadCheckpoint(ctx, tx, chainID)
-	if err != nil || !ok {
 		return storage.State{}, false, err
 	}
-	rows, err := tx.Query(ctx,
-		`SELECT kind, key, value::text FROM engine_state WHERE chain_id = $1 ORDER BY kind, key`, int64(chainID))
-	if err != nil {
-		return storage.State{}, false, fmt.Errorf("postgres store: load state: %w", err)
-	}
-	state.Entries, err = pgx.CollectRows(rows, func(row pgx.CollectableRow) (storage.StateEntry, error) {
-		var entry storage.StateEntry
-		var value string
-		if scanErr := row.Scan(&entry.Kind, &entry.Key, &value); scanErr != nil {
-			return entry, scanErr
-		}
-		entry.Value = []byte(value)
-		return entry, nil
-	})
-	if err != nil {
-		return storage.State{}, false, fmt.Errorf("postgres store: load state: %w", err)
-	}
-	rows, err = tx.Query(ctx,
-		`SELECT block_height, kind, key, prev::text FROM engine_state_undo
-		 WHERE chain_id = $1 ORDER BY block_height, kind, key`, int64(chainID))
-	if err != nil {
-		return storage.State{}, false, fmt.Errorf("postgres store: load undo: %w", err)
-	}
-	state.Undo, err = pgx.CollectRows(rows, func(row pgx.CollectableRow) (storage.StateUndo, error) {
-		var undo storage.StateUndo
-		var prev *string
-		if scanErr := row.Scan(&undo.Height, &undo.Kind, &undo.Key, &prev); scanErr != nil {
-			return undo, scanErr
-		}
-		if prev != nil {
-			undo.Prev = []byte(*prev)
-		}
-		return undo, nil
-	})
-	if err != nil {
-		return storage.State{}, false, fmt.Errorf("postgres store: load undo: %w", err)
+	if !ok {
+		return storage.State{}, false, nil
 	}
 	return state, true, nil
 }
 
 // Commit applies delta and saves checkpoint in one transaction.
-func (store *Store) Commit(ctx context.Context, checkpoint storage.Checkpoint, delta storage.StateDelta) (err error) {
+func (store *Store) Commit(ctx context.Context, checkpoint storage.Checkpoint, delta storage.StateDelta) error {
 	if checkpoint.ChainID == 0 {
 		return errors.New("postgres store: checkpoint chain id is required")
 	}
 	chainID := int64(checkpoint.ChainID)
-	tx, err := store.pool.Begin(ctx)
-	if err != nil {
-		return fmt.Errorf("postgres store: begin: %w", err)
-	}
-	defer func() {
-		if err != nil {
-			err = errors.Join(err, rollback(ctx, tx))
+	err := store.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		run := runner{tx: tx}
+		if delta.Reverted {
+			run.exec(`DELETE FROM engine_state_undo WHERE chain_id = ? AND block_height > ?`, chainID, delta.RevertTo)
 		}
-	}()
-
-	batch := &pgx.Batch{}
-	if delta.Reverted {
-		batch.Queue(`DELETE FROM engine_state_undo WHERE chain_id = $1 AND block_height > $2`, chainID, delta.RevertTo)
-	}
-	if len(delta.Undo) > 0 {
-		heights := make([]int64, len(delta.Undo))
-		kinds := make([]string, len(delta.Undo))
-		keys := make([]string, len(delta.Undo))
-		prevs := make([]*string, len(delta.Undo))
-		for index, undo := range delta.Undo {
-			heights[index], kinds[index], keys[index] = undo.Height, undo.Kind, undo.Key
-			if undo.Prev != nil {
-				prev := string(undo.Prev)
-				prevs[index] = &prev
+		if len(delta.Undo) > 0 {
+			heights := make([]int64, len(delta.Undo))
+			kinds := make([]string, len(delta.Undo))
+			keys := make([]string, len(delta.Undo))
+			prevs := make([]*string, len(delta.Undo))
+			for index, undo := range delta.Undo {
+				heights[index], kinds[index], keys[index] = undo.Height, undo.Kind, undo.Key
+				if undo.Prev != nil {
+					prev := string(undo.Prev)
+					prevs[index] = &prev
+				}
 			}
+			// The first write at a height holds the value to revert to, so an
+			// existing row wins.
+			run.exec(`INSERT INTO engine_state_undo (chain_id, block_height, kind, key, prev)
+				SELECT @chain, height, kind, key, prev::jsonb
+				FROM unnest(CAST(@heights AS bigint[]), CAST(@kinds AS text[]), CAST(@keys AS text[]), CAST(@prevs AS text[])) AS undo(height, kind, key, prev)
+				ON CONFLICT DO NOTHING`, map[string]any{
+				"chain": chainID, "heights": array(heights), "kinds": array(kinds), "keys": array(keys), "prevs": array(prevs),
+			})
 		}
-		// The first write at a height holds the value to revert to, so an
-		// existing row wins.
-		batch.Queue(`INSERT INTO engine_state_undo (chain_id, block_height, kind, key, prev)
-			SELECT $1, height, kind, key, prev::jsonb
-			FROM unnest($2::bigint[], $3::text[], $4::text[], $5::text[]) AS undo(height, kind, key, prev)
-			ON CONFLICT DO NOTHING`, chainID, heights, kinds, keys, prevs)
-	}
-	batch.Queue(`DELETE FROM engine_state_undo WHERE chain_id = $1 AND block_height <= $2`, chainID, delta.PrunedThrough)
+		run.exec(`DELETE FROM engine_state_undo WHERE chain_id = ? AND block_height <= ?`, chainID, delta.PrunedThrough)
 
-	var upsertKinds, upsertKeys, values, deleteKinds, deleteKeys []string
-	for _, entry := range delta.Entries {
-		if entry.Value == nil {
-			deleteKinds, deleteKeys = append(deleteKinds, entry.Kind), append(deleteKeys, entry.Key)
-			continue
+		var upsertKinds, upsertKeys, values, deleteKinds, deleteKeys []string
+		for _, entry := range delta.Entries {
+			if entry.Value == nil {
+				deleteKinds, deleteKeys = append(deleteKinds, entry.Kind), append(deleteKeys, entry.Key)
+				continue
+			}
+			upsertKinds, upsertKeys = append(upsertKinds, entry.Kind), append(upsertKeys, entry.Key)
+			values = append(values, string(entry.Value))
 		}
-		upsertKinds, upsertKeys = append(upsertKinds, entry.Kind), append(upsertKeys, entry.Key)
-		values = append(values, string(entry.Value))
-	}
-	if len(upsertKeys) > 0 {
-		batch.Queue(`INSERT INTO engine_state (chain_id, kind, key, value)
-			SELECT $1, kind, key, value::jsonb
-			FROM unnest($2::text[], $3::text[], $4::text[]) AS entry(kind, key, value)
-			ON CONFLICT (chain_id, kind, key) DO UPDATE SET value = EXCLUDED.value`,
-			chainID, upsertKinds, upsertKeys, values)
-	}
-	if len(deleteKeys) > 0 {
-		batch.Queue(`DELETE FROM engine_state AS state
-			USING unnest($2::text[], $3::text[]) AS gone(kind, key)
-			WHERE state.chain_id = $1 AND state.kind = gone.kind AND state.key = gone.key`,
-			chainID, deleteKinds, deleteKeys)
-	}
-	updatedAt := checkpoint.UpdatedAt
-	if updatedAt.IsZero() {
-		updatedAt = time.Now()
-	}
-	batch.Queue(`INSERT INTO engine_checkpoints (chain_id, kafka_offset, block_height, block_hash, pruned_through, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6)
-		ON CONFLICT (chain_id) DO UPDATE SET kafka_offset = EXCLUDED.kafka_offset,
-			block_height = EXCLUDED.block_height, block_hash = EXCLUDED.block_hash,
-			pruned_through = GREATEST(engine_checkpoints.pruned_through, EXCLUDED.pruned_through),
-			updated_at = EXCLUDED.updated_at`,
-		chainID, checkpoint.Offset, checkpoint.Height, checkpoint.Hash, delta.PrunedThrough, updatedAt)
-
-	if err := tx.SendBatch(ctx, batch).Close(); err != nil {
+		if len(upsertKeys) > 0 {
+			run.exec(`INSERT INTO engine_state (chain_id, kind, key, value)
+				SELECT @chain, kind, key, value::jsonb
+				FROM unnest(CAST(@kinds AS text[]), CAST(@keys AS text[]), CAST(@values AS text[])) AS entry(kind, key, value)
+				ON CONFLICT (chain_id, kind, key) DO UPDATE SET value = EXCLUDED.value`, map[string]any{
+				"chain": chainID, "kinds": array(upsertKinds), "keys": array(upsertKeys), "values": array(values),
+			})
+		}
+		if len(deleteKeys) > 0 {
+			run.exec(`DELETE FROM engine_state AS state
+				USING unnest(CAST(@kinds AS text[]), CAST(@keys AS text[])) AS gone(kind, key)
+				WHERE state.chain_id = @chain AND state.kind = gone.kind AND state.key = gone.key`, map[string]any{
+				"chain": chainID, "kinds": array(deleteKinds), "keys": array(deleteKeys),
+			})
+		}
+		if run.err != nil {
+			return run.err
+		}
+		return saveCheckpoint(tx, engineCheckpoints, checkpoint, delta.PrunedThrough)
+	})
+	if err != nil {
 		return fmt.Errorf("postgres store: commit chain %d offset %d: %w", checkpoint.ChainID, checkpoint.Offset, err)
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return fmt.Errorf("postgres store: commit: %w", err)
-	}
-	return nil
-}
-
-func rollback(ctx context.Context, tx pgx.Tx) error {
-	if err := tx.Rollback(ctx); err != nil && !errors.Is(err, pgx.ErrTxClosed) {
-		return fmt.Errorf("postgres store: rollback: %w", err)
 	}
 	return nil
 }

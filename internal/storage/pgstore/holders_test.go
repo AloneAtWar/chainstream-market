@@ -37,8 +37,8 @@ func assertHolderCounts(t *testing.T, store *Store, want map[string]int64) {
 			t.Fatalf("HolderCount(%s) = %d, %v; want %d", token, got, err, count)
 		}
 		var counted int64
-		if err := store.pool.QueryRow(context.Background(),
-			`SELECT count(*) FROM holder_balances WHERE chain_id = 1 AND token = $1 AND balance > 0`, token).Scan(&counted); err != nil {
+		if err := store.db.Raw(`SELECT count(*) FROM holder_balances WHERE chain_id = 1 AND token = ? AND balance > 0`,
+			token).Scan(&counted).Error; err != nil {
 			t.Fatalf("count holder_balances: %v", err)
 		}
 		if counted != count {
@@ -100,16 +100,15 @@ func TestHolderCountsBackfill(t *testing.T) {
 	}})
 	// A schema from before holder_counts existed is counted on the next
 	// migration; later migrations leave the table alone.
-	ctx := context.Background()
-	if _, err := store.pool.Exec(ctx, `DROP TABLE holder_counts`); err != nil {
+	if err := store.db.Exec(`DROP TABLE holder_counts`).Error; err != nil {
 		t.Fatalf("drop holder_counts: %v", err)
 	}
 	var schema string
-	if err := store.pool.QueryRow(ctx, `SELECT current_schema()`).Scan(&schema); err != nil {
+	if err := store.db.Raw(`SELECT current_schema()`).Scan(&schema).Error; err != nil {
 		t.Fatalf("current_schema: %v", err)
 	}
 	for range 2 {
-		if err := migrate(ctx, store.pool, schema); err != nil {
+		if err := migrate(store.db, schema); err != nil {
 			t.Fatalf("migrate() error = %v", err)
 		}
 	}

@@ -149,7 +149,7 @@ live:
 
 # Every command serves Prometheus metrics at /metrics on addr; empty turns
 # it off. Commands sharing a host pass -metrics-addr to take their own port.
-# Any ${NAME} or ${NAME:-default} in this file is read from the environment.
+# Any ${NAME} or ${NAME:default} in this file is read from the environment.
 metrics:
   addr: ""
 

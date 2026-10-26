@@ -6,23 +6,20 @@ import (
 	"time"
 
 	"github.com/AloneAtWar/chainstream-market/internal/storage"
+	"github.com/shopspring/decimal"
 )
 
 func (store *Store) ChainHead(ctx context.Context, chainID uint64) (time.Time, bool, error) {
-	rows, err := store.conn.Query(ctx,
-		`SELECT block_time FROM blocks WHERE chain_id = ? ORDER BY block_height DESC LIMIT 1`, chainID)
+	var rows []blockRow
+	err := store.db.WithContext(ctx).Select("block_time").Where("chain_id = ?", chainID).
+		Order("block_height DESC").Limit(1).Find(&rows).Error
 	if err != nil {
 		return time.Time{}, false, fmt.Errorf("clickhouse store: query chain head: %w", err)
 	}
-	defer rows.Close() //nolint:errcheck // rows.Err reports read failures
-	if !rows.Next() {
-		return time.Time{}, false, rows.Err()
+	if len(rows) == 0 {
+		return time.Time{}, false, nil
 	}
-	var head time.Time
-	if err := rows.Scan(&head); err != nil {
-		return time.Time{}, false, fmt.Errorf("clickhouse store: scan chain head: %w", err)
-	}
-	return head.UTC(), true, nil
+	return rows[0].BlockTime.UTC(), true, nil
 }
 
 // TokenActivity reads each bucket's current version first, then sums the
@@ -32,9 +29,16 @@ func (store *Store) TokenActivity(ctx context.Context, chainID uint64, interval 
 	if interval < time.Second {
 		return nil, fmt.Errorf("clickhouse store: activity interval %s is below one second", interval)
 	}
-	rows, err := store.conn.Query(ctx, `
-		SELECT key, sum(bucket_volume), sum(bucket_trades),
-			argMin(bucket_open, open_time), argMax(bucket_close, open_time)
+	var rows []struct {
+		Key       string
+		VolumeUSD decimal.Decimal `gorm:"column:volume_usd"`
+		Trades    uint64
+		Open      decimal.Decimal
+		Close     decimal.Decimal
+	}
+	err := store.db.WithContext(ctx).Raw(`
+		SELECT key, sum(bucket_volume) AS volume_usd, sum(bucket_trades) AS trades,
+			argMin(bucket_open, open_time) AS open, argMax(bucket_close, open_time) AS close
 		FROM (
 			SELECT key, open_time,
 				argMax(volume_usd, update_height) AS bucket_volume,
@@ -46,23 +50,18 @@ func (store *Store) TokenActivity(ctx context.Context, chainID uint64, interval 
 			GROUP BY key, open_time
 		)
 		GROUP BY key`,
-		chainID, uint32(interval/time.Second), since)
+		chainID, uint32(interval/time.Second), since).Scan(&rows).Error
 	if err != nil {
 		return nil, fmt.Errorf("clickhouse store: query activity: %w", err)
 	}
-	defer rows.Close() //nolint:errcheck // rows.Err reports read failures
-	var activity []storage.TokenActivity
-	for rows.Next() {
-		var row storage.TokenActivity
-		var trades uint64
-		if err := rows.Scan(&row.Token, &row.VolumeUSD, &trades, &row.Open, &row.Close); err != nil {
-			return nil, fmt.Errorf("clickhouse store: scan activity: %w", err)
-		}
-		row.Trades = int64(trades)
-		activity = append(activity, row)
+	if len(rows) == 0 {
+		return nil, nil
 	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("clickhouse store: read activity: %w", err)
+	activity := make([]storage.TokenActivity, len(rows))
+	for index, row := range rows {
+		activity[index] = storage.TokenActivity{
+			Token: row.Key, VolumeUSD: row.VolumeUSD, Trades: int64(row.Trades), Open: row.Open, Close: row.Close,
+		}
 	}
 	return activity, nil
 }
@@ -81,27 +80,28 @@ func (store *Store) LatestQuotes(ctx context.Context, chainID uint64, since time
 		}
 		filter += `)`
 	}
-	rows, err := store.conn.Query(ctx, `
-		SELECT token, argMax(price_usd, block_height), argMax(liquidity_usd, block_height),
-			max(block_height), argMax(block_time, block_height)
+	// The aliases name the model's columns; prefer_column_name_to_alias
+	// keeps them from shadowing the columns the other aggregates read.
+	var rows []priceRow
+	err := store.db.WithContext(ctx).Raw(`
+		SELECT token, argMax(price_usd, block_height) AS price_usd, argMax(liquidity_usd, block_height) AS liquidity_usd,
+			max(block_height) AS block_height, argMax(block_time, block_height) AS block_time
 		FROM token_prices
 		WHERE chain_id = ?`+filter+`
-		GROUP BY token`, args...)
+		GROUP BY token
+		SETTINGS prefer_column_name_to_alias = 1`, args...).Scan(&rows).Error
 	if err != nil {
 		return nil, fmt.Errorf("clickhouse store: query quotes: %w", err)
 	}
-	defer rows.Close() //nolint:errcheck // rows.Err reports read failures
-	var quotes []storage.TokenQuote
-	for rows.Next() {
-		var quote storage.TokenQuote
-		if err := rows.Scan(&quote.Token, &quote.PriceUSD, &quote.LiquidityUSD, &quote.BlockHeight, &quote.BlockTime); err != nil {
-			return nil, fmt.Errorf("clickhouse store: scan quote: %w", err)
-		}
-		quote.BlockTime = quote.BlockTime.UTC()
-		quotes = append(quotes, quote)
+	if len(rows) == 0 {
+		return nil, nil
 	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("clickhouse store: read quotes: %w", err)
+	quotes := make([]storage.TokenQuote, len(rows))
+	for index, row := range rows {
+		quotes[index] = storage.TokenQuote{
+			Token: row.Token, PriceUSD: row.PriceUSD, LiquidityUSD: row.LiquidityUSD,
+			BlockHeight: row.BlockHeight, BlockTime: row.BlockTime.UTC(),
+		}
 	}
 	return quotes, nil
 }

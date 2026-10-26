@@ -37,7 +37,7 @@ func openTestStore(t *testing.T) *Store {
 		t.Fatalf("Open() error = %v", err)
 	}
 	t.Cleanup(func() {
-		if err := store.conn.Exec(context.Background(), "DROP DATABASE IF EXISTS "+options.Database); err != nil {
+		if err := store.db.WithContext(context.Background()).Exec("DROP DATABASE IF EXISTS " + options.Database).Error; err != nil {
 			t.Errorf("drop database: %v", err)
 		}
 		if err := store.Close(); err != nil {
@@ -80,7 +80,7 @@ func testBlock(height int64) storage.RawBlock {
 func count(t *testing.T, store *Store, table string) uint64 {
 	t.Helper()
 	var rows uint64
-	if err := store.conn.QueryRow(context.Background(), "SELECT count() FROM "+table).Scan(&rows); err != nil {
+	if err := store.db.WithContext(context.Background()).Raw("SELECT count() FROM " + table).Row().Scan(&rows); err != nil {
 		t.Fatalf("count %s: %v", table, err)
 	}
 	return rows
@@ -122,14 +122,14 @@ func TestStoreWritesDeletesAndCheckpoints(t *testing.T) {
 
 	var amounts []string
 	var bin *uint32
-	if err := store.conn.QueryRow(ctx, "SELECT amount_raw, active_bin_id FROM raw_trades WHERE block_height = 101").Scan(&amounts, &bin); err != nil {
+	if err := store.db.WithContext(ctx).Raw("SELECT amount_raw, active_bin_id FROM raw_trades WHERE block_height = 101").Row().Scan(&amounts, &bin); err != nil {
 		t.Fatalf("read trade: %v", err)
 	}
 	if strings.Join(amounts, ",") != "-100,5" || bin == nil || *bin != 8388608 {
 		t.Fatalf("trade amounts = %v, bin = %v", amounts, bin)
 	}
 	var answer string
-	if err := store.conn.QueryRow(ctx, "SELECT toString(answer) FROM oracle_updates WHERE block_height = 101").Scan(&answer); err != nil || answer != "-5" {
+	if err := store.db.WithContext(ctx).Raw("SELECT toString(answer) FROM oracle_updates WHERE block_height = 101").Row().Scan(&answer); err != nil || answer != "-5" {
 		t.Fatalf("oracle answer = %q, %v", answer, err)
 	}
 
@@ -206,8 +206,8 @@ func TestHolderFilterUsesPartyIndex(t *testing.T) {
 	if err := store.WriteRaw(ctx, []storage.RawBlock{testBlock(100)}); err != nil {
 		t.Fatalf("WriteRaw() error = %v", err)
 	}
-	rows, err := store.conn.Query(ctx,
-		"EXPLAIN indexes = 1 SELECT count() FROM raw_transfers WHERE chain_id = 1 AND has([from_address, to_address], ?)", alice)
+	rows, err := store.db.WithContext(ctx).Raw(
+		"EXPLAIN indexes = 1 SELECT count() FROM raw_transfers WHERE chain_id = 1 AND has([from_address, to_address], ?)", alice).Rows()
 	if err != nil {
 		t.Fatalf("explain: %v", err)
 	}
@@ -240,7 +240,7 @@ func TestRetentionDropsOldFacts(t *testing.T) {
 		t.Fatalf("WriteRaw() error = %v", err)
 	}
 	for _, table := range tables {
-		if err := store.conn.Exec(ctx, "OPTIMIZE TABLE "+table+" FINAL"); err != nil {
+		if err := store.db.WithContext(ctx).Exec("OPTIMIZE TABLE " + table + " FINAL").Error; err != nil {
 			t.Fatalf("optimize %s: %v", table, err)
 		}
 	}

@@ -1,6 +1,7 @@
 package conf
 
 import (
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -17,33 +18,33 @@ chains:
 	if err != nil {
 		t.Fatalf("Parse() error = %v", err)
 	}
-	if config.Kafka.FetchMaxBytes != defaultFetchMaxBytes || config.Kafka.FetchMaxWait != defaultFetchMaxWait {
+	if config.Kafka.FetchMaxBytes != defaultFetchMaxBytes || config.Kafka.FetchMaxWait.AsDuration() != defaultFetchMaxWait {
 		t.Fatalf("kafka defaults = %+v", config.Kafka)
 	}
 	if config.Storage.Driver != StorageMemory {
 		t.Fatalf("storage driver = %q", config.Storage.Driver)
 	}
-	if config.Holders.ReconcileEvery != defaultHoldersReconcileEvery || config.Holders.RPCBatchSize != defaultRPCBatchSize ||
+	if config.Holders.ReconcileEvery != defaultHoldersReconcileEvery || config.Holders.RpcBatchSize != defaultRPCBatchSize ||
 		config.Holders.HistoryDepth != defaultHistoryDepth {
 		t.Fatalf("holders defaults = %+v", config.Holders)
 	}
 	if config.Registry.HistoryDepth != defaultHistoryDepth {
 		t.Fatalf("registry defaults = %+v", config.Registry)
 	}
-	if config.ChLoader.BatchLag != defaultLoaderBatchLag || config.ChLoader.FlushRows != defaultLoaderFlushRows ||
-		config.ChLoader.FlushInterval != defaultLoaderFlushInterval {
+	if config.ChLoader.BatchLag.AsDuration() != defaultLoaderBatchLag || config.ChLoader.FlushRows != defaultLoaderFlushRows ||
+		config.ChLoader.FlushInterval.AsDuration() != defaultLoaderFlushInterval {
 		t.Fatalf("ch_loader defaults = %+v", config.ChLoader)
 	}
 	if config.State.Driver != StateMemory {
 		t.Fatalf("state driver = %q", config.State.Driver)
 	}
-	if config.Rankings.RefreshInterval != defaultRankingsRefreshInterval ||
-		config.Rankings.CandleInterval != defaultRankingsCandleInterval ||
-		config.Rankings.ReorgWindow != defaultRankingsReorgWindow {
+	if config.Rankings.RefreshInterval.AsDuration() != defaultRankingsRefreshInterval ||
+		config.Rankings.CandleInterval.AsDuration() != defaultRankingsCandleInterval ||
+		config.Rankings.ReorgWindow.AsDuration() != defaultRankingsReorgWindow {
 		t.Fatalf("rankings defaults = %+v", config.Rankings)
 	}
 	if config.Market.MaxHops != defaultMaxHops || len(config.Market.Intervals) != len(DefaultIntervals()) ||
-		config.Market.MinLiquidityUSD != defaultMinLiquidityUSD || config.Market.HistoryDepth != defaultHistoryDepth {
+		config.Market.MinLiquidityUsd != defaultMinLiquidityUSD || config.Market.HistoryDepth != defaultHistoryDepth {
 		t.Fatalf("market defaults = %+v", config.Market)
 	}
 }
@@ -107,7 +108,7 @@ chains:
 		t.Fatalf("Parse() error = %v", err)
 	}
 	live := config.Live
-	if live.MaxLag != -time.Second || live.CandleThrottle != defaultLiveCandleThrottle ||
+	if live.MaxLag.AsDuration() != -time.Second || live.CandleThrottle.AsDuration() != defaultLiveCandleThrottle ||
 		live.ClientBuffer != defaultLiveClientBuffer || live.MaxSubscriptions != defaultLiveMaxSubscriptions ||
 		len(live.AllowedOrigins) != 1 {
 		t.Fatalf("live = %+v", live)
@@ -161,8 +162,8 @@ chains: [{name: eth, chain_id: 1, topic: a}]
 	if err != nil {
 		t.Fatalf("Parse() error = %v", err)
 	}
-	if config.Storage.ClickHouse.Database != defaultClickHouseDatabase {
-		t.Fatalf("database = %q", config.Storage.ClickHouse.Database)
+	if config.Storage.Clickhouse.Database != defaultClickHouseDatabase {
+		t.Fatalf("database = %q", config.Storage.Clickhouse.Database)
 	}
 }
 
@@ -177,23 +178,20 @@ chains: [{name: eth, chain_id: 1, topic: a}]
 	if err != nil {
 		t.Fatalf("Parse() error = %v", err)
 	}
-	if config.State.Postgres.DSN != "postgres://market@127.0.0.1:5432/market" || config.State.Postgres.Schema != "engine" {
+	if config.State.Postgres.Dsn != "postgres://market@127.0.0.1:5432/market" || config.State.Postgres.Schema != "engine" {
 		t.Fatalf("state = %+v", config.State)
 	}
 }
 
 func TestLoadRepositoryConfig(t *testing.T) {
-	config, err := Load(filepath.Join("..", "..", "configs", "config.yaml"))
-	if err != nil {
-		t.Fatalf("Load() error = %v", err)
-	}
+	config := mustLoad(t, filepath.Join("..", "..", "configs", "config.yaml"))
 	if len(config.Chains) != 3 {
 		t.Fatalf("chains = %d, want 3", len(config.Chains))
 	}
-	if config.Kafka.FetchMaxWait != time.Second/2 {
+	if config.Kafka.FetchMaxWait.AsDuration() != time.Second/2 {
 		t.Fatalf("fetch_max_wait = %s", config.Kafka.FetchMaxWait)
 	}
-	if days := config.Storage.ClickHouse.Retention.CandleDays; days[time.Minute] != 30 || days[5*time.Minute] != 180 {
+	if days := config.Storage.Clickhouse.Retention.CandleDayDurations(); days[time.Minute] != 30 || days[5*time.Minute] != 180 {
 		t.Fatalf("candle_days = %v", days)
 	}
 }
@@ -215,53 +213,77 @@ chains: [{name: eth, chain_id: 1, topic: a}]
 	if err != nil {
 		t.Fatalf("Parse() error = %v", err)
 	}
-	retention := config.Storage.ClickHouse.Retention
+	retention := config.Storage.Clickhouse.Retention
 	if retention.ColdVolume != defaultColdVolume || retention.ColdAfterDays != 30 || retention.TradesDays != 180 {
 		t.Fatalf("retention = %+v", retention)
 	}
-	if len(retention.CandleDays) != 2 || retention.CandleDays[time.Minute] != 7 {
+	if days := retention.CandleDayDurations(); len(days) != 2 || days[time.Minute] != 7 {
 		t.Fatalf("candle_days = %v", retention.CandleDays)
 	}
 }
 
 func TestLoadMissingFile(t *testing.T) {
-	_, err := Load(filepath.Join(t.TempDir(), "missing.yaml"))
-	if err == nil || !strings.Contains(err.Error(), "read") {
+	_, _, err := Load(filepath.Join(t.TempDir(), "missing.yaml"))
+	if err == nil || !strings.Contains(err.Error(), "missing.yaml") {
 		t.Fatalf("Load() error = %v", err)
 	}
 }
 
-func TestExpandEnv(t *testing.T) {
-	env := map[string]string{"RPC_URL": "http://node:8545", "EMPTY": ""}
-	lookup := func(name string) (string, bool) {
-		value, ok := env[name]
-		return value, ok
+func TestLoadResolvesEnvironment(t *testing.T) {
+	t.Setenv("RPC_URL", "http://node:8545")
+	t.Setenv("FETCH_WAIT", "2s")
+	t.Setenv("LIVE", "true")
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	raw := `kafka:
+  brokers: ["${BROKER:127.0.0.1:9092}"]
+  fetch_max_wait: ${FETCH_WAIT}
+live:
+  enabled: ${LIVE:false}
+chains:
+  - name: eth
+    chain_id: 1
+    topic: a
+    rpc_url: ${RPC_URL}
+    live_topic: "${MISSING}"
+    feeds: [{address: 0x1f, token: 0x00a1}]
+`
+	if err := os.WriteFile(path, []byte(raw), 0o600); err != nil {
+		t.Fatal(err)
 	}
-	raw := []byte(`rpc_url: ${RPC_URL}
-dsn: ${PG_DSN:-postgres://market@pg/market}
-empty: ${EMPTY:-fallback}
-missing: "${MISSING}"
-price: $5 and $HOME`)
-	want := `rpc_url: http://node:8545
-dsn: postgres://market@pg/market
-empty: fallback
-missing: ""
-price: $5 and $HOME`
-	if got := string(ExpandEnv(raw, lookup)); got != want {
-		t.Fatalf("ExpandEnv() =\n%s\nwant\n%s", got, want)
+	config := mustLoad(t, path)
+	if config.Kafka.Brokers[0] != "127.0.0.1:9092" || config.Kafka.FetchMaxWait.AsDuration() != 2*time.Second {
+		t.Fatalf("kafka = %+v", config.Kafka)
 	}
+	chain := config.Chains[0]
+	if !config.Live.Enabled || chain.RpcUrl != "http://node:8545" || chain.LiveTopic != "a-live" {
+		t.Fatalf("chain = %+v, live = %+v", chain, config.Live)
+	}
+	// Unquoted hex stays text in string fields.
+	if feed := chain.Feeds[0]; feed.Address != "0x1f" || feed.Token != "0x00a1" {
+		t.Fatalf("feed = %+v", feed)
+	}
+}
+
+// mustLoad calls Load and closes the config.
+func mustLoad(t *testing.T, path string) *Bootstrap {
+	t.Helper()
+	config, closeConfig, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if err := closeConfig(); err != nil {
+		t.Fatalf("close config: %v", err)
+	}
+	return config
 }
 
 func TestLoadDeployConfig(t *testing.T) {
 	t.Setenv("ETH_RPC_URL", "http://node:8545")
-	config, err := Load(filepath.Join("..", "..", "deploy", "config.yaml"))
-	if err != nil {
-		t.Fatalf("Load() error = %v", err)
-	}
+	config := mustLoad(t, filepath.Join("..", "..", "deploy", "config.yaml"))
 	if config.Storage.Driver != StorageClickHouse || config.State.Driver != StatePostgres || config.Metrics.Addr != ":9100" {
 		t.Fatalf("config = %+v", config)
 	}
-	if len(config.Chains) != 1 || config.Chains[0].RPCURL != "http://node:8545" {
+	if len(config.Chains) != 1 || config.Chains[0].RpcUrl != "http://node:8545" {
 		t.Fatalf("chains = %+v", config.Chains)
 	}
 }
