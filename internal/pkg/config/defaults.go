@@ -9,12 +9,6 @@ import (
 
 // The driver names of the shared sections.
 const (
-	StorageMemory     = "memory"
-	StorageClickHouse = "clickhouse"
-
-	StateMemory   = "memory"
-	StatePostgres = "postgres"
-
 	SourceKafka = "kafka"
 	SourceFile  = "file"
 
@@ -65,45 +59,16 @@ func (source *Source) ApplyDefaults() {
 	DefaultDuration(&source.File.PollInterval, defaultSourcePollInterval)
 }
 
-// ApplyDefaults fills the storage section and defaults its driver to memory.
-func (storage *Storage) ApplyDefaults() {
-	if storage.Clickhouse == nil {
-		storage.Clickhouse = &ClickHouse{}
-	}
-	if strings.TrimSpace(storage.Driver) == "" {
-		storage.Driver = StorageMemory
-	}
-	if storage.Driver == StorageClickHouse {
-		storage.Clickhouse.ApplyDefaults()
-	} else {
-		storage.Clickhouse.applyRetentionDefaults()
-	}
-}
-
 // ApplyDefaults fills the clickhouse section and its retention.
 func (clickhouse *ClickHouse) ApplyDefaults() {
 	if clickhouse.Database == "" {
 		clickhouse.Database = defaultClickHouseDatabase
 	}
-	clickhouse.applyRetentionDefaults()
-}
-
-func (clickhouse *ClickHouse) applyRetentionDefaults() {
 	if clickhouse.Retention == nil {
 		clickhouse.Retention = &Retention{}
 	}
 	if clickhouse.Retention.ColdVolume == "" {
 		clickhouse.Retention.ColdVolume = defaultColdVolume
-	}
-}
-
-// ApplyDefaults fills the state section and defaults its driver to memory.
-func (state *State) ApplyDefaults() {
-	if state.Postgres == nil {
-		state.Postgres = &Postgres{}
-	}
-	if strings.TrimSpace(state.Driver) == "" {
-		state.Driver = StateMemory
 	}
 }
 

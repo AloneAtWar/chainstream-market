@@ -75,7 +75,7 @@ func newLogger(slogger *slog.Logger) logger.Interface {
 	if slogger == nil {
 		return logger.Discard
 	}
-	return logger.NewSlogLogger(slogger.With("component", "pgstore"), logger.Config{
+	return logger.NewSlogLogger(slogger.With("component", "postgres"), logger.Config{
 		SlowThreshold:             time.Second,
 		LogLevel:                  logger.Warn,
 		IgnoreRecordNotFoundError: true,

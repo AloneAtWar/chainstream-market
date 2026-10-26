@@ -207,60 +207,6 @@ func (x *Kafka) GetFetchMaxWait() *durationpb.Duration {
 	return nil
 }
 
-// Storage selects where market output goes.
-type Storage struct {
-	state protoimpl.MessageState `protogen:"open.v1"`
-	// driver is memory or clickhouse.
-	Driver        string      `protobuf:"bytes,1,opt,name=driver,proto3" json:"driver,omitempty"`
-	Clickhouse    *ClickHouse `protobuf:"bytes,2,opt,name=clickhouse,proto3" json:"clickhouse,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *Storage) Reset() {
-	*x = Storage{}
-	mi := &file_pkg_config_common_proto_msgTypes[3]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *Storage) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*Storage) ProtoMessage() {}
-
-func (x *Storage) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_config_common_proto_msgTypes[3]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use Storage.ProtoReflect.Descriptor instead.
-func (*Storage) Descriptor() ([]byte, []int) {
-	return file_pkg_config_common_proto_rawDescGZIP(), []int{3}
-}
-
-func (x *Storage) GetDriver() string {
-	if x != nil {
-		return x.Driver
-	}
-	return ""
-}
-
-func (x *Storage) GetClickhouse() *ClickHouse {
-	if x != nil {
-		return x.Clickhouse
-	}
-	return nil
-}
-
 type ClickHouse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Addr          []string               `protobuf:"bytes,1,rep,name=addr,proto3" json:"addr,omitempty"`
@@ -275,7 +221,7 @@ type ClickHouse struct {
 
 func (x *ClickHouse) Reset() {
 	*x = ClickHouse{}
-	mi := &file_pkg_config_common_proto_msgTypes[4]
+	mi := &file_pkg_config_common_proto_msgTypes[3]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -287,7 +233,7 @@ func (x *ClickHouse) String() string {
 func (*ClickHouse) ProtoMessage() {}
 
 func (x *ClickHouse) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_config_common_proto_msgTypes[4]
+	mi := &file_pkg_config_common_proto_msgTypes[3]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -300,7 +246,7 @@ func (x *ClickHouse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ClickHouse.ProtoReflect.Descriptor instead.
 func (*ClickHouse) Descriptor() ([]byte, []int) {
-	return file_pkg_config_common_proto_rawDescGZIP(), []int{4}
+	return file_pkg_config_common_proto_rawDescGZIP(), []int{3}
 }
 
 func (x *ClickHouse) GetAddr() []string {
@@ -348,7 +294,7 @@ func (x *ClickHouse) GetRetention() *Retention {
 // Retention ages rows out of ClickHouse by block time, in whole days; zero
 // keeps them. market-engine applies it to trades, token_prices and candles
 // at startup, and ch-loader to its raw tables. Its fields match
-// chstore.Retention, which documents them.
+// chdb.Retention, which documents them.
 type Retention struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// storage_policy names a ClickHouse storage policy with a "default" volume
@@ -370,7 +316,7 @@ type Retention struct {
 
 func (x *Retention) Reset() {
 	*x = Retention{}
-	mi := &file_pkg_config_common_proto_msgTypes[5]
+	mi := &file_pkg_config_common_proto_msgTypes[4]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -382,7 +328,7 @@ func (x *Retention) String() string {
 func (*Retention) ProtoMessage() {}
 
 func (x *Retention) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_config_common_proto_msgTypes[5]
+	mi := &file_pkg_config_common_proto_msgTypes[4]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -395,7 +341,7 @@ func (x *Retention) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Retention.ProtoReflect.Descriptor instead.
 func (*Retention) Descriptor() ([]byte, []int) {
-	return file_pkg_config_common_proto_rawDescGZIP(), []int{5}
+	return file_pkg_config_common_proto_rawDescGZIP(), []int{4}
 }
 
 func (x *Retention) GetStoragePolicy() string {
@@ -468,64 +414,6 @@ func (x *Retention) GetOracleUpdatesDays() int32 {
 	return 0
 }
 
-// State selects where checkpoints and processor state are kept. In memory, a
-// restart replays each topic from offset zero and the output store
-// overwrites the heights it already holds. In PostgreSQL, every record's
-// state changes are committed with its checkpoint and a restart resumes at
-// the next record.
-type State struct {
-	state protoimpl.MessageState `protogen:"open.v1"`
-	// driver is memory or postgres.
-	Driver        string    `protobuf:"bytes,1,opt,name=driver,proto3" json:"driver,omitempty"`
-	Postgres      *Postgres `protobuf:"bytes,2,opt,name=postgres,proto3" json:"postgres,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *State) Reset() {
-	*x = State{}
-	mi := &file_pkg_config_common_proto_msgTypes[6]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *State) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*State) ProtoMessage() {}
-
-func (x *State) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_config_common_proto_msgTypes[6]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use State.ProtoReflect.Descriptor instead.
-func (*State) Descriptor() ([]byte, []int) {
-	return file_pkg_config_common_proto_rawDescGZIP(), []int{6}
-}
-
-func (x *State) GetDriver() string {
-	if x != nil {
-		return x.Driver
-	}
-	return ""
-}
-
-func (x *State) GetPostgres() *Postgres {
-	if x != nil {
-		return x.Postgres
-	}
-	return nil
-}
-
 type Postgres struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	Dsn   string                 `protobuf:"bytes,1,opt,name=dsn,proto3" json:"dsn,omitempty"`
@@ -537,7 +425,7 @@ type Postgres struct {
 
 func (x *Postgres) Reset() {
 	*x = Postgres{}
-	mi := &file_pkg_config_common_proto_msgTypes[7]
+	mi := &file_pkg_config_common_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -549,7 +437,7 @@ func (x *Postgres) String() string {
 func (*Postgres) ProtoMessage() {}
 
 func (x *Postgres) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_config_common_proto_msgTypes[7]
+	mi := &file_pkg_config_common_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -562,7 +450,7 @@ func (x *Postgres) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Postgres.ProtoReflect.Descriptor instead.
 func (*Postgres) Descriptor() ([]byte, []int) {
-	return file_pkg_config_common_proto_rawDescGZIP(), []int{7}
+	return file_pkg_config_common_proto_rawDescGZIP(), []int{5}
 }
 
 func (x *Postgres) GetDsn() string {
@@ -613,7 +501,7 @@ type Live struct {
 
 func (x *Live) Reset() {
 	*x = Live{}
-	mi := &file_pkg_config_common_proto_msgTypes[8]
+	mi := &file_pkg_config_common_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -625,7 +513,7 @@ func (x *Live) String() string {
 func (*Live) ProtoMessage() {}
 
 func (x *Live) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_config_common_proto_msgTypes[8]
+	mi := &file_pkg_config_common_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -638,7 +526,7 @@ func (x *Live) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Live.ProtoReflect.Descriptor instead.
 func (*Live) Descriptor() ([]byte, []int) {
-	return file_pkg_config_common_proto_rawDescGZIP(), []int{8}
+	return file_pkg_config_common_proto_rawDescGZIP(), []int{6}
 }
 
 func (x *Live) GetEnabled() bool {
@@ -711,7 +599,7 @@ type Redis struct {
 
 func (x *Redis) Reset() {
 	*x = Redis{}
-	mi := &file_pkg_config_common_proto_msgTypes[9]
+	mi := &file_pkg_config_common_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -723,7 +611,7 @@ func (x *Redis) String() string {
 func (*Redis) ProtoMessage() {}
 
 func (x *Redis) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_config_common_proto_msgTypes[9]
+	mi := &file_pkg_config_common_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -736,7 +624,7 @@ func (x *Redis) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Redis.ProtoReflect.Descriptor instead.
 func (*Redis) Descriptor() ([]byte, []int) {
-	return file_pkg_config_common_proto_rawDescGZIP(), []int{9}
+	return file_pkg_config_common_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *Redis) GetAddr() string {
@@ -786,7 +674,7 @@ type Metrics struct {
 
 func (x *Metrics) Reset() {
 	*x = Metrics{}
-	mi := &file_pkg_config_common_proto_msgTypes[10]
+	mi := &file_pkg_config_common_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -798,7 +686,7 @@ func (x *Metrics) String() string {
 func (*Metrics) ProtoMessage() {}
 
 func (x *Metrics) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_config_common_proto_msgTypes[10]
+	mi := &file_pkg_config_common_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -811,7 +699,7 @@ func (x *Metrics) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Metrics.ProtoReflect.Descriptor instead.
 func (*Metrics) Descriptor() ([]byte, []int) {
-	return file_pkg_config_common_proto_rawDescGZIP(), []int{10}
+	return file_pkg_config_common_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *Metrics) GetAddr() string {
@@ -842,7 +730,7 @@ type Chain struct {
 
 func (x *Chain) Reset() {
 	*x = Chain{}
-	mi := &file_pkg_config_common_proto_msgTypes[11]
+	mi := &file_pkg_config_common_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -854,7 +742,7 @@ func (x *Chain) String() string {
 func (*Chain) ProtoMessage() {}
 
 func (x *Chain) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_config_common_proto_msgTypes[11]
+	mi := &file_pkg_config_common_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -867,7 +755,7 @@ func (x *Chain) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Chain.ProtoReflect.Descriptor instead.
 func (*Chain) Descriptor() ([]byte, []int) {
-	return file_pkg_config_common_proto_rawDescGZIP(), []int{11}
+	return file_pkg_config_common_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *Chain) GetName() string {
@@ -937,7 +825,7 @@ type Feed struct {
 
 func (x *Feed) Reset() {
 	*x = Feed{}
-	mi := &file_pkg_config_common_proto_msgTypes[12]
+	mi := &file_pkg_config_common_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -949,7 +837,7 @@ func (x *Feed) String() string {
 func (*Feed) ProtoMessage() {}
 
 func (x *Feed) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_config_common_proto_msgTypes[12]
+	mi := &file_pkg_config_common_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -962,7 +850,7 @@ func (x *Feed) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Feed.ProtoReflect.Descriptor instead.
 func (*Feed) Descriptor() ([]byte, []int) {
-	return file_pkg_config_common_proto_rawDescGZIP(), []int{12}
+	return file_pkg_config_common_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *Feed) GetProxy() string {
@@ -1017,12 +905,7 @@ const file_pkg_config_common_proto_rawDesc = "" +
 	"\abrokers\x18\x01 \x03(\tR\abrokers\x12\x1b\n" +
 	"\tclient_id\x18\x02 \x01(\tR\bclientId\x12&\n" +
 	"\x0ffetch_max_bytes\x18\x03 \x01(\x05R\rfetchMaxBytes\x12?\n" +
-	"\x0efetch_max_wait\x18\x04 \x01(\v2\x19.google.protobuf.DurationR\ffetchMaxWait\"Y\n" +
-	"\aStorage\x12\x16\n" +
-	"\x06driver\x18\x01 \x01(\tR\x06driver\x126\n" +
-	"\n" +
-	"clickhouse\x18\x02 \x01(\v2\x16.pkg.config.ClickHouseR\n" +
-	"clickhouse\"\xe7\x01\n" +
+	"\x0efetch_max_wait\x18\x04 \x01(\v2\x19.google.protobuf.DurationR\ffetchMaxWait\"\xe7\x01\n" +
 	"\n" +
 	"ClickHouse\x12\x12\n" +
 	"\x04addr\x18\x01 \x03(\tR\x04addr\x12\x1a\n" +
@@ -1048,10 +931,7 @@ const file_pkg_config_common_proto_rawDesc = "" +
 	" \x01(\x05R\x11oracleUpdatesDays\x1a=\n" +
 	"\x0fCandleDaysEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\x05R\x05value:\x028\x01\"Q\n" +
-	"\x05State\x12\x16\n" +
-	"\x06driver\x18\x01 \x01(\tR\x06driver\x120\n" +
-	"\bpostgres\x18\x02 \x01(\v2\x14.pkg.config.PostgresR\bpostgres\"4\n" +
+	"\x05value\x18\x02 \x01(\x05R\x05value:\x028\x01\"4\n" +
 	"\bPostgres\x12\x10\n" +
 	"\x03dsn\x18\x01 \x01(\tR\x03dsn\x12\x16\n" +
 	"\x06schema\x18\x02 \x01(\tR\x06schema\"\xd4\x02\n" +
@@ -1099,43 +979,39 @@ func file_pkg_config_common_proto_rawDescGZIP() []byte {
 	return file_pkg_config_common_proto_rawDescData
 }
 
-var file_pkg_config_common_proto_msgTypes = make([]protoimpl.MessageInfo, 14)
+var file_pkg_config_common_proto_msgTypes = make([]protoimpl.MessageInfo, 12)
 var file_pkg_config_common_proto_goTypes = []any{
 	(*Source)(nil),              // 0: pkg.config.Source
 	(*FileSource)(nil),          // 1: pkg.config.FileSource
 	(*Kafka)(nil),               // 2: pkg.config.Kafka
-	(*Storage)(nil),             // 3: pkg.config.Storage
-	(*ClickHouse)(nil),          // 4: pkg.config.ClickHouse
-	(*Retention)(nil),           // 5: pkg.config.Retention
-	(*State)(nil),               // 6: pkg.config.State
-	(*Postgres)(nil),            // 7: pkg.config.Postgres
-	(*Live)(nil),                // 8: pkg.config.Live
-	(*Redis)(nil),               // 9: pkg.config.Redis
-	(*Metrics)(nil),             // 10: pkg.config.Metrics
-	(*Chain)(nil),               // 11: pkg.config.Chain
-	(*Feed)(nil),                // 12: pkg.config.Feed
-	nil,                         // 13: pkg.config.Retention.CandleDaysEntry
-	(*durationpb.Duration)(nil), // 14: google.protobuf.Duration
+	(*ClickHouse)(nil),          // 3: pkg.config.ClickHouse
+	(*Retention)(nil),           // 4: pkg.config.Retention
+	(*Postgres)(nil),            // 5: pkg.config.Postgres
+	(*Live)(nil),                // 6: pkg.config.Live
+	(*Redis)(nil),               // 7: pkg.config.Redis
+	(*Metrics)(nil),             // 8: pkg.config.Metrics
+	(*Chain)(nil),               // 9: pkg.config.Chain
+	(*Feed)(nil),                // 10: pkg.config.Feed
+	nil,                         // 11: pkg.config.Retention.CandleDaysEntry
+	(*durationpb.Duration)(nil), // 12: google.protobuf.Duration
 }
 var file_pkg_config_common_proto_depIdxs = []int32{
 	1,  // 0: pkg.config.Source.file:type_name -> pkg.config.FileSource
-	14, // 1: pkg.config.FileSource.poll_interval:type_name -> google.protobuf.Duration
-	14, // 2: pkg.config.Kafka.fetch_max_wait:type_name -> google.protobuf.Duration
-	4,  // 3: pkg.config.Storage.clickhouse:type_name -> pkg.config.ClickHouse
-	14, // 4: pkg.config.ClickHouse.dial_timeout:type_name -> google.protobuf.Duration
-	5,  // 5: pkg.config.ClickHouse.retention:type_name -> pkg.config.Retention
-	13, // 6: pkg.config.Retention.candle_days:type_name -> pkg.config.Retention.CandleDaysEntry
-	7,  // 7: pkg.config.State.postgres:type_name -> pkg.config.Postgres
-	14, // 8: pkg.config.Live.max_lag:type_name -> google.protobuf.Duration
-	14, // 9: pkg.config.Live.candle_throttle:type_name -> google.protobuf.Duration
-	9,  // 10: pkg.config.Live.redis:type_name -> pkg.config.Redis
-	14, // 11: pkg.config.Redis.dial_timeout:type_name -> google.protobuf.Duration
-	12, // 12: pkg.config.Chain.feeds:type_name -> pkg.config.Feed
-	13, // [13:13] is the sub-list for method output_type
-	13, // [13:13] is the sub-list for method input_type
-	13, // [13:13] is the sub-list for extension type_name
-	13, // [13:13] is the sub-list for extension extendee
-	0,  // [0:13] is the sub-list for field type_name
+	12, // 1: pkg.config.FileSource.poll_interval:type_name -> google.protobuf.Duration
+	12, // 2: pkg.config.Kafka.fetch_max_wait:type_name -> google.protobuf.Duration
+	12, // 3: pkg.config.ClickHouse.dial_timeout:type_name -> google.protobuf.Duration
+	4,  // 4: pkg.config.ClickHouse.retention:type_name -> pkg.config.Retention
+	11, // 5: pkg.config.Retention.candle_days:type_name -> pkg.config.Retention.CandleDaysEntry
+	12, // 6: pkg.config.Live.max_lag:type_name -> google.protobuf.Duration
+	12, // 7: pkg.config.Live.candle_throttle:type_name -> google.protobuf.Duration
+	7,  // 8: pkg.config.Live.redis:type_name -> pkg.config.Redis
+	12, // 9: pkg.config.Redis.dial_timeout:type_name -> google.protobuf.Duration
+	10, // 10: pkg.config.Chain.feeds:type_name -> pkg.config.Feed
+	11, // [11:11] is the sub-list for method output_type
+	11, // [11:11] is the sub-list for method input_type
+	11, // [11:11] is the sub-list for extension type_name
+	11, // [11:11] is the sub-list for extension extendee
+	0,  // [0:11] is the sub-list for field type_name
 }
 
 func init() { file_pkg_config_common_proto_init() }
@@ -1149,7 +1025,7 @@ func file_pkg_config_common_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_pkg_config_common_proto_rawDesc), len(file_pkg_config_common_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   14,
+			NumMessages:   12,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

@@ -42,18 +42,6 @@ message Kafka {
   google.protobuf.Duration fetch_max_wait = 4;
 }
 
-// Storage selects where market output goes.
-message Storage {
-  // driver is memory or clickhouse.
-  string driver = 1;
-  ClickHouse clickhouse = 2;
-}
-
-
-
-
-
-
 message ClickHouse {
   repeated string addr = 1;
   string database = 2;
@@ -66,7 +54,7 @@ message ClickHouse {
 // Retention ages rows out of ClickHouse by block time, in whole days; zero
 // keeps them. market-engine applies it to trades, token_prices and candles
 // at startup, and ch-loader to its raw tables. Its fields match
-// chstore.Retention, which documents them.
+// chdb.Retention, which documents them.
 message Retention {
   // storage_policy names a ClickHouse storage policy with a "default" volume
   // for hot parts and cold_volume.
@@ -82,20 +70,6 @@ message Retention {
   int32 raw_trades_days = 9;
   int32 oracle_updates_days = 10;
 }
-
-// State selects where checkpoints and processor state are kept. In memory, a
-// restart replays each topic from offset zero and the output store
-// overwrites the heights it already holds. In PostgreSQL, every record's
-// state changes are committed with its checkpoint and a restart resumes at
-// the next record.
-message State {
-  // driver is memory or postgres.
-  string driver = 1;
-  Postgres postgres = 2;
-}
-
-
-
 
 message Postgres {
   string dsn = 1;

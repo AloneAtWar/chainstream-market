@@ -119,7 +119,7 @@ services:
 
   market-engine:
     <<: *market
-    command: ["/usr/local/bin/market-engine", "-conf", "/etc/chainstream-market/config.yaml"]
+    command: ["/usr/local/bin/market-engine", "-conf", "/etc/chainstream-market/market-engine.yaml"]
 
   ch-loader:
     <<: *market
@@ -139,7 +139,7 @@ services:
 
   market-api:
     <<: *market
-    command: ["/usr/local/bin/market-api", "-conf", "/etc/chainstream-market/config.yaml"]
+    command: ["/usr/local/bin/market-api", "-conf", "/etc/chainstream-market/market-api.yaml"]
     ports: ["8080:8080"]
 
   prometheus:

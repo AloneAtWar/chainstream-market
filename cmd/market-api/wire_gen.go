@@ -8,10 +8,10 @@ package main
 
 import (
 	"context"
-	"github.com/AloneAtWar/chainstream-market/internal/conf"
-	"github.com/AloneAtWar/chainstream-market/internal/data"
-	"github.com/AloneAtWar/chainstream-market/internal/server"
-	"github.com/AloneAtWar/chainstream-market/internal/service"
+	"github.com/AloneAtWar/chainstream-market/internal/app/api/conf"
+	"github.com/AloneAtWar/chainstream-market/internal/app/api/data"
+	"github.com/AloneAtWar/chainstream-market/internal/app/api/server"
+	"github.com/AloneAtWar/chainstream-market/internal/app/api/service"
 	"github.com/go-kratos/kratos/v2"
 	"log/slog"
 )
@@ -20,53 +20,28 @@ import (
 
 // wireApp initializes the Kratos application.
 func wireApp(contextContext context.Context, bootstrap *conf.Bootstrap, logger *slog.Logger) (*kratos.App, func(), error) {
-	metrics := bootstrap.Metrics
-	metricsServer := server.NewMetricsServer(metrics, logger)
 	api := bootstrap.Api
-	market := bootstrap.Market
-	storage := bootstrap.Storage
-	marketBackend, cleanup, err := data.NewMarketBackend(contextContext, storage, logger)
+	metrics := bootstrap.Metrics
+	clickHouse := bootstrap.Clickhouse
+	postgres := bootstrap.Postgres
+	dataData, cleanup, err := data.NewData(contextContext, clickHouse, postgres, logger)
 	if err != nil {
 		return nil, nil, err
 	}
-	reader, err := data.NewReader(marketBackend)
-	if err != nil {
-		cleanup()
-		return nil, nil, err
-	}
-	rawBackend, cleanup2, err := data.NewRawBackend(contextContext, storage, logger)
-	if err != nil {
-		cleanup()
-		return nil, nil, err
-	}
-	transferReader, err := data.NewTransferReader(rawBackend)
-	if err != nil {
-		cleanup2()
-		cleanup()
-		return nil, nil, err
-	}
-	state := conf.NewState(bootstrap)
-	stateBackend, cleanup3, err := data.NewStateBackend(contextContext, state, logger)
-	if err != nil {
-		cleanup2()
-		cleanup()
-		return nil, nil, err
-	}
-	stateReaders := data.NewStateReaders(stateBackend)
+	reader := data.NewMarketReader(dataData)
+	transferReader := data.NewTransferReader(dataData)
+	holderReader := data.NewHolderReader(dataData)
+	registryReader := data.NewRegistryReader(dataData)
+	rankingReader := data.NewRankingReader(dataData)
 	hub, err := data.NewHub(bootstrap, logger)
 	if err != nil {
-		cleanup3()
-		cleanup2()
 		cleanup()
 		return nil, nil, err
 	}
-	handler := service.NewAPIHandler(market, reader, transferReader, stateReaders, hub, logger)
-	httpServer := server.NewHTTPServer(api, handler, logger)
-	v := server.NewAPIServers(metricsServer, httpServer, hub)
+	handler := service.NewHandler(api, reader, transferReader, holderReader, registryReader, rankingReader, hub, logger)
+	v := server.NewServers(api, metrics, handler, hub, logger)
 	app := newApp(v)
 	return app, func() {
-		cleanup3()
-		cleanup2()
 		cleanup()
 	}, nil
 }

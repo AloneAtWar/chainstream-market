@@ -1,0 +1,77 @@
+syntax = "proto3";
+
+package app.engine.conf;
+
+option go_package = "github.com/AloneAtWar/chainstream-market/internal/app/engine/conf;conf";
+
+import "google/protobuf/duration.proto";
+import "pkg/config/common.proto";
+
+// Bootstrap is market-engine's configuration; configs/market-engine.yaml
+// documents every setting. Durations may be written as Go durations such as
+// 500ms or 5m.
+message Bootstrap {
+  pkg.config.Source source = 1;
+  pkg.config.Kafka kafka = 2;
+  Storage storage = 3;
+  State state = 4;
+  Market market = 5;
+  pkg.config.Live live = 6;
+  pkg.config.Metrics metrics = 7;
+  repeated pkg.config.Chain chains = 8;
+}
+
+// Storage selects where trades, prices and candles go.
+message Storage {
+  // driver is memory or clickhouse.
+  string driver = 1;
+  // clickhouse is the output database. Of its retention, the cold tier and
+  // the trades, token price and candle ages apply here.
+  pkg.config.ClickHouse clickhouse = 2;
+}
+
+// State selects where checkpoints and processor state are kept. In memory, a
+// restart replays each topic from offset zero and the output store
+// overwrites the heights it already holds. In PostgreSQL, every record's
+// state changes are committed with its checkpoint and a restart resumes at
+// the next record.
+message State {
+  // driver is memory or postgres.
+  string driver = 1;
+  pkg.config.Postgres postgres = 2;
+}
+
+// Market tunes pricing and candle aggregation for every chain.
+message Market {
+  // min_liquidity_usd is the counterpart reserve value a pool needs before a
+  // price propagates through it.
+  double min_liquidity_usd = 1;
+  // candle_min_liquidity_usd is the quote reserve value a pool needs before
+  // its trades join a token's aggregated candles.
+  double candle_min_liquidity_usd = 2;
+  uint32 max_hops = 3;
+  repeated google.protobuf.Duration intervals = 4;
+  // history_depth is how many recent blocks stay revertible in addition to
+  // everything above the finalized height.
+  int64 history_depth = 5;
+  // oracle_deviation is the largest relative gap between a feed-backed
+  // token's graph price and its oracle answer before the answer wins.
+  double oracle_deviation = 6;
+  // outlier_deviation is how far, as a ratio, a swap's USD price may stray
+  // from its base token's reference price, set by another pool, before the
+  // swap is left out of the token's candles; -1 turns filtering off.
+  double outlier_deviation = 7;
+  // late_trade_blocks is how many blocks a trade whose token decimals are
+  // unknown waits for them before it is dropped; -1 drops it at once.
+  int64 late_trade_blocks = 8;
+  // late_trades_per_token caps the trades held while waiting on one token.
+  int32 late_trades_per_token = 9;
+  // backfill_blocks is how far back the block that brings a token's
+  // decimals recomputes the token's trades, prices and candles from
+  // ch-loader's raw trades; -1 replays only held trades. It needs
+  // storage.driver: clickhouse.
+  int64 backfill_blocks = 10;
+  // backfill_wait is how long a backfill waits for ch-loader to store the
+  // heights it reads before it replays only held trades.
+  google.protobuf.Duration backfill_wait = 11;
+}

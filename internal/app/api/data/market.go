@@ -1,0 +1,121 @@
+package data
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"slices"
+	"time"
+
+	"github.com/AloneAtWar/chainstream-market/internal/app/api/service"
+	"github.com/AloneAtWar/chainstream-market/internal/pkg/chdb"
+	"github.com/AloneAtWar/chainstream-market/internal/pkg/model"
+	"gorm.io/gorm"
+)
+
+// marketReader reads market-engine's output tables.
+type marketReader struct {
+	db *gorm.DB
+}
+
+// NewMarketReader reads market-engine's output.
+func NewMarketReader(data *Data) service.Reader { return &marketReader{db: data.market} }
+
+func (reader *marketReader) LatestPrice(ctx context.Context, chainID uint64, token string) (model.TokenPrice, bool, error) {
+	var rows []chdb.TokenPriceRow
+	err := reader.db.WithContext(ctx).
+		Select("block_height, block_time, price_usd, toString(source) AS source, hops, liquidity_usd").
+		Where("chain_id = ? AND token = ?", chainID, token).
+		Order("block_height DESC").Limit(1).Find(&rows).Error
+	if err != nil {
+		return model.TokenPrice{}, false, fmt.Errorf("clickhouse market: query price: %w", err)
+	}
+	if len(rows) == 0 {
+		return model.TokenPrice{}, false, nil
+	}
+	row := rows[0]
+	return model.TokenPrice{
+		ChainID: chainID, Token: token, BlockHeight: row.BlockHeight, BlockTime: row.BlockTime,
+		PriceUSD: row.PriceUSD, Source: model.ParsePriceSource(row.Source), Hops: row.Hops,
+		LiquidityUSD: row.LiquidityUSD,
+	}, true, nil
+}
+
+func (reader *marketReader) Candles(ctx context.Context, query model.CandleQuery) ([]model.Candle, error) {
+	if query.Limit <= 0 || query.Interval < time.Second {
+		return nil, errors.New("clickhouse market: candle query needs a limit and an interval")
+	}
+	// The aliases name the model's columns; prefer_column_name_to_alias
+	// keeps them from shadowing the columns the other aggregates read.
+	var rows []chdb.CandleRow
+	err := reader.db.WithContext(ctx).Raw(`
+		SELECT open_time,
+			argMax(open, update_height) AS open, argMax(high, update_height) AS high,
+			argMax(low, update_height) AS low, argMax(close, update_height) AS close,
+			argMax(volume_base, update_height) AS volume_base, argMax(volume_usd, update_height) AS volume_usd,
+			argMax(trades, update_height) AS trades, max(update_height) AS update_height
+		FROM candles
+		WHERE chain_id = ? AND subject = ? AND key = ? AND interval_seconds = ?
+			AND open_time >= ? AND open_time < ?
+		GROUP BY open_time
+		ORDER BY open_time DESC
+		LIMIT ?
+		SETTINGS prefer_column_name_to_alias = 1`,
+		query.ChainID, query.Subject.String(), query.Key, uint32(query.Interval/time.Second),
+		query.From, query.To, uint64(query.Limit)).Scan(&rows).Error
+	if err != nil {
+		return nil, fmt.Errorf("clickhouse market: query candles: %w", err)
+	}
+	candles := make([]model.Candle, len(rows))
+	for index, row := range rows {
+		candles[index] = model.Candle{
+			ChainID: query.ChainID, Subject: query.Subject, Key: query.Key, Interval: query.Interval,
+			OpenTime: row.OpenTime.UTC(), Open: row.Open, High: row.High, Low: row.Low, Close: row.Close,
+			VolumeBase: row.VolumeBase, VolumeUSD: row.VolumeUSD, Trades: row.Trades, UpdateHeight: row.UpdateHeight,
+		}
+	}
+	slices.Reverse(candles)
+	if len(candles) == 0 {
+		return nil, nil
+	}
+	return candles, nil
+}
+
+func (reader *marketReader) Trades(ctx context.Context, query model.TradeQuery) ([]model.Trade, error) {
+	if query.Limit <= 0 || (query.BaseToken == "") == (query.PoolID == "") {
+		return nil, errors.New("clickhouse market: trade query needs a limit and exactly one of base token or pool")
+	}
+	db := reader.db.WithContext(ctx).Model(&chdb.TradeRow{}).Select(`block_height, block_time, transaction_hash,
+		transaction_index, log_index, operation_index, protocol, pool_id, trader, toString(side) AS side,
+		base_token, quote_token, base_amount, quote_amount, price_quote, price_usd, value_usd, outlier`).
+		Where("chain_id = ?", query.ChainID)
+	if query.PoolID != "" {
+		db = db.Where("pool_id = ?", query.PoolID)
+	} else {
+		db = db.Where("base_token = ?", query.BaseToken)
+	}
+	if query.BeforeHeight > 0 {
+		db = db.Where("block_height < ?", query.BeforeHeight)
+	}
+	var rows []chdb.TradeRow
+	if err := db.Order("block_height DESC, log_index DESC, operation_index DESC").Limit(query.Limit).
+		Find(&rows).Error; err != nil {
+		return nil, fmt.Errorf("clickhouse market: query trades: %w", err)
+	}
+	if len(rows) == 0 {
+		return nil, nil
+	}
+	trades := make([]model.Trade, len(rows))
+	for index, row := range rows {
+		trades[index] = model.Trade{
+			ChainID: query.ChainID, BlockHeight: row.BlockHeight, BlockTime: row.BlockTime.UTC(),
+			TransactionHash: row.TransactionHash, TransactionIndex: row.TransactionIndex,
+			LogIndex: row.LogIndex, OperationIndex: row.OperationIndex, Protocol: row.Protocol,
+			PoolID: row.PoolID, Trader: row.Trader, Side: model.ParseSide(row.Side),
+			BaseToken: row.BaseToken, QuoteToken: row.QuoteToken, BaseAmount: row.BaseAmount,
+			QuoteAmount: row.QuoteAmount, PriceQuote: row.PriceQuote, PriceUSD: row.PriceUSD,
+			ValueUSD: row.ValueUSD, Outlier: row.Outlier,
+		}
+	}
+	return trades, nil
+}

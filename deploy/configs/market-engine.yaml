@@ -1,0 +1,41 @@
+# market-engine in the docker-compose stack; configs/market-engine.yaml
+# documents each setting. ${NAME} and ${NAME:default} come from the
+# environment (deploy/.env).
+kafka:
+  brokers: [kafka:9092]
+  client_id: market-engine
+
+storage:
+  driver: clickhouse
+  clickhouse:
+    addr: [clickhouse:9000]
+    database: market
+    username: default
+    password: ""
+
+state:
+  driver: postgres
+  postgres:
+    dsn: postgres://market:market@postgres:5432/market
+
+live:
+  enabled: true
+
+metrics:
+  addr: ":9100"
+
+# One chain: eth mainnet, scanned by the chainstream-evm service. Its node
+# serves the feed proxies.
+chains:
+  - name: eth
+    chain_id: 1
+    topic: chainstream-eth
+    rpc_url: ${ETH_RPC_URL:http://host.docker.internal:8545}
+    feeds:
+      - {proxy: "0x3E7d1eAB13ad0104d2750B8863b489D65364e32D", token: "0xdac17f958d2ee523a2206206994597c13d831ec7", description: "USDT / USD"}  # USDT
+      - {proxy: "0x8fFfFfd4AfB6115b954Bd326cbe7B4BA576818f6", token: "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48", description: "USDC / USD"}  # USDC
+      - {proxy: "0xfF30586cD0F29eD462364C7e81375FC0C71219b1", token: "0xdc035d45d973e3ec169d2276ddab16f1e407384f", description: "USDS / USD"}  # USDS
+      - {proxy: "0xa569d910839Ae8865Da8F8e70FfFb0cBA869F961", token: "0x4c9edd5852cd905f086c759e8383e09bff1e68b3", description: "USDe / USD"}  # USDe
+      - {proxy: "0xAed0c38402a5d19df6E4c03F4E2DceD6e29c1ee9", token: "0x6b175474e89094c44da98b954eedeac495271d0f", description: "DAI / USD"}   # DAI
+      - {proxy: "0x5f4eC3Df9cbd43714FE2740f5E3616155c5b8419", token: "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2", description: "ETH / USD"}   # WETH
+      - {proxy: "0xF4030086522a5bEEa4988F8cA5B36dbC97BeE88c", token: "0x2260fac5e5542a773aa44fbcfedf7c193bc2c599", description: "BTC / USD"}   # WBTC

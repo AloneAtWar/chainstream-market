@@ -71,20 +71,6 @@ func (live *Live) NeedsKafka() bool {
 	return live.GetEnabled() && live.GetDriver() == LiveKafka
 }
 
-// Validate checks storage.driver and the settings of the driver it names.
-func (storage *Storage) Validate() error {
-	switch storage.GetDriver() {
-	case StorageMemory:
-	case StorageClickHouse:
-		if len(storage.GetClickhouse().GetAddr()) == 0 {
-			return errors.New("conf: storage.clickhouse.addr is required")
-		}
-	default:
-		return fmt.Errorf("conf: unsupported storage.driver %q", storage.GetDriver())
-	}
-	return nil
-}
-
 // Validate checks that the clickhouse section names a server.
 func (clickhouse *ClickHouse) Validate() error {
 	if len(clickhouse.GetAddr()) == 0 {
@@ -101,20 +87,6 @@ func (postgres *Postgres) Validate() error {
 	return nil
 }
 
-// Validate checks state.driver and the settings of the driver it names.
-func (state *State) Validate() error {
-	switch state.GetDriver() {
-	case StateMemory:
-	case StatePostgres:
-		if strings.TrimSpace(state.GetPostgres().GetDsn()) == "" {
-			return errors.New("conf: state.postgres.dsn is required")
-		}
-	default:
-		return fmt.Errorf("conf: unsupported state.driver %q", state.GetDriver())
-	}
-	return nil
-}
-
 // Validate checks that no age is negative, that the cold tier is configured
 // whole, and that every candle age names one of intervals. A component
 // without candles passes nil intervals, and its candle ages are not checked.
@@ -127,15 +99,15 @@ func (retention *Retention) Validate(intervals []time.Duration) error {
 	for key, age := range retention.GetCandleDays() {
 		interval, err := time.ParseDuration(key)
 		if intervals != nil && (err != nil || !slices.Contains(intervals, interval)) {
-			return fmt.Errorf("conf: storage.clickhouse.retention.candle_days %s is not one of market.intervals", key)
+			return fmt.Errorf("conf: clickhouse.retention.candle_days %s is not one of market.intervals", key)
 		}
 		ages = append(ages, age)
 	}
 	if slices.Min(ages) < 0 {
-		return errors.New("conf: storage.clickhouse.retention days must not be negative")
+		return errors.New("conf: clickhouse.retention days must not be negative")
 	}
 	if (strings.TrimSpace(retention.GetStoragePolicy()) == "") != (retention.GetColdAfterDays() == 0) {
-		return errors.New("conf: storage.clickhouse.retention.storage_policy and cold_after_days must be set together")
+		return errors.New("conf: clickhouse.retention.storage_policy and cold_after_days must be set together")
 	}
 	return nil
 }

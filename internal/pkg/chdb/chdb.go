@@ -81,7 +81,7 @@ func newLogger(slogger *slog.Logger) logger.Interface {
 	if slogger == nil {
 		return logger.Discard
 	}
-	return logger.NewSlogLogger(slogger.With("component", "chstore"), logger.Config{
+	return logger.NewSlogLogger(slogger.With("component", "clickhouse"), logger.Config{
 		SlowThreshold:             5 * time.Second,
 		LogLevel:                  logger.Warn,
 		IgnoreRecordNotFoundError: true,
