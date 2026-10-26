@@ -7,66 +7,10 @@ import (
 	"fmt"
 
 	"github.com/AloneAtWar/chainstream-market/internal/pkg/chainsync"
+	"github.com/AloneAtWar/chainstream-market/internal/pkg/model"
 	"github.com/AloneAtWar/chainstream-market/internal/storage"
 	"gorm.io/gorm"
 )
-
-// registrySchema creates the market-registry tables. Metadata columns hold
-// the JSON chainstream-evm published; name, symbol and decimals are copied
-// out of it so they can be queried.
-var registrySchema = []string{
-	`CREATE TABLE IF NOT EXISTS registry_checkpoints (
-		chain_id       BIGINT PRIMARY KEY,
-		kafka_offset   BIGINT NOT NULL,
-		block_height   BIGINT NOT NULL,
-		block_hash     TEXT NOT NULL,
-		pruned_through BIGINT NOT NULL,
-		updated_at     TIMESTAMPTZ NOT NULL
-	)`,
-	`CREATE TABLE IF NOT EXISTS registry_tokens (
-		chain_id          BIGINT NOT NULL,
-		address           TEXT NOT NULL,
-		standard          TEXT NOT NULL,
-		recognition       TEXT NOT NULL,
-		metadata_complete BOOLEAN NOT NULL,
-		name              TEXT,
-		symbol            TEXT,
-		decimals          SMALLINT,
-		metadata          JSONB,
-		created           BOOLEAN NOT NULL,
-		deployment        JSONB,
-		source_height     BIGINT NOT NULL,
-		first_height      BIGINT NOT NULL,
-		updated_height    BIGINT NOT NULL,
-		PRIMARY KEY (chain_id, address)
-	)`,
-	`CREATE INDEX IF NOT EXISTS registry_tokens_symbol ON registry_tokens (chain_id, lower(symbol))`,
-	`CREATE TABLE IF NOT EXISTS registry_pools (
-		chain_id       BIGINT NOT NULL,
-		pool_id        TEXT NOT NULL,
-		protocol       TEXT NOT NULL,
-		dex_address    TEXT NOT NULL,
-		tokens         TEXT[] NOT NULL,
-		created        BOOLEAN NOT NULL,
-		source_height  BIGINT NOT NULL,
-		source_time    BIGINT NOT NULL,
-		metadata       JSONB,
-		first_height   BIGINT NOT NULL,
-		updated_height BIGINT NOT NULL,
-		PRIMARY KEY (chain_id, pool_id)
-	)`,
-	`CREATE INDEX IF NOT EXISTS registry_pools_tokens ON registry_pools USING GIN (tokens)`,
-	// Each row holds a token or pool row as it was before block_height
-	// first changed it, or NULL when that block created it.
-	`CREATE TABLE IF NOT EXISTS registry_undo (
-		chain_id     BIGINT NOT NULL,
-		block_height BIGINT NOT NULL,
-		kind         TEXT NOT NULL,
-		key          TEXT NOT NULL,
-		prev         JSONB,
-		PRIMARY KEY (chain_id, block_height, kind, key)
-	)`,
-}
 
 const (
 	undoToken = "token"
@@ -78,7 +22,7 @@ func (store *Store) LoadRegistryCheckpoint(ctx context.Context, chainID uint64) 
 }
 
 // CommitRegistry applies change and saves checkpoint in one transaction.
-func (store *Store) CommitRegistry(ctx context.Context, checkpoint chainsync.Checkpoint, change storage.RegistryChange) error {
+func (store *Store) CommitRegistry(ctx context.Context, checkpoint chainsync.Checkpoint, change model.RegistryChange) error {
 	if checkpoint.ChainID == 0 {
 		return errors.New("postgres store: checkpoint chain id is required")
 	}
@@ -130,7 +74,7 @@ func queueRegistryRevert(run *runner, chainID, rollbackTo int64, table, keyColum
 		WHERE u.prev IS NOT NULL`, values)
 }
 
-func queueTokens(run *runner, chainID, height int64, tokens []storage.Token) error {
+func queueTokens(run *runner, chainID, height int64, tokens []model.Token) error {
 	count := len(tokens)
 	addresses, standards, recognitions := make([]string, count), make([]string, count), make([]string, count)
 	complete, created := make([]bool, count), make([]bool, count)
@@ -185,7 +129,7 @@ func queueTokens(run *runner, chainID, height int64, tokens []storage.Token) err
 	return nil
 }
 
-func queuePools(run *runner, chainID, height int64, pools []storage.Pool) error {
+func queuePools(run *runner, chainID, height int64, pools []model.Pool) error {
 	count := len(pools)
 	ids, protocols, dexes, tokens := make([]string, count), make([]string, count), make([]string, count), make([]string, count)
 	created := make([]bool, count)
@@ -247,25 +191,25 @@ func jsonText(raw []byte) *string {
 const tokenColumns = `address, standard, recognition, metadata_complete, name, symbol, decimals,
 	metadata::text AS metadata, created, deployment::text AS deployment, source_height, first_height, updated_height`
 
-func (store *Store) Token(ctx context.Context, chainID uint64, address string) (storage.Token, bool, error) {
+func (store *Store) Token(ctx context.Context, chainID uint64, address string) (model.Token, bool, error) {
 	var row tokenRow
 	err := store.db.WithContext(ctx).Select(tokenColumns).
 		Where("chain_id = ? AND address = ?", int64(chainID), address).Take(&row).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return storage.Token{}, false, nil
+		return model.Token{}, false, nil
 	}
 	if err != nil {
-		return storage.Token{}, false, fmt.Errorf("postgres store: token: %w", err)
+		return model.Token{}, false, fmt.Errorf("postgres store: token: %w", err)
 	}
 	token, err := row.token()
 	if err != nil {
-		return storage.Token{}, false, fmt.Errorf("postgres store: read token: %w", err)
+		return model.Token{}, false, fmt.Errorf("postgres store: read token: %w", err)
 	}
 	return token, true, nil
 }
 
-func (row tokenRow) token() (storage.Token, error) {
-	token := storage.Token{
+func (row tokenRow) token() (model.Token, error) {
+	token := model.Token{
 		Address: row.Address, Standard: row.Standard, Recognition: row.Recognition,
 		MetadataComplete: row.MetadataComplete, Name: row.Name, Symbol: row.Symbol, Created: row.Created,
 		SourceHeight: row.SourceHeight, FirstHeight: row.FirstHeight, UpdatedHeight: row.UpdatedHeight,
@@ -278,7 +222,7 @@ func (row tokenRow) token() (storage.Token, error) {
 		token.Metadata = []byte(*row.Metadata)
 	}
 	if row.Deployment != nil {
-		token.Deployment = &storage.Deployment{}
+		token.Deployment = &model.Deployment{}
 		if err := json.Unmarshal([]byte(*row.Deployment), token.Deployment); err != nil {
 			return token, fmt.Errorf("deployment of %s: %w", token.Address, err)
 		}
@@ -289,20 +233,20 @@ func (row tokenRow) token() (storage.Token, error) {
 const poolColumns = `pool_id, protocol, dex_address, tokens, created, source_height, source_time,
 	metadata::text AS metadata, first_height, updated_height`
 
-func (store *Store) Pool(ctx context.Context, chainID uint64, poolID string) (storage.Pool, bool, error) {
+func (store *Store) Pool(ctx context.Context, chainID uint64, poolID string) (model.Pool, bool, error) {
 	var row poolRow
 	err := store.db.WithContext(ctx).Select(poolColumns).
 		Where("chain_id = ? AND pool_id = ?", int64(chainID), poolID).Take(&row).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return storage.Pool{}, false, nil
+		return model.Pool{}, false, nil
 	}
 	if err != nil {
-		return storage.Pool{}, false, fmt.Errorf("postgres store: pool: %w", err)
+		return model.Pool{}, false, fmt.Errorf("postgres store: pool: %w", err)
 	}
 	return row.pool(), true, nil
 }
 
-func (store *Store) TokenPools(ctx context.Context, chainID uint64, token string, limit int) ([]storage.Pool, error) {
+func (store *Store) TokenPools(ctx context.Context, chainID uint64, token string, limit int) ([]model.Pool, error) {
 	var rows []poolRow
 	err := store.db.WithContext(ctx).Select(poolColumns).
 		Where("chain_id = ? AND tokens @> ?::text[]", int64(chainID), array([]string{token})).
@@ -310,15 +254,15 @@ func (store *Store) TokenPools(ctx context.Context, chainID uint64, token string
 	if err != nil {
 		return nil, fmt.Errorf("postgres store: token pools: %w", err)
 	}
-	pools := make([]storage.Pool, len(rows))
+	pools := make([]model.Pool, len(rows))
 	for index, row := range rows {
 		pools[index] = row.pool()
 	}
 	return pools, nil
 }
 
-func (row poolRow) pool() storage.Pool {
-	pool := storage.Pool{
+func (row poolRow) pool() model.Pool {
+	pool := model.Pool{
 		PoolID: row.PoolID, Protocol: row.Protocol, DexAddress: row.DexAddress, Tokens: []string(row.Tokens),
 		Created: row.Created, SourceHeight: row.SourceHeight, SourceTime: row.SourceTime,
 		FirstHeight: row.FirstHeight, UpdatedHeight: row.UpdatedHeight,

@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/AloneAtWar/chainstream-market/internal/pkg/chainsync"
+	"github.com/AloneAtWar/chainstream-market/internal/pkg/model"
 	"github.com/AloneAtWar/chainstream-market/internal/pkg/source"
 	"github.com/AloneAtWar/chainstream-market/internal/storage"
 	streamv1 "github.com/AloneAtWar/chainstream-market/proto/stream/v1"
@@ -20,7 +21,7 @@ const handlerChainID = 1
 // HeaderProcessor emits only block headers.
 type HeaderProcessor struct{}
 
-func (HeaderProcessor) Apply(_ context.Context, block *streamv1.BlockEvent) (storage.BlockOutput, error) {
+func (HeaderProcessor) Apply(_ context.Context, block *streamv1.BlockEvent) (model.BlockOutput, error) {
 	return NewBlockOutput(block), nil
 }
 
@@ -136,11 +137,11 @@ func (notifier *recordingNotifier) record(event string) error {
 	return nil
 }
 
-func (notifier *recordingNotifier) NotifyBlock(_ context.Context, output storage.BlockOutput, finalized int64) error {
+func (notifier *recordingNotifier) NotifyBlock(_ context.Context, output model.BlockOutput, finalized int64) error {
 	return notifier.record(fmt.Sprintf("block %d final %d", output.Height, finalized))
 }
 
-func (notifier *recordingNotifier) NotifyRevert(_ context.Context, revert storage.Revert) error {
+func (notifier *recordingNotifier) NotifyRevert(_ context.Context, revert model.Revert) error {
 	return notifier.record(fmt.Sprintf("revert %d resets %d", revert.RollbackTo, len(revert.Candles)))
 }
 
@@ -150,13 +151,13 @@ type resettingProcessor struct {
 	applied int64
 }
 
-func (processor *resettingProcessor) Apply(ctx context.Context, block *streamv1.BlockEvent) (storage.BlockOutput, error) {
+func (processor *resettingProcessor) Apply(ctx context.Context, block *streamv1.BlockEvent) (model.BlockOutput, error) {
 	processor.applied = block.GetBlockHeight()
 	return processor.HeaderProcessor.Apply(ctx, block)
 }
 
-func (processor *resettingProcessor) RevertedCandles(rollbackTo int64) []storage.CandleReset {
-	return make([]storage.CandleReset, processor.applied-rollbackTo)
+func (processor *resettingProcessor) RevertedCandles(rollbackTo int64) []model.CandleReset {
+	return make([]model.CandleReset, processor.applied-rollbackTo)
 }
 
 func runNotified(t *testing.T, memory *storage.Memory, notifier *recordingNotifier, messages []source.Message) error {
@@ -210,7 +211,7 @@ type countingProcessor struct {
 	restored bool
 }
 
-func (counter *countingProcessor) Apply(ctx context.Context, block *streamv1.BlockEvent) (storage.BlockOutput, error) {
+func (counter *countingProcessor) Apply(ctx context.Context, block *streamv1.BlockEvent) (model.BlockOutput, error) {
 	counter.applied++
 	return counter.HeaderProcessor.Apply(ctx, block)
 }

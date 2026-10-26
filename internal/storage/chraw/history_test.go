@@ -10,7 +10,8 @@ import (
 	"time"
 
 	"github.com/AloneAtWar/chainstream-market/internal/pkg/chainsync"
-	"github.com/AloneAtWar/chainstream-market/internal/storage"
+	"github.com/AloneAtWar/chainstream-market/internal/pkg/chdb"
+	"github.com/AloneAtWar/chainstream-market/internal/pkg/model"
 	"github.com/AloneAtWar/chainstream-market/internal/storage/chstore"
 	"github.com/shopspring/decimal"
 )
@@ -22,7 +23,7 @@ func TestHistoryReadsTradesOnceTheLoaderCaughtUp(t *testing.T) {
 	if _, ok, err := history.RawTrades(ctx, 1, []string{token}, 100, 101); err != nil || ok {
 		t.Fatalf("RawTrades() before any checkpoint = %v, %v; want not ready", ok, err)
 	}
-	blocks := []storage.RawBlock{testBlock(100), testBlock(101), testBlock(102)}
+	blocks := []model.RawBlock{testBlock(100), testBlock(101), testBlock(102)}
 	blocks[1].Trades[0].Amounts[0].Asset = "0xother"
 	if err := store.WriteRaw(ctx, blocks); err != nil {
 		t.Fatalf("WriteRaw() error = %v", err)
@@ -39,7 +40,7 @@ func TestHistoryReadsTradesOnceTheLoaderCaughtUp(t *testing.T) {
 	}
 	for index, trade := range trades {
 		block := blocks[index]
-		want := storage.RawTradeAt{Height: block.Height, BlockTime: block.BlockTime, RawTrade: block.Trades[0]}
+		want := model.RawTradeAt{Height: block.Height, BlockTime: block.BlockTime, RawTrade: block.Trades[0]}
 		want.ReservesAfter = []string{}
 		if !reflect.DeepEqual(trade, want) {
 			t.Fatalf("trade %d = %+v, want %+v", index, trade, want)
@@ -58,7 +59,7 @@ func TestHistoryWaitsForTheLoader(t *testing.T) {
 	}
 	go func() {
 		time.Sleep(300 * time.Millisecond)
-		if err := store.WriteRaw(ctx, []storage.RawBlock{testBlock(100)}); err != nil {
+		if err := store.WriteRaw(ctx, []model.RawBlock{testBlock(100)}); err != nil {
 			t.Errorf("WriteRaw() error = %v", err)
 		}
 		if err := store.SaveRawCheckpoint(ctx, chainsync.Checkpoint{ChainID: 1, Offset: 2, Height: 100}); err != nil {
@@ -77,7 +78,7 @@ func TestHistoryReadsStoredPrices(t *testing.T) {
 	if addr == "" {
 		t.Skip("CLICKHOUSE_ADDR not set")
 	}
-	options := chstore.Options{
+	options := chdb.Options{
 		Addr:     strings.Split(addr, ","),
 		Database: fmt.Sprintf("history_test_%d", time.Now().UnixNano()),
 		Username: os.Getenv("CLICKHOUSE_USER"), Password: os.Getenv("CLICKHOUSE_PASSWORD"),
@@ -103,11 +104,11 @@ func TestHistoryReadsStoredPrices(t *testing.T) {
 	})
 	for _, height := range []int64{90, 95, 100, 103, 110} {
 		blockTime := time.Unix(1_700_000_000+height*12, 0).UTC()
-		if writeErr := output.WriteBlock(ctx, storage.BlockOutput{
+		if writeErr := output.WriteBlock(ctx, model.BlockOutput{
 			ChainID: 1, Height: height, BlockTime: blockTime,
-			Prices: []storage.TokenPrice{{
+			Prices: []model.TokenPrice{{
 				ChainID: 1, Token: "0xweth", BlockHeight: height, BlockTime: blockTime,
-				PriceUSD: decimal.NewFromInt(height), Source: storage.PriceSourceGraph, Hops: 1,
+				PriceUSD: decimal.NewFromInt(height), Source: model.PriceSourceGraph, Hops: 1,
 			}},
 		}); writeErr != nil {
 			t.Fatalf("WriteBlock(%d) error = %v", height, writeErr)

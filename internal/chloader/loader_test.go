@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/AloneAtWar/chainstream-market/internal/pkg/chainsync"
-	"github.com/AloneAtWar/chainstream-market/internal/storage"
+	"github.com/AloneAtWar/chainstream-market/internal/pkg/model"
 	streamv1 "github.com/AloneAtWar/chainstream-market/proto/stream/v1"
 )
 
@@ -29,7 +29,7 @@ func (fake *fakeStore) LoadRawCheckpoint(context.Context, uint64) (chainsync.Che
 	return *fake.checkpoint, true, nil
 }
 
-func (fake *fakeStore) WriteRaw(_ context.Context, blocks []storage.RawBlock) error {
+func (fake *fakeStore) WriteRaw(_ context.Context, blocks []model.RawBlock) error {
 	heights := make([]string, len(blocks))
 	for index, block := range blocks {
 		heights[index] = fmt.Sprint(block.Height)

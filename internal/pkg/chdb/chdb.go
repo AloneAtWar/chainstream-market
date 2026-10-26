@@ -1,4 +1,7 @@
-package chstore
+// Package chdb opens the ClickHouse database every component shares and
+// holds the DDL and retention of all its tables: market-engine's output and
+// ch-loader's raw facts. Each component keeps its own queries.
+package chdb
 
 import (
 	"context"
@@ -6,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"regexp"
 	"time"
 
 	chgo "github.com/ClickHouse/clickhouse-go/v2"
@@ -13,6 +17,20 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
 )
+
+// Options locate the ClickHouse database.
+type Options struct {
+	Addr     []string
+	Database string
+	Username string
+	Password string
+	// DialTimeout bounds connecting; zero uses the driver default.
+	DialTimeout time.Duration
+	// Logger receives GORM's slow query and error log; nil discards it.
+	Logger *slog.Logger
+}
+
+var identifier = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
 // Connect creates options.Database if needed and opens a GORM handle on it.
 // Deletes are synchronous on the returned handle.

@@ -19,6 +19,7 @@ import (
 
 	"github.com/AloneAtWar/chainstream-market/internal/pkg/asset"
 	"github.com/AloneAtWar/chainstream-market/internal/pkg/chainsync"
+	"github.com/AloneAtWar/chainstream-market/internal/pkg/model"
 	"github.com/AloneAtWar/chainstream-market/internal/storage"
 	streamv1 "github.com/AloneAtWar/chainstream-market/proto/stream/v1"
 )
@@ -40,7 +41,7 @@ type Options struct {
 type Registry struct {
 	options       Options
 	logger        *slog.Logger
-	pending       storage.RegistryChange
+	pending       model.RegistryChange
 	prunedThrough int64
 }
 
@@ -69,7 +70,7 @@ func (registry *Registry) Restore(ctx context.Context, chainID uint64) (chainsyn
 
 func (registry *Registry) Apply(_ context.Context, block *streamv1.BlockEvent) error {
 	height := block.GetBlockHeight()
-	change := storage.RegistryChange{Height: height}
+	change := model.RegistryChange{Height: height}
 	tokens := make(map[string]int)
 	for _, fact := range block.GetAssets() {
 		token, ok := registry.token(fact, height)
@@ -110,7 +111,7 @@ func (registry *Registry) Revert(_ context.Context, rollbackTo int64) error {
 	if rollbackTo < registry.prunedThrough {
 		return fmt.Errorf("%w: rollback to %d, history starts after %d", ErrReorgTooDeep, rollbackTo, registry.prunedThrough)
 	}
-	registry.pending = storage.RegistryChange{Reverted: true, RevertTo: rollbackTo}
+	registry.pending = model.RegistryChange{Reverted: true, RevertTo: rollbackTo}
 	return nil
 }
 
@@ -120,16 +121,16 @@ func (registry *Registry) Commit(ctx context.Context, checkpoint chainsync.Check
 	if err := registry.options.Store.CommitRegistry(ctx, checkpoint, change); err != nil {
 		return err
 	}
-	registry.pending = storage.RegistryChange{}
+	registry.pending = model.RegistryChange{}
 	return nil
 }
 
-func (registry *Registry) token(fact *streamv1.AssetFact, height int64) (storage.Token, bool) {
+func (registry *Registry) token(fact *streamv1.AssetFact, height int64) (model.Token, bool) {
 	address := normalize(fact.GetAddress())
 	if address == "" {
-		return storage.Token{}, false
+		return model.Token{}, false
 	}
-	token := storage.Token{
+	token := model.Token{
 		Address: address, Standard: fact.GetStandard(), Recognition: fact.GetRecognition(),
 		MetadataComplete: fact.GetMetadataComplete(),
 		Created:          fact.GetType() == streamv1.AssetFactType_ASSET_FACT_TYPE_CREATED,
@@ -137,7 +138,7 @@ func (registry *Registry) token(fact *streamv1.AssetFact, height int64) (storage
 	}
 	if deployment := fact.GetDeployment(); deployment != nil {
 		token.Created = true
-		token.Deployment = &storage.Deployment{
+		token.Deployment = &model.Deployment{
 			BlockHeight: deployment.GetBlockHeight(), BlockTime: deployment.GetBlockTime(),
 			TransactionIndex: deployment.GetTransactionIndex(),
 			TransactionHash:  normalize(deployment.GetTransactionHash()), TraceID: deployment.GetTraceId(),
@@ -148,12 +149,12 @@ func (registry *Registry) token(fact *streamv1.AssetFact, height int64) (storage
 	return token, true
 }
 
-func (registry *Registry) pool(fact *streamv1.PoolFact, height int64) (storage.Pool, bool) {
+func (registry *Registry) pool(fact *streamv1.PoolFact, height int64) (model.Pool, bool) {
 	poolID := normalize(fact.GetPoolId())
 	if poolID == "" {
-		return storage.Pool{}, false
+		return model.Pool{}, false
 	}
-	pool := storage.Pool{
+	pool := model.Pool{
 		PoolID: poolID, Protocol: fact.GetProtocol(), DexAddress: normalize(fact.GetDexAddress()),
 		Tokens: make([]string, len(fact.GetTokenAddresses())), Created: fact.GetCreated(),
 		SourceHeight: sourceHeight(fact.GetSourceHeight(), height), SourceTime: fact.GetSourceTime(),
@@ -210,7 +211,7 @@ func stripNUL(value any) any {
 // mergeTokens combines two facts about one address in a block: the later
 // metadata wins unless it was read at a lower height, and a deployment from
 // either is kept.
-func mergeTokens(earlier, later storage.Token) storage.Token {
+func mergeTokens(earlier, later model.Token) model.Token {
 	merged := later
 	if earlier.SourceHeight > later.SourceHeight {
 		merged = earlier
@@ -225,7 +226,7 @@ func mergeTokens(earlier, later storage.Token) storage.Token {
 	return merged
 }
 
-func mergePools(earlier, later storage.Pool) storage.Pool {
+func mergePools(earlier, later model.Pool) model.Pool {
 	merged := later
 	if earlier.SourceHeight > later.SourceHeight {
 		merged = earlier

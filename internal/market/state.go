@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/AloneAtWar/chainstream-market/internal/pkg/model"
 	"github.com/AloneAtWar/chainstream-market/internal/storage"
 )
 
@@ -43,7 +44,7 @@ var candleKeys = keyCodec[candleKey]{
 			return candleKey{}, err
 		}
 		return candleKey{
-			Subject: storage.CandleSubject(subject), Key: parts[2], Interval: time.Duration(seconds) * time.Second,
+			Subject: model.CandleSubject(subject), Key: parts[2], Interval: time.Duration(seconds) * time.Second,
 		}, nil
 	},
 }

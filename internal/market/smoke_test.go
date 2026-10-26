@@ -13,6 +13,9 @@ import (
 	"github.com/AloneAtWar/chainstream-market/internal/chloader"
 	"github.com/AloneAtWar/chainstream-market/internal/pkg/asset"
 	"github.com/AloneAtWar/chainstream-market/internal/pkg/chainsync"
+	"github.com/AloneAtWar/chainstream-market/internal/pkg/chdb"
+	"github.com/AloneAtWar/chainstream-market/internal/pkg/model"
+	"github.com/AloneAtWar/chainstream-market/internal/pkg/pgdb"
 	"github.com/AloneAtWar/chainstream-market/internal/pkg/source"
 	"github.com/AloneAtWar/chainstream-market/internal/storage"
 	"github.com/AloneAtWar/chainstream-market/internal/storage/chraw"
@@ -45,7 +48,7 @@ type marketSmoke struct {
 	t        *testing.T
 	cluster  *kfake.Cluster
 	producer *kgo.Client
-	options  chstore.Options
+	options  chdb.Options
 	output   *chstore.Store
 	state    *countingState
 	// raw, when set, is ch-loader's store: run then loads the topic into it
@@ -72,7 +75,7 @@ func newMarketSmoke(t *testing.T) *marketSmoke {
 		t.Fatalf("producer error = %v", err)
 	}
 	t.Cleanup(producer.Close)
-	options := chstore.Options{
+	options := chdb.Options{
 		Addr:     strings.Split(addr, ","),
 		Database: fmt.Sprintf("market_smoke_%d", time.Now().UnixNano()),
 		Username: os.Getenv("CLICKHOUSE_USER"), Password: os.Getenv("CLICKHOUSE_PASSWORD"),
@@ -82,9 +85,9 @@ func newMarketSmoke(t *testing.T) *marketSmoke {
 		t.Fatalf("chstore.Open() error = %v", err)
 	}
 	t.Cleanup(func() {
-		db, connErr := chstore.Connect(context.Background(), options)
+		db, connErr := chdb.Connect(context.Background(), options)
 		if connErr == nil {
-			connErr = errors.Join(db.Exec("DROP DATABASE IF EXISTS "+options.Database).Error, chstore.Close(db))
+			connErr = errors.Join(db.Exec("DROP DATABASE IF EXISTS "+options.Database).Error, chdb.Close(db))
 		}
 		if connErr != nil {
 			t.Errorf("drop database: %v", connErr)
@@ -93,7 +96,7 @@ func newMarketSmoke(t *testing.T) *marketSmoke {
 			t.Errorf("Close() error = %v", closeErr)
 		}
 	})
-	state, err := pgstore.Open(context.Background(), pgstore.Options{
+	state, err := pgstore.Open(context.Background(), pgdb.Options{
 		DSN: dsn, Schema: fmt.Sprintf("market_smoke_%d", time.Now().UnixNano()),
 	})
 	if err != nil {
@@ -193,7 +196,7 @@ func (s *marketSmoke) load(ctx context.Context, kafka source.KafkaOptions) <-cha
 // memeTrades lists MEME trades newest first as height:log.
 func (s *marketSmoke) memeTrades() string {
 	s.t.Helper()
-	trades, err := s.output.Trades(context.Background(), storage.TradeQuery{ChainID: 1, BaseToken: meme, Limit: 100})
+	trades, err := s.output.Trades(context.Background(), model.TradeQuery{ChainID: 1, BaseToken: meme, Limit: 100})
 	if err != nil {
 		s.t.Fatalf("Trades() error = %v", err)
 	}
@@ -212,8 +215,8 @@ func (s *marketSmoke) memeCandleTrades() uint32 {
 // candleTrades sums the trades in token's 5m candles.
 func (s *marketSmoke) candleTrades(token string) uint32 {
 	s.t.Helper()
-	candles, err := s.output.Candles(context.Background(), storage.CandleQuery{
-		ChainID: 1, Subject: storage.CandleSubjectToken, Key: token, Interval: 5 * time.Minute,
+	candles, err := s.output.Candles(context.Background(), model.CandleQuery{
+		ChainID: 1, Subject: model.CandleSubjectToken, Key: token, Interval: 5 * time.Minute,
 		From: time.Unix(0, 0), To: time.Unix(startTime+3600, 0), Limit: 100,
 	})
 	if err != nil {
@@ -337,7 +340,7 @@ func TestSmokeOutliersThroughKafka(t *testing.T) {
 // wethTrades lists WETH trades newest first as pool:price:outlier.
 func (s *marketSmoke) wethTrades() string {
 	s.t.Helper()
-	trades, err := s.output.Trades(context.Background(), storage.TradeQuery{ChainID: 1, BaseToken: weth, Limit: 100})
+	trades, err := s.output.Trades(context.Background(), model.TradeQuery{ChainID: 1, BaseToken: weth, Limit: 100})
 	if err != nil {
 		s.t.Fatalf("Trades() error = %v", err)
 	}

@@ -5,12 +5,13 @@ import (
 	"testing"
 
 	"github.com/AloneAtWar/chainstream-market/internal/pkg/chainsync"
+	"github.com/AloneAtWar/chainstream-market/internal/pkg/model"
 )
 
 func TestMemoryWriteBlockReplacesHeight(t *testing.T) {
 	ctx := context.Background()
 	memory := NewMemory()
-	for _, block := range []BlockOutput{
+	for _, block := range []model.BlockOutput{
 		{ChainID: 1, Height: 10, Hash: "a"},
 		{ChainID: 1, Height: 11, Hash: "b"},
 		{ChainID: 1, Height: 11, Hash: "b2"},
@@ -29,7 +30,7 @@ func TestMemoryWriteBlockReplacesHeight(t *testing.T) {
 func TestMemoryRewindOnlyTouchesChainAboveHeight(t *testing.T) {
 	ctx := context.Background()
 	memory := NewMemory()
-	for _, block := range []BlockOutput{
+	for _, block := range []model.BlockOutput{
 		{ChainID: 1, Height: 10}, {ChainID: 1, Height: 11}, {ChainID: 1, Height: 12}, {ChainID: 56, Height: 12},
 	} {
 		if err := memory.WriteBlock(ctx, block); err != nil {

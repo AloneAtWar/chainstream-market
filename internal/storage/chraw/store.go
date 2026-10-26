@@ -9,8 +9,9 @@ import (
 	"time"
 
 	"github.com/AloneAtWar/chainstream-market/internal/pkg/chainsync"
+	"github.com/AloneAtWar/chainstream-market/internal/pkg/chdb"
+	"github.com/AloneAtWar/chainstream-market/internal/pkg/model"
 	"github.com/AloneAtWar/chainstream-market/internal/storage"
-	"github.com/AloneAtWar/chainstream-market/internal/storage/chstore"
 	"gorm.io/gorm"
 )
 
@@ -24,22 +25,19 @@ type Store struct {
 }
 
 // Open connects, and creates the database and tables if needed.
-func Open(ctx context.Context, options chstore.Options) (*Store, error) {
-	db, err := chstore.Connect(ctx, options)
+func Open(ctx context.Context, options chdb.Options) (*Store, error) {
+	db, err := chdb.Connect(ctx, options)
 	if err != nil {
 		return nil, err
 	}
-	store := &Store{db: db}
-	for _, statement := range schema {
-		if err := db.WithContext(ctx).Exec(statement).Error; err != nil {
-			return nil, errors.Join(fmt.Errorf("clickhouse raw store: migrate: %w", err), chstore.Close(db))
-		}
+	if err := chdb.Migrate(ctx, db, chdb.RawSchema); err != nil {
+		return nil, errors.Join(fmt.Errorf("clickhouse raw store: migrate: %w", err), chdb.Close(db))
 	}
-	return store, nil
+	return &Store{db: db}, nil
 }
 
 func (store *Store) Close() error {
-	return chstore.Close(store.db)
+	return chdb.Close(store.db)
 }
 
 func (store *Store) LoadRawCheckpoint(ctx context.Context, chainID uint64) (chainsync.Checkpoint, bool, error) {
@@ -85,7 +83,7 @@ func (store *Store) DeleteRawAbove(ctx context.Context, chainID uint64, height i
 
 // WriteRaw sends one insert per table for all of blocks, skipping tables
 // with no rows.
-func (store *Store) WriteRaw(ctx context.Context, blocks []storage.RawBlock) error {
+func (store *Store) WriteRaw(ctx context.Context, blocks []model.RawBlock) error {
 	for _, block := range blocks {
 		if block.ChainID == 0 {
 			return errors.New("clickhouse raw store: block chain id is required")
@@ -127,7 +125,7 @@ func (store *Store) WriteRaw(ctx context.Context, blocks []storage.RawBlock) err
 	return nil
 }
 
-func appendTransfers(rows []transferRow, block storage.RawBlock) []transferRow {
+func appendTransfers(rows []transferRow, block model.RawBlock) []transferRow {
 	for _, transfer := range block.Transfers {
 		rows = append(rows, transferRow{
 			ChainID: block.ChainID, BlockHeight: block.Height, BlockTime: block.BlockTime,
@@ -139,7 +137,7 @@ func appendTransfers(rows []transferRow, block storage.RawBlock) []transferRow {
 	return rows
 }
 
-func appendTrades(rows []tradeRow, block storage.RawBlock) []tradeRow {
+func appendTrades(rows []tradeRow, block model.RawBlock) []tradeRow {
 	for _, trade := range block.Trades {
 		row := tradeRow{
 			ChainID: block.ChainID, BlockHeight: block.Height, BlockTime: block.BlockTime,
@@ -164,7 +162,7 @@ func appendTrades(rows []tradeRow, block storage.RawBlock) []tradeRow {
 	return rows
 }
 
-func appendOracles(rows []oracleRow, block storage.RawBlock) []oracleRow {
+func appendOracles(rows []oracleRow, block model.RawBlock) []oracleRow {
 	for _, update := range block.Oracles {
 		rows = append(rows, oracleRow{
 			ChainID: block.ChainID, BlockHeight: block.Height, BlockTime: block.BlockTime,
@@ -176,7 +174,7 @@ func appendOracles(rows []oracleRow, block storage.RawBlock) []oracleRow {
 	return rows
 }
 
-func appendAssets(rows []assetRow, block storage.RawBlock) []assetRow {
+func appendAssets(rows []assetRow, block model.RawBlock) []assetRow {
 	for _, fact := range block.Assets {
 		rows = append(rows, assetRow{
 			ChainID: block.ChainID, BlockHeight: block.Height, BlockTime: block.BlockTime, Address: fact.Address,
@@ -190,7 +188,7 @@ func appendAssets(rows []assetRow, block storage.RawBlock) []assetRow {
 	return rows
 }
 
-func appendPools(rows []poolRow, block storage.RawBlock) []poolRow {
+func appendPools(rows []poolRow, block model.RawBlock) []poolRow {
 	for _, fact := range block.Pools {
 		tokens := fact.TokenAddresses
 		if tokens == nil {
@@ -207,14 +205,14 @@ func appendPools(rows []poolRow, block storage.RawBlock) []poolRow {
 }
 
 func (store *Store) insert(ctx context.Context, table string, rows any) error {
-	if err := chstore.Insert(ctx, store.db, rows); err != nil {
+	if err := chdb.Insert(ctx, store.db, rows); err != nil {
 		return fmt.Errorf("clickhouse raw store: insert %s: %w", table, err)
 	}
 	return nil
 }
 
 // Transfers returns matching transfers newest first.
-func (store *Store) Transfers(ctx context.Context, query storage.TransferQuery) ([]storage.Transfer, error) {
+func (store *Store) Transfers(ctx context.Context, query model.TransferQuery) ([]model.Transfer, error) {
 	if query.Limit <= 0 || (query.Token == "" && query.Holder == "") {
 		return nil, errors.New("clickhouse raw store: transfer query needs a limit and a token or holder")
 	}
@@ -248,9 +246,9 @@ func (store *Store) Transfers(ctx context.Context, query storage.TransferQuery) 
 	if len(rows) == 0 {
 		return nil, nil
 	}
-	transfers := make([]storage.Transfer, len(rows))
+	transfers := make([]model.Transfer, len(rows))
 	for index, row := range rows {
-		transfers[index] = storage.Transfer{BlockHeight: row.BlockHeight, BlockTime: row.BlockTime.UTC(), RawTransfer: storage.RawTransfer{
+		transfers[index] = model.Transfer{BlockHeight: row.BlockHeight, BlockTime: row.BlockTime.UTC(), RawTransfer: model.RawTransfer{
 			TransactionHash: row.TransactionHash, TransactionIndex: row.TransactionIndex, LogIndex: row.LogIndex,
 			Token: row.Token, From: row.FromAddress, To: row.ToAddress, Amount: row.Amount,
 		}}
@@ -266,6 +264,6 @@ var (
 // ApplyRetention sets the TTL of ch-loader's tables. Only ch-loader calls
 // it, so market-api, which opens the store to read transfers, leaves the TTL
 // alone.
-func (store *Store) ApplyRetention(ctx context.Context, retention chstore.Retention) error {
-	return chstore.ApplyTTL(ctx, store.db, retention, retention.RawTTL())
+func (store *Store) ApplyRetention(ctx context.Context, retention chdb.Retention) error {
+	return chdb.ApplyTTL(ctx, store.db, retention, retention.RawTTL())
 }

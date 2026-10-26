@@ -5,6 +5,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/AloneAtWar/chainstream-market/internal/pkg/model"
 	"github.com/AloneAtWar/chainstream-market/internal/storage"
 )
 
@@ -73,20 +74,20 @@ func (server *Server) transfersBy(pathName string) http.HandlerFunc {
 	}
 }
 
-func transferQuery(request *http.Request, pathName string) (storage.TransferQuery, error) {
+func transferQuery(request *http.Request, pathName string) (model.TransferQuery, error) {
 	chain, err := chainID(request)
 	if err != nil {
-		return storage.TransferQuery{}, err
+		return model.TransferQuery{}, err
 	}
 	key := strings.ToLower(strings.TrimSpace(request.PathValue(pathName)))
 	if key == "" {
-		return storage.TransferQuery{}, badRequest(pathName + " is required")
+		return model.TransferQuery{}, badRequest(pathName + " is required")
 	}
 	count, err := limit(request)
 	if err != nil {
-		return storage.TransferQuery{}, err
+		return model.TransferQuery{}, err
 	}
-	query := storage.TransferQuery{ChainID: chain, Limit: count}
+	query := model.TransferQuery{ChainID: chain, Limit: count}
 	values := request.URL.Query()
 	if pathName == "token" {
 		query.Token, query.Holder = key, strings.ToLower(strings.TrimSpace(values.Get("holder")))
@@ -96,14 +97,14 @@ func transferQuery(request *http.Request, pathName string) (storage.TransferQuer
 	if raw := values.Get("before_height"); raw != "" {
 		height, parseErr := strconv.ParseInt(raw, 10, 64)
 		if parseErr != nil || height <= 0 {
-			return storage.TransferQuery{}, badRequest("before_height must be a positive height")
+			return model.TransferQuery{}, badRequest("before_height must be a positive height")
 		}
 		query.BeforeHeight = height
 	}
 	if raw := values.Get("before_log_index"); raw != "" {
 		index, parseErr := strconv.ParseUint(raw, 10, 32)
 		if parseErr != nil || query.BeforeHeight == 0 {
-			return storage.TransferQuery{}, badRequest("before_log_index must be a log index and needs before_height")
+			return model.TransferQuery{}, badRequest("before_log_index must be a log index and needs before_height")
 		}
 		logIndex := uint32(index)
 		query.BeforeLogIndex = &logIndex

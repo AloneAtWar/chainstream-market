@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/AloneAtWar/chainstream-market/internal/pkg/asset"
+	"github.com/AloneAtWar/chainstream-market/internal/pkg/model"
 	"github.com/AloneAtWar/chainstream-market/internal/storage"
 	streamv1 "github.com/AloneAtWar/chainstream-market/proto/stream/v1"
 	"github.com/shopspring/decimal"
@@ -17,8 +18,8 @@ const memeThin = "0xpool-meme-weth-thin"
 
 // fakeHistory serves raw trades and prices the way chraw.History does.
 type fakeHistory struct {
-	trades   []storage.RawTradeAt
-	prices   map[string][]storage.PricePoint
+	trades   []model.RawTradeAt
+	prices   map[string][]model.PricePoint
 	notReady bool
 	// calls records each RawTrades request as tokens, from and through.
 	calls      []historyCall
@@ -30,12 +31,12 @@ type historyCall struct {
 	from, through int64
 }
 
-func (history *fakeHistory) RawTrades(_ context.Context, _ uint64, tokens []string, from, through int64) ([]storage.RawTradeAt, bool, error) {
+func (history *fakeHistory) RawTrades(_ context.Context, _ uint64, tokens []string, from, through int64) ([]model.RawTradeAt, bool, error) {
 	history.calls = append(history.calls, historyCall{slices.Clone(tokens), from, through})
 	if history.notReady {
 		return nil, false, nil
 	}
-	var trades []storage.RawTradeAt
+	var trades []model.RawTradeAt
 	for _, trade := range history.trades {
 		if trade.Height < from || trade.Height > through {
 			continue
@@ -50,9 +51,9 @@ func (history *fakeHistory) RawTrades(_ context.Context, _ uint64, tokens []stri
 	return trades, true, nil
 }
 
-func (history *fakeHistory) PriceHistory(_ context.Context, _ uint64, tokens []string, _, _ int64) (map[string][]storage.PricePoint, error) {
+func (history *fakeHistory) PriceHistory(_ context.Context, _ uint64, tokens []string, _, _ int64) (map[string][]model.PricePoint, error) {
 	history.priceCalls = append(history.priceCalls, slices.Clone(tokens))
-	prices := make(map[string][]storage.PricePoint)
+	prices := make(map[string][]model.PricePoint)
 	for _, token := range tokens {
 		if points, ok := history.prices[token]; ok {
 			prices[token] = points
@@ -64,14 +65,14 @@ func (history *fakeHistory) PriceHistory(_ context.Context, _ uint64, tokens []s
 // store keeps the trades of block the way ch-loader does.
 func (history *fakeHistory) store(block *streamv1.BlockEvent) {
 	for _, trade := range block.GetTrades() {
-		history.trades = append(history.trades, storage.RawTradeAt{
+		history.trades = append(history.trades, model.RawTradeAt{
 			Height: block.GetBlockHeight(), BlockTime: time.Unix(block.GetBlockTime(), 0).UTC(), RawTrade: rawOf(trade),
 		})
 	}
 }
 
-func rawOf(trade *streamv1.Trade) storage.RawTrade {
-	raw := storage.RawTrade{
+func rawOf(trade *streamv1.Trade) model.RawTrade {
+	raw := model.RawTrade{
 		TransactionHash: trade.GetTransactionHash(), TransactionIndex: trade.GetTransactionIndex(),
 		LogIndex: trade.GetLogIndex(), OperationIndex: trade.GetOperationIndex(), Protocol: trade.GetProtocol(),
 		DexAddress: trade.GetDexAddress(), PoolID: trade.GetPoolId(), Sender: trade.GetSender(),
@@ -94,7 +95,7 @@ func rawOf(trade *streamv1.Trade) storage.RawTrade {
 		raw.ActiveBinID = &bin
 	}
 	for _, amount := range trade.GetAmounts() {
-		raw.Amounts = append(raw.Amounts, storage.RawAmount{
+		raw.Amounts = append(raw.Amounts, model.RawAmount{
 			Asset: amount.GetAsset(), Raw: amount.GetRaw(), Value: amount.GetValue(),
 			Decimals: amount.GetDecimals(), DecimalsKnown: amount.GetDecimalsKnown(),
 		})
@@ -147,8 +148,8 @@ func lateMemeBlocks() []*streamv1.BlockEvent {
 	}
 }
 
-func wethPrices() map[string][]storage.PricePoint {
-	return map[string][]storage.PricePoint{
+func wethPrices() map[string][]model.PricePoint {
+	return map[string][]model.PricePoint{
 		weth: {{Height: 90, USD: decimal.NewFromInt(2000), Hops: 1}, {Height: 100, USD: decimal.NewFromInt(3000), Hops: 1}},
 	}
 }
@@ -157,7 +158,7 @@ func TestBackfillRecomputesTradesBeyondHeldOnes(t *testing.T) {
 	history := &fakeHistory{prices: wethPrices()}
 	// Only one trade fits the per-token cap; the backfill brings the others.
 	processor := newBackfillProcessor(t, history, 100, 1)
-	var output storage.BlockOutput
+	var output model.BlockOutput
 	for _, block := range lateMemeBlocks() {
 		history.store(block)
 		output = apply(t, processor, block)
@@ -192,14 +193,14 @@ func TestBackfillRecomputesTradesBeyondHeldOnes(t *testing.T) {
 
 	// MEME is priced at both earlier blocks through its liquid pool, ahead
 	// of the block's own price.
-	var past []storage.TokenPrice
+	var past []model.TokenPrice
 	for _, price := range output.Prices {
 		if price.Token == meme && price.BlockHeight < 107 {
 			past = append(past, price)
 		}
 	}
 	if len(past) != 2 || past[0].BlockHeight != 100 || past[1].BlockHeight != 106 ||
-		past[0].Source != storage.PriceSourceGraph || past[0].Hops != 2 {
+		past[0].Source != model.PriceSourceGraph || past[0].Hops != 2 {
 		t.Fatalf("past MEME prices = %+v", past)
 	}
 	assertDecimal(t, "meme at 100", past[0].PriceUSD, "0.03")
@@ -210,14 +211,14 @@ func TestBackfillRecomputesTradesBeyondHeldOnes(t *testing.T) {
 
 	poolMinutes := 0
 	for _, candle := range output.Candles {
-		if candle.Subject == storage.CandleSubjectPool && candle.Key == memeWETH && candle.Interval == time.Minute {
+		if candle.Subject == model.CandleSubjectPool && candle.Key == memeWETH && candle.Interval == time.Minute {
 			poolMinutes++
 		}
 	}
 	if poolMinutes != 2 {
 		t.Fatalf("pool minute buckets = %d, want 2", poolMinutes)
 	}
-	tokenFive := findCandle(t, output.Candles, storage.CandleSubjectToken, meme, 5*time.Minute)
+	tokenFive := findCandle(t, output.Candles, model.CandleSubjectToken, meme, 5*time.Minute)
 	if tokenFive.Trades != 2 || tokenFive.UpdateHeight != 107 {
 		t.Fatalf("token 5m candle = %+v, want both liquid-pool trades and not the outlier", tokenFive)
 	}
@@ -229,7 +230,7 @@ func TestBackfillRecomputesTradesBeyondHeldOnes(t *testing.T) {
 func TestBackfillWithoutHolding(t *testing.T) {
 	history := &fakeHistory{prices: wethPrices()}
 	processor := newBackfillProcessor(t, history, 0, 0)
-	var output storage.BlockOutput
+	var output model.BlockOutput
 	for _, block := range lateMemeBlocks() {
 		history.store(block)
 		output = apply(t, processor, block)
@@ -242,7 +243,7 @@ func TestBackfillWithoutHolding(t *testing.T) {
 func TestBackfillFallsBackToHeldTrades(t *testing.T) {
 	history := &fakeHistory{prices: wethPrices(), notReady: true}
 	processor := newBackfillProcessor(t, history, 100, 1)
-	var output storage.BlockOutput
+	var output model.BlockOutput
 	for _, block := range lateMemeBlocks() {
 		output = apply(t, processor, block)
 	}
@@ -258,7 +259,7 @@ func TestBackfillReverts(t *testing.T) {
 	history := &fakeHistory{prices: wethPrices()}
 	processor := newBackfillProcessor(t, history, 100, 1)
 	blocks := lateMemeBlocks()
-	var want storage.BlockOutput
+	var want model.BlockOutput
 	for _, block := range blocks {
 		history.store(block)
 		want = apply(t, processor, block)

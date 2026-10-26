@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/AloneAtWar/chainstream-market/internal/pkg/asset"
+	"github.com/AloneAtWar/chainstream-market/internal/pkg/model"
 	"github.com/AloneAtWar/chainstream-market/internal/storage"
 	streamv1 "github.com/AloneAtWar/chainstream-market/proto/stream/v1"
 	"github.com/shopspring/decimal"
@@ -89,7 +90,7 @@ type orientation struct {
 }
 
 type candleKey struct {
-	Subject  storage.CandleSubject
+	Subject  model.CandleSubject
 	Key      string
 	Interval time.Duration
 }
@@ -101,7 +102,7 @@ type Processor struct {
 	pools        *journal[string, pool]
 	prices       *journal[string, tokenPrice]
 	orientations *journal[string, orientation]
-	candles      *journal[candleKey, storage.Candle]
+	candles      *journal[candleKey, model.Candle]
 	// oracle holds the latest trusted oracle answer per canonical token.
 	oracle *journal[string, decimal.Decimal]
 	// feeds lists the tokens each trusted aggregator prices.
@@ -172,7 +173,7 @@ func NewProcessor(options Options) (*Processor, error) {
 		pools:        newJournal[string, pool](stringKeys(kindPools)),
 		prices:       newJournal[string, tokenPrice](stringKeys(kindPrices)),
 		orientations: newJournal[string, orientation](stringKeys(kindOrientations)),
-		candles:      newJournal[candleKey, storage.Candle](candleKeys),
+		candles:      newJournal[candleKey, model.Candle](candleKeys),
 		oracle:       newJournal[string, decimal.Decimal](stringKeys(kindOracle)),
 		late:         newJournal[string, lateTrade](stringKeys(kindLate)),
 		missed:       newJournal[string, missedToken](stringKeys(kindMissed)),
@@ -191,9 +192,9 @@ func NewProcessor(options Options) (*Processor, error) {
 // valued at their own block's prices and added to their candles, ahead of
 // the block's own trades. The token's prices at those blocks are
 // recomputed too.
-func (processor *Processor) Apply(ctx context.Context, block *streamv1.BlockEvent) (storage.BlockOutput, error) {
+func (processor *Processor) Apply(ctx context.Context, block *streamv1.BlockEvent) (model.BlockOutput, error) {
 	if err := ctx.Err(); err != nil {
-		return storage.BlockOutput{}, err
+		return model.BlockOutput{}, err
 	}
 	output := NewBlockOutput(block)
 	height := block.GetBlockHeight()
@@ -207,7 +208,7 @@ func (processor *Processor) Apply(ctx context.Context, block *streamv1.BlockEven
 	}
 	ready, series, err := processor.backfill(ctx, height, output.ChainID, learned, processor.ready(learned))
 	if err != nil {
-		return storage.BlockOutput{}, err
+		return model.BlockOutput{}, err
 	}
 	past := processor.pastPrices(output.ChainID, ready, series, learned)
 	processor.seedPools(height, ready, touched)
@@ -270,11 +271,11 @@ func (processor *Processor) Revert(_ context.Context, rollbackTo int64) error {
 // A series only gains buckets forward in time, and late trades only build
 // buckets for series that had none, so the bucket current at rollbackTo is the
 // only older bucket a reverted block can have changed.
-func (processor *Processor) RevertedCandles(rollbackTo int64) []storage.CandleReset {
+func (processor *Processor) RevertedCandles(rollbackTo int64) []model.CandleReset {
 	restored := processor.candles.restored(rollbackTo)
-	resets := make([]storage.CandleReset, 0, len(restored))
+	resets := make([]model.CandleReset, 0, len(restored))
 	for _, key := range slices.SortedFunc(maps.Keys(restored), compareCandleKeys) {
-		reset := storage.CandleReset{Subject: key.Subject, Key: key.Key, Interval: key.Interval}
+		reset := model.CandleReset{Subject: key.Subject, Key: key.Key, Interval: key.Interval}
 		if entry := restored[key]; entry.Existed {
 			latest := entry.Prev
 			reset.Latest = &latest
@@ -390,7 +391,7 @@ func (processor *Processor) guard(height int64, token string, candidate tokenPri
 
 // reprice recomputes every touched token from its most liquid priced
 // counterpart. Each pass can extend prices one hop further from an anchor.
-func (processor *Processor) reprice(height int64, output storage.BlockOutput, touched map[string]struct{}) []storage.TokenPrice {
+func (processor *Processor) reprice(height int64, output model.BlockOutput, touched map[string]struct{}) []model.TokenPrice {
 	tokens := make([]string, 0, len(touched))
 	for token := range touched {
 		tokens = append(tokens, token)
@@ -420,18 +421,18 @@ func (processor *Processor) reprice(height int64, output storage.BlockOutput, to
 		}
 	}
 
-	var prices []storage.TokenPrice
+	var prices []model.TokenPrice
 	for _, token := range tokens {
-		value := storage.TokenPrice{
+		value := model.TokenPrice{
 			ChainID: output.ChainID, Token: token, BlockHeight: height, BlockTime: output.BlockTime,
 		}
 		if usd, anchor := processor.anchorPrice(token); anchor {
-			value.PriceUSD, value.Source = usd, storage.PriceSourceAnchor
+			value.PriceUSD, value.Source = usd, model.PriceSourceAnchor
 		} else if price, ok := processor.prices.get(token); ok && price.Height == height {
-			value.PriceUSD, value.Source = price.USD, storage.PriceSourceGraph
+			value.PriceUSD, value.Source = price.USD, model.PriceSourceGraph
 			value.Hops, value.LiquidityUSD = price.Hops, price.LiquidityUSD
 			if price.FromOracle {
-				value.Source = storage.PriceSourceAnchor
+				value.Source = model.PriceSourceAnchor
 			}
 		} else {
 			continue
@@ -529,7 +530,7 @@ const (
 
 // orient fixes a trade's base and quote. The caller sets the chain, block
 // and USD fields.
-func (processor *Processor) orient(height int64, source *streamv1.Trade) (storage.Trade, orientStatus) {
+func (processor *Processor) orient(height int64, source *streamv1.Trade) (model.Trade, orientStatus) {
 	var legs []*streamv1.Amount
 	for _, amount := range source.GetAmounts() {
 		if rawSign(amount) != 0 {
@@ -537,7 +538,7 @@ func (processor *Processor) orient(height int64, source *streamv1.Trade) (storag
 		}
 	}
 	if len(legs) != 2 || normalize(legs[0].GetAsset()) == normalize(legs[1].GetAsset()) {
-		return storage.Trade{}, orientSkip
+		return model.Trade{}, orientSkip
 	}
 	poolID := normalize(source.GetPoolId())
 	left, right := normalize(legs[0].GetAsset()), normalize(legs[1].GetAsset())
@@ -556,35 +557,35 @@ func (processor *Processor) orient(height int64, source *streamv1.Trade) (storag
 	case right:
 	default:
 		// The fixed quote token is not among this operation's legs.
-		return storage.Trade{}, orientSkip
+		return model.Trade{}, orientSkip
 	}
 
-	var side storage.Side
+	var side model.Side
 	switch source.GetAction() {
 	case streamv1.TradeAction_TRADE_ACTION_SWAP:
 		baseSign, quoteSign := rawSign(baseLeg), rawSign(quoteLeg)
 		if baseSign == quoteSign {
-			return storage.Trade{}, orientSkip
+			return model.Trade{}, orientSkip
 		}
-		side = storage.SideSell
+		side = model.SideSell
 		if baseSign < 0 {
-			side = storage.SideBuy
+			side = model.SideBuy
 		}
 	case streamv1.TradeAction_TRADE_ACTION_LIQUIDITY_ADDED:
-		side = storage.SideLiquidityAdded
+		side = model.SideLiquidityAdded
 	case streamv1.TradeAction_TRADE_ACTION_LIQUIDITY_REMOVED:
-		side = storage.SideLiquidityRemoved
+		side = model.SideLiquidityRemoved
 	case streamv1.TradeAction_TRADE_ACTION_UNSPECIFIED:
-		return storage.Trade{}, orientSkip
+		return model.Trade{}, orientSkip
 	default:
-		return storage.Trade{}, orientSkip
+		return model.Trade{}, orientSkip
 	}
 	baseAmount, okBase := processor.amountOf(baseLeg)
 	quoteAmount, okQuote := processor.amountOf(quoteLeg)
 	if !okBase || !okQuote {
-		return storage.Trade{}, orientLate
+		return model.Trade{}, orientLate
 	}
-	trade := storage.Trade{
+	trade := model.Trade{
 		TransactionHash: source.GetTransactionHash(), TransactionIndex: source.GetTransactionIndex(),
 		LogIndex: source.GetLogIndex(), OperationIndex: source.GetOperationIndex(),
 		Protocol: source.GetProtocol(), PoolID: poolID, Trader: normalize(source.GetTrader()),
@@ -592,14 +593,14 @@ func (processor *Processor) orient(height int64, source *streamv1.Trade) (storag
 		BaseAmount: baseAmount.Abs(), QuoteAmount: quoteAmount.Abs(),
 	}
 	if trade.BaseAmount.IsZero() {
-		return storage.Trade{}, orientSkip
+		return model.Trade{}, orientSkip
 	}
 	trade.PriceQuote = trade.QuoteAmount.DivRound(trade.BaseAmount, precision)
 	return trade, orientOK
 }
 
 // valueTrade prices a trade from its quote token's USD price.
-func valueTrade(trade *storage.Trade, quoteUSD decimal.Decimal) {
+func valueTrade(trade *model.Trade, quoteUSD decimal.Decimal) {
 	trade.PriceUSD = trade.PriceQuote.Mul(quoteUSD).Round(precision)
 	trade.ValueUSD = trade.QuoteAmount.Mul(quoteUSD).Round(precision)
 }
@@ -610,16 +611,16 @@ func valueTrade(trade *storage.Trade, quoteUSD decimal.Decimal) {
 // pool. A swap in that pool is never an outlier, since its own reserves set
 // the reference; a thin pool trading far from it is, such as a manipulated
 // or mispriced pool.
-func (processor *Processor) outlier(trade storage.Trade) bool {
+func (processor *Processor) outlier(trade model.Trade) bool {
 	reference, ok := processor.priceOf(trade.BaseToken)
 	return processor.strays(trade, reference, ok)
 }
 
 // strays reports whether trade is an outlier against its base token's
 // reference price.
-func (processor *Processor) strays(trade storage.Trade, reference tokenPrice, ok bool) bool {
+func (processor *Processor) strays(trade model.Trade, reference tokenPrice, ok bool) bool {
 	limit := processor.options.OutlierDeviation
-	if !limit.IsPositive() || (trade.Side != storage.SideBuy && trade.Side != storage.SideSell) || !trade.PriceUSD.IsPositive() {
+	if !limit.IsPositive() || (trade.Side != model.SideBuy && trade.Side != model.SideSell) || !trade.PriceUSD.IsPositive() {
 		return false
 	}
 	if !ok || !reference.USD.IsPositive() || (!reference.FromOracle && reference.Pool == trade.PoolID) {
@@ -634,7 +635,7 @@ func (processor *Processor) strays(trade storage.Trade, reference tokenPrice, ok
 
 // quoteLiquidityUSD is the USD value of the quote-side reserve of a trade's
 // pool, or zero when unknown.
-func (processor *Processor) quoteLiquidityUSD(trade storage.Trade) decimal.Decimal {
+func (processor *Processor) quoteLiquidityUSD(trade model.Trade) decimal.Decimal {
 	state, ok := processor.pools.get(trade.PoolID)
 	if !ok {
 		return decimal.Zero
@@ -662,24 +663,24 @@ func reserveUSD(catalog asset.Catalog, state pool, token string, usd decimal.Dec
 // base token's when the quote reserve reaches CandleMinLiquidityUSD and the
 // swap is not an outlier. An outlier still joins its pool's candles, which
 // show that pool's own prices.
-func (processor *Processor) candleSubjects(trade storage.Trade, quoteLiquidity decimal.Decimal) []candleKey {
-	if trade.Side != storage.SideBuy && trade.Side != storage.SideSell {
+func (processor *Processor) candleSubjects(trade model.Trade, quoteLiquidity decimal.Decimal) []candleKey {
+	if trade.Side != model.SideBuy && trade.Side != model.SideSell {
 		return nil
 	}
 	if !trade.PriceUSD.IsPositive() {
 		return nil
 	}
-	subjects := []candleKey{{Subject: storage.CandleSubjectPool, Key: trade.PoolID}}
+	subjects := []candleKey{{Subject: model.CandleSubjectPool, Key: trade.PoolID}}
 	if !trade.Outlier && !quoteLiquidity.LessThan(processor.options.CandleMinLiquidityUSD) {
 		subjects = append(subjects, candleKey{
-			Subject: storage.CandleSubjectToken, Key: processor.options.Catalog.Canonical(trade.BaseToken),
+			Subject: model.CandleSubjectToken, Key: processor.options.Catalog.Canonical(trade.BaseToken),
 		})
 	}
 	return subjects
 }
 
 // aggregate adds a priced swap to its candles.
-func (processor *Processor) aggregate(height int64, trade storage.Trade, touched map[candleKey]struct{}) {
+func (processor *Processor) aggregate(height int64, trade model.Trade, touched map[candleKey]struct{}) {
 	for _, subject := range processor.candleSubjects(trade, processor.quoteLiquidityUSD(trade)) {
 		for _, interval := range processor.options.Intervals {
 			key := candleKey{Subject: subject.Subject, Key: subject.Key, Interval: interval}
@@ -692,7 +693,7 @@ func (processor *Processor) aggregate(height int64, trade storage.Trade, touched
 
 // updateCandle adds trade to the bucket it falls in. A new bucket opens at the
 // previous bucket's close, so consecutive candles never gap.
-func updateCandle(current storage.Candle, exists bool, trade storage.Trade, key candleKey, height int64) storage.Candle {
+func updateCandle(current model.Candle, exists bool, trade model.Trade, key candleKey, height int64) model.Candle {
 	price := trade.PriceUSD
 	bucket := trade.BlockTime.Truncate(key.Interval)
 	if !exists || bucket.After(current.OpenTime) {
@@ -700,7 +701,7 @@ func updateCandle(current storage.Candle, exists bool, trade storage.Trade, key 
 		if exists {
 			open = current.Close
 		}
-		current = storage.Candle{
+		current = model.Candle{
 			ChainID: trade.ChainID, Subject: key.Subject, Key: key.Key, Interval: key.Interval,
 			OpenTime: bucket, Open: open, High: decimal.Max(open, price), Low: decimal.Min(open, price),
 		}
@@ -717,8 +718,8 @@ func updateCandle(current storage.Candle, exists bool, trade storage.Trade, key 
 
 // collectCandles returns the current bucket of every touched key, and the
 // older buckets that replayed trades built.
-func (processor *Processor) collectCandles(touched map[candleKey]struct{}, replayed map[candleKey][]storage.Candle) []storage.Candle {
-	candles := make([]storage.Candle, 0, len(touched))
+func (processor *Processor) collectCandles(touched map[candleKey]struct{}, replayed map[candleKey][]model.Candle) []model.Candle {
+	candles := make([]model.Candle, 0, len(touched))
 	for key := range touched {
 		current, ok := processor.candles.get(key)
 		if !ok {
@@ -731,7 +732,7 @@ func (processor *Processor) collectCandles(touched map[candleKey]struct{}, repla
 			}
 		}
 	}
-	slices.SortFunc(candles, func(left, right storage.Candle) int {
+	slices.SortFunc(candles, func(left, right model.Candle) int {
 		return cmp.Or(
 			compareCandleKeys(
 				candleKey{Subject: left.Subject, Key: left.Key, Interval: left.Interval},

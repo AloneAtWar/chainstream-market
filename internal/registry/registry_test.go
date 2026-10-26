@@ -10,7 +10,8 @@ import (
 	"time"
 
 	"github.com/AloneAtWar/chainstream-market/internal/pkg/chainsync"
-	"github.com/AloneAtWar/chainstream-market/internal/storage"
+	"github.com/AloneAtWar/chainstream-market/internal/pkg/model"
+	"github.com/AloneAtWar/chainstream-market/internal/pkg/pgdb"
 	"github.com/AloneAtWar/chainstream-market/internal/storage/pgstore"
 	streamv1 "github.com/AloneAtWar/chainstream-market/proto/stream/v1"
 )
@@ -27,7 +28,7 @@ func openStore(t *testing.T) *pgstore.Store {
 	if dsn == "" {
 		t.Skip("POSTGRES_DSN not set")
 	}
-	store, err := pgstore.Open(context.Background(), pgstore.Options{
+	store, err := pgstore.Open(context.Background(), pgdb.Options{
 		DSN: dsn, Schema: fmt.Sprintf("registry_test_%d", time.Now().UnixNano()),
 	})
 	if err != nil {
@@ -119,7 +120,7 @@ func (f *fixture) commit(height int64, hash string) {
 	f.offset++
 }
 
-func (f *fixture) token(address string) (storage.Token, bool) {
+func (f *fixture) token(address string) (model.Token, bool) {
 	f.t.Helper()
 	token, ok, err := f.store.Token(context.Background(), 1, address)
 	if err != nil {
@@ -137,7 +138,7 @@ func (f *fixture) symbol(address string) string {
 	return *token.Symbol
 }
 
-func (f *fixture) pool(id string) (storage.Pool, bool) {
+func (f *fixture) pool(id string) (model.Pool, bool) {
 	f.t.Helper()
 	pool, ok, err := f.store.Pool(context.Background(), 1, id)
 	if err != nil {

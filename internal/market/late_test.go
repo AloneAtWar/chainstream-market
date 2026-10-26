@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/AloneAtWar/chainstream-market/internal/pkg/asset"
-	"github.com/AloneAtWar/chainstream-market/internal/storage"
+	"github.com/AloneAtWar/chainstream-market/internal/pkg/model"
 	streamv1 "github.com/AloneAtWar/chainstream-market/proto/stream/v1"
 	"github.com/shopspring/decimal"
 )
@@ -50,7 +50,7 @@ func assetFact(token, recognition string, decimals uint8) *streamv1.AssetFact {
 	}
 }
 
-func apply(t *testing.T, processor *Processor, block *streamv1.BlockEvent) storage.BlockOutput {
+func apply(t *testing.T, processor *Processor, block *streamv1.BlockEvent) model.BlockOutput {
 	t.Helper()
 	output, err := processor.Apply(context.Background(), block)
 	if err != nil {
@@ -77,7 +77,7 @@ func TestLateTradeReplayedWhenMetadataArrives(t *testing.T) {
 	}
 	trade := output.Trades[0]
 	if trade.BlockHeight != 100 || !trade.BlockTime.Equal(time.Unix(startTime, 0)) ||
-		trade.Side != storage.SideSell || trade.BaseToken != meme || trade.QuoteToken != weth {
+		trade.Side != model.SideSell || trade.BaseToken != meme || trade.QuoteToken != weth {
 		t.Fatalf("replayed trade = %+v", trade)
 	}
 	// Valued at block 100's WETH price.
@@ -86,18 +86,18 @@ func TestLateTradeReplayedWhenMetadataArrives(t *testing.T) {
 
 	// The held trade's pool state seeds the graph, so MEME is priced now.
 	price, ok := priceMap(output.Prices)[meme]
-	if !ok || price.Source != storage.PriceSourceGraph {
+	if !ok || price.Source != model.PriceSourceGraph {
 		t.Fatalf("MEME price = %+v, %v", price, ok)
 	}
 	assertDecimal(t, "meme price", price.PriceUSD, "0.03")
 
-	poolCandle := findCandle(t, output.Candles, storage.CandleSubjectPool, memeWETH, time.Minute)
+	poolCandle := findCandle(t, output.Candles, model.CandleSubjectPool, memeWETH, time.Minute)
 	if !poolCandle.OpenTime.Equal(time.Unix(startTime, 0).Truncate(time.Minute)) ||
 		poolCandle.UpdateHeight != 101 || poolCandle.Trades != 1 {
 		t.Fatalf("pool candle = %+v", poolCandle)
 	}
 	assertDecimal(t, "pool close", poolCandle.Close, "0.03")
-	findCandle(t, output.Candles, storage.CandleSubjectToken, meme, time.Minute)
+	findCandle(t, output.Candles, model.CandleSubjectToken, meme, time.Minute)
 	if len(processor.late.values) != 0 || len(processor.lateByToken) != 0 {
 		t.Fatalf("held trades remain: %d", len(processor.late.values))
 	}
@@ -124,14 +124,14 @@ func TestLateTradesReplayAheadOfTheBlock(t *testing.T) {
 		}
 	}
 	seen := make(map[string]bool)
-	var minutes []storage.Candle
+	var minutes []model.Candle
 	for _, candle := range output.Candles {
 		id := fmt.Sprintf("%d/%s/%s/%d", candle.Subject, candle.Key, candle.Interval, candle.OpenTime.Unix())
 		if seen[id] {
 			t.Fatalf("bucket %s emitted twice", id)
 		}
 		seen[id] = true
-		if candle.Subject == storage.CandleSubjectPool && candle.Interval == time.Minute {
+		if candle.Subject == model.CandleSubjectPool && candle.Interval == time.Minute {
 			minutes = append(minutes, candle)
 		}
 	}
@@ -145,11 +145,11 @@ func TestLateTradesReplayAheadOfTheBlock(t *testing.T) {
 	assertDecimal(t, "second open", second.Open, "0.03")
 	assertDecimal(t, "second high", second.High, "0.06")
 	assertDecimal(t, "second close", second.Close, "0.03")
-	current, _ := processor.candles.get(candleKey{Subject: storage.CandleSubjectPool, Key: memeWETH, Interval: time.Minute})
+	current, _ := processor.candles.get(candleKey{Subject: model.CandleSubjectPool, Key: memeWETH, Interval: time.Minute})
 	if !current.OpenTime.Equal(second.OpenTime) || current.Trades != 2 {
 		t.Fatalf("current bucket = %+v", current)
 	}
-	fiveMinutes := findCandle(t, output.Candles, storage.CandleSubjectPool, memeWETH, 5*time.Minute)
+	fiveMinutes := findCandle(t, output.Candles, model.CandleSubjectPool, memeWETH, 5*time.Minute)
 	if fiveMinutes.Trades != 3 {
 		t.Fatalf("5m bucket trades = %d, want 3", fiveMinutes.Trades)
 	}

@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/AloneAtWar/chainstream-market/internal/pkg/model"
 	"github.com/AloneAtWar/chainstream-market/internal/storage"
 	"github.com/shopspring/decimal"
 )
@@ -16,29 +17,29 @@ import (
 const weth = "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2"
 
 type fakeReader struct {
-	price       storage.TokenPrice
+	price       model.TokenPrice
 	hasPrice    bool
-	candleQuery storage.CandleQuery
-	tradeQuery  storage.TradeQuery
+	candleQuery model.CandleQuery
+	tradeQuery  model.TradeQuery
 	err         error
 }
 
-func (fake *fakeReader) LatestPrice(_ context.Context, _ uint64, token string) (storage.TokenPrice, bool, error) {
+func (fake *fakeReader) LatestPrice(_ context.Context, _ uint64, token string) (model.TokenPrice, bool, error) {
 	fake.price.Token = token
 	return fake.price, fake.hasPrice, fake.err
 }
 
-func (fake *fakeReader) Candles(_ context.Context, query storage.CandleQuery) ([]storage.Candle, error) {
+func (fake *fakeReader) Candles(_ context.Context, query model.CandleQuery) ([]model.Candle, error) {
 	fake.candleQuery = query
-	return []storage.Candle{{
+	return []model.Candle{{
 		OpenTime: time.Unix(1_700_000_000, 0), Open: decimal.NewFromInt(1), High: decimal.NewFromInt(2),
 		Low: decimal.NewFromInt(1), Close: decimal.RequireFromString("1.5"), Trades: 3,
 	}}, fake.err
 }
 
-func (fake *fakeReader) Trades(_ context.Context, query storage.TradeQuery) ([]storage.Trade, error) {
+func (fake *fakeReader) Trades(_ context.Context, query model.TradeQuery) ([]model.Trade, error) {
 	fake.tradeQuery = query
-	return []storage.Trade{{BlockHeight: 99, Side: storage.SideSell, PriceUSD: decimal.NewFromInt(3000)}}, fake.err
+	return []model.Trade{{BlockHeight: 99, Side: model.SideSell, PriceUSD: decimal.NewFromInt(3000)}}, fake.err
 }
 
 func serve(t *testing.T, reader storage.Reader, path string) (int, map[string]any) {
@@ -57,8 +58,8 @@ func serve(t *testing.T, reader storage.Reader, path string) (int, map[string]an
 }
 
 func TestPriceMapsNativeToWrappedToken(t *testing.T) {
-	reader := &fakeReader{hasPrice: true, price: storage.TokenPrice{
-		PriceUSD: decimal.NewFromInt(3000), Source: storage.PriceSourceGraph, Hops: 1, BlockTime: time.Unix(10, 0),
+	reader := &fakeReader{hasPrice: true, price: model.TokenPrice{
+		PriceUSD: decimal.NewFromInt(3000), Source: model.PriceSourceGraph, Hops: 1, BlockTime: time.Unix(10, 0),
 	}}
 	status, body := serve(t, reader, "/v1/chains/1/tokens/0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE/price")
 	if status != http.StatusOK || body["token"] != weth || body["price_usd"] != "3000" || body["source"] != "graph" {
@@ -77,7 +78,7 @@ func TestCandlesParseQuery(t *testing.T) {
 		t.Fatalf("status %d body %v", status, body)
 	}
 	query := reader.candleQuery
-	if query.ChainID != 56 || query.Subject != storage.CandleSubjectPool || query.Key != "0xpool" ||
+	if query.ChainID != 56 || query.Subject != model.CandleSubjectPool || query.Key != "0xpool" ||
 		query.Interval != time.Hour || query.From.Unix() != 100 || query.To.Unix() != 200 || query.Limit != 5 {
 		t.Fatalf("query = %+v", query)
 	}

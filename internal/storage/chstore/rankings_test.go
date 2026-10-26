@@ -6,35 +6,35 @@ import (
 	"testing"
 	"time"
 
-	"github.com/AloneAtWar/chainstream-market/internal/storage"
+	"github.com/AloneAtWar/chainstream-market/internal/pkg/model"
 	"github.com/shopspring/decimal"
 )
 
 var rankingBase = time.Date(2026, 3, 10, 0, 0, 0, 0, time.UTC)
 
-func rankingBlock(height int64, at time.Duration, prices []storage.TokenPrice, candles []storage.Candle) storage.BlockOutput {
+func rankingBlock(height int64, at time.Duration, prices []model.TokenPrice, candles []model.Candle) model.BlockOutput {
 	blockTime := rankingBase.Add(at)
 	for index := range prices {
 		prices[index].ChainID, prices[index].BlockHeight, prices[index].BlockTime = 1, height, blockTime
 	}
 	for index := range candles {
-		candles[index].ChainID, candles[index].Subject, candles[index].UpdateHeight = 1, storage.CandleSubjectToken, height
+		candles[index].ChainID, candles[index].Subject, candles[index].UpdateHeight = 1, model.CandleSubjectToken, height
 	}
-	return storage.BlockOutput{
+	return model.BlockOutput{
 		ChainID: 1, Height: height, Hash: fmt.Sprintf("0x%d", height), BlockTime: blockTime,
 		Prices: prices, Candles: candles,
 	}
 }
 
-func tokenPrice(token, price, liquidity string) storage.TokenPrice {
-	return storage.TokenPrice{
-		Token: token, PriceUSD: decimal.RequireFromString(price), Source: storage.PriceSourceGraph,
+func tokenPrice(token, price, liquidity string) model.TokenPrice {
+	return model.TokenPrice{
+		Token: token, PriceUSD: decimal.RequireFromString(price), Source: model.PriceSourceGraph,
 		LiquidityUSD: decimal.RequireFromString(liquidity),
 	}
 }
 
-func tokenCandle(token string, interval, openAt time.Duration, open, closePrice, volume string, trades uint32) storage.Candle {
-	return storage.Candle{
+func tokenCandle(token string, interval, openAt time.Duration, open, closePrice, volume string, trades uint32) model.Candle {
+	return model.Candle{
 		Key: token, Interval: interval, OpenTime: rankingBase.Add(openAt),
 		Open: decimal.RequireFromString(open), High: decimal.RequireFromString(closePrice),
 		Low: decimal.RequireFromString(open), Close: decimal.RequireFromString(closePrice),
@@ -49,22 +49,22 @@ func TestRankingSourceReadsActivityAndQuotes(t *testing.T) {
 		t.Fatalf("empty ChainHead() = %v, %v", ok, err)
 	}
 	five := 5 * time.Minute
-	blocks := []storage.BlockOutput{
+	blocks := []model.BlockOutput{
 		// An old bucket outside the window, and an hourly candle that a 5m
 		// read must ignore.
-		rankingBlock(10, time.Hour, []storage.TokenPrice{tokenPrice("0xold", "7", "100")}, []storage.Candle{
+		rankingBlock(10, time.Hour, []model.TokenPrice{tokenPrice("0xold", "7", "100")}, []model.Candle{
 			tokenCandle("0xmeme", five, time.Hour, "1", "1", "500", 5),
 			tokenCandle("0xmeme", time.Hour, time.Hour, "1", "1", "500", 5),
 		}),
-		rankingBlock(20, 30*time.Hour, []storage.TokenPrice{tokenPrice("0xmeme", "1.5", "2000")}, []storage.Candle{
+		rankingBlock(20, 30*time.Hour, []model.TokenPrice{tokenPrice("0xmeme", "1.5", "2000")}, []model.Candle{
 			tokenCandle("0xmeme", five, 30*time.Hour, "1", "1.5", "10", 1),
 		}),
 		// A second version of the same bucket: only it counts.
-		rankingBlock(21, 30*time.Hour+time.Minute, []storage.TokenPrice{tokenPrice("0xmeme", "1.2", "2500")}, []storage.Candle{
+		rankingBlock(21, 30*time.Hour+time.Minute, []model.TokenPrice{tokenPrice("0xmeme", "1.2", "2500")}, []model.Candle{
 			tokenCandle("0xmeme", five, 30*time.Hour, "1", "1.2", "25", 2),
 			tokenCandle("0xpepe", five, 30*time.Hour, "0.5", "0.4", "3", 1),
 		}),
-		rankingBlock(22, 31*time.Hour, []storage.TokenPrice{tokenPrice("0xmeme", "2", "3000")}, []storage.Candle{
+		rankingBlock(22, 31*time.Hour, []model.TokenPrice{tokenPrice("0xmeme", "2", "3000")}, []model.Candle{
 			tokenCandle("0xmeme", five, 31*time.Hour, "1.2", "2", "40", 3),
 		}),
 	}
@@ -82,7 +82,7 @@ func TestRankingSourceReadsActivityAndQuotes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("TokenActivity() error = %v", err)
 	}
-	byToken := make(map[string]storage.TokenActivity)
+	byToken := make(map[string]model.TokenActivity)
 	for _, row := range activity {
 		byToken[row.Token] = row
 	}

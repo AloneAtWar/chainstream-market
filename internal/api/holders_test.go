@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/AloneAtWar/chainstream-market/internal/pkg/model"
 	"github.com/AloneAtWar/chainstream-market/internal/storage"
 )
 
@@ -18,9 +19,9 @@ type fakeHolders struct {
 	err   error
 }
 
-func (fake *fakeHolders) TopHolders(_ context.Context, _ uint64, token string, limit int) ([]storage.Holding, error) {
+func (fake *fakeHolders) TopHolders(_ context.Context, _ uint64, token string, limit int) ([]model.Holding, error) {
 	fake.token, fake.limit = token, limit
-	return []storage.Holding{{HolderKey: storage.HolderKey{Token: token, Holder: "0xaa"}, Balance: big.NewInt(1200)}}, fake.err
+	return []model.Holding{{HolderKey: model.HolderKey{Token: token, Holder: "0xaa"}, Balance: big.NewInt(1200)}}, fake.err
 }
 
 func (fake *fakeHolders) HolderCount(context.Context, uint64, string) (int64, error) {

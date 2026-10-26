@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/AloneAtWar/chainstream-market/internal/storage"
+	"github.com/AloneAtWar/chainstream-market/internal/pkg/model"
 )
 
 // Update types on a live topic.
@@ -102,7 +102,7 @@ func IntervalName(interval time.Duration) string {
 	}
 }
 
-func tradeOf(trade storage.Trade, revision int64) Trade {
+func tradeOf(trade model.Trade, revision int64) Trade {
 	return Trade{
 		BlockHeight: trade.BlockHeight, BlockTime: trade.BlockTime.Unix(), RevisionHeight: revision,
 		TransactionHash: trade.TransactionHash, LogIndex: trade.LogIndex, OperationIndex: trade.OperationIndex,
@@ -114,7 +114,7 @@ func tradeOf(trade storage.Trade, revision int64) Trade {
 	}
 }
 
-func candleOf(candle storage.Candle) Candle {
+func candleOf(candle model.Candle) Candle {
 	return Candle{
 		Subject: candle.Subject.String(), Key: candle.Key, Interval: IntervalName(candle.Interval),
 		OpenTime: candle.OpenTime.Unix(), Open: candle.Open.String(), High: candle.High.String(),
@@ -123,7 +123,7 @@ func candleOf(candle storage.Candle) Candle {
 	}
 }
 
-func resetOf(reset storage.CandleReset) Reset {
+func resetOf(reset model.CandleReset) Reset {
 	result := Reset{Subject: reset.Subject.String(), Key: reset.Key, Interval: IntervalName(reset.Interval)}
 	if reset.Latest != nil {
 		latest := candleOf(*reset.Latest)

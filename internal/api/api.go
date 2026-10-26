@@ -13,6 +13,7 @@ import (
 
 	"github.com/AloneAtWar/chainstream-market/internal/live"
 	"github.com/AloneAtWar/chainstream-market/internal/pkg/asset"
+	"github.com/AloneAtWar/chainstream-market/internal/pkg/model"
 	"github.com/AloneAtWar/chainstream-market/internal/storage"
 )
 
@@ -63,8 +64,8 @@ func (server *Server) Handler() http.Handler {
 		writer.WriteHeader(http.StatusNoContent)
 	})
 	mux.HandleFunc("GET /v1/chains/{chain}/tokens/{token}/price", server.price)
-	mux.HandleFunc("GET /v1/chains/{chain}/tokens/{token}/candles", server.candles(storage.CandleSubjectToken, "token"))
-	mux.HandleFunc("GET /v1/chains/{chain}/pools/{pool}/candles", server.candles(storage.CandleSubjectPool, "pool"))
+	mux.HandleFunc("GET /v1/chains/{chain}/tokens/{token}/candles", server.candles(model.CandleSubjectToken, "token"))
+	mux.HandleFunc("GET /v1/chains/{chain}/pools/{pool}/candles", server.candles(model.CandleSubjectPool, "pool"))
 	mux.HandleFunc("GET /v1/chains/{chain}/tokens/{token}/trades", server.trades("token"))
 	mux.HandleFunc("GET /v1/chains/{chain}/pools/{pool}/trades", server.trades("pool"))
 	if server.holders != nil {
@@ -204,7 +205,7 @@ type candleResponse struct {
 	Trades     uint32 `json:"trades"`
 }
 
-func (server *Server) candles(subject storage.CandleSubject, keyName string) http.HandlerFunc {
+func (server *Server) candles(subject model.CandleSubject, keyName string) http.HandlerFunc {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		query, err := server.candleQuery(request, subject, keyName)
 		if err != nil {
@@ -228,14 +229,14 @@ func (server *Server) candles(subject storage.CandleSubject, keyName string) htt
 	}
 }
 
-func (server *Server) candleQuery(request *http.Request, subject storage.CandleSubject, keyName string) (storage.CandleQuery, error) {
+func (server *Server) candleQuery(request *http.Request, subject model.CandleSubject, keyName string) (model.CandleQuery, error) {
 	chain, err := chainID(request)
 	if err != nil {
-		return storage.CandleQuery{}, err
+		return model.CandleQuery{}, err
 	}
 	key, err := address(request, keyName, chain)
 	if err != nil {
-		return storage.CandleQuery{}, err
+		return model.CandleQuery{}, err
 	}
 	interval, ok := server.intervals[request.URL.Query().Get("interval")]
 	if !ok {
@@ -244,24 +245,24 @@ func (server *Server) candleQuery(request *http.Request, subject storage.CandleS
 			names = append(names, name)
 		}
 		slices.Sort(names)
-		return storage.CandleQuery{}, badRequest("interval must be one of " + strings.Join(names, ", "))
+		return model.CandleQuery{}, badRequest("interval must be one of " + strings.Join(names, ", "))
 	}
 	count, err := limit(request)
 	if err != nil {
-		return storage.CandleQuery{}, err
+		return model.CandleQuery{}, err
 	}
 	to, err := unixParam(request, "to", server.now().UTC().Add(interval))
 	if err != nil {
-		return storage.CandleQuery{}, err
+		return model.CandleQuery{}, err
 	}
 	from, err := unixParam(request, "from", time.Unix(0, 0).UTC())
 	if err != nil {
-		return storage.CandleQuery{}, err
+		return model.CandleQuery{}, err
 	}
 	if !from.Before(to) {
-		return storage.CandleQuery{}, badRequest("from must be before to")
+		return model.CandleQuery{}, badRequest("from must be before to")
 	}
-	return storage.CandleQuery{
+	return model.CandleQuery{
 		ChainID: chain, Subject: subject, Key: key, Interval: interval, From: from, To: to, Limit: count,
 	}, nil
 }
@@ -305,7 +306,7 @@ func (server *Server) trades(keyName string) http.HandlerFunc {
 			server.fail(writer, request, err)
 			return
 		}
-		query := storage.TradeQuery{ChainID: chain, Limit: count}
+		query := model.TradeQuery{ChainID: chain, Limit: count}
 		if keyName == "token" {
 			query.BaseToken = key
 		} else {

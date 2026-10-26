@@ -1,4 +1,4 @@
-package chstore
+package chdb
 
 import (
 	"context"
@@ -148,12 +148,6 @@ func (retention Retention) RawTTL() []TableTTL {
 		{"asset_facts", retention.deleteRules("block_time", 0)},
 		{"pool_facts", retention.deleteRules("block_time", 0)},
 	}
-}
-
-// ApplyRetention sets the TTL of market-engine's tables. Only market-engine
-// calls it, so readers that open the store leave the TTL alone.
-func (store *Store) ApplyRetention(ctx context.Context, retention Retention) error {
-	return ApplyTTL(ctx, store.db, retention, retention.EngineTTL())
 }
 
 // tableTTL finds the TTL clause in a table's CREATE statement, which

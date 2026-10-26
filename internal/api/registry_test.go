@@ -8,32 +8,32 @@ import (
 	"testing"
 	"time"
 
-	"github.com/AloneAtWar/chainstream-market/internal/storage"
+	"github.com/AloneAtWar/chainstream-market/internal/pkg/model"
 )
 
 type fakeRegistry struct {
-	tokens map[string]storage.Token
-	pools  map[string]storage.Pool
+	tokens map[string]model.Token
+	pools  map[string]model.Pool
 	query  string
 	limit  int
 	err    error
 }
 
-func (fake *fakeRegistry) Token(_ context.Context, _ uint64, address string) (storage.Token, bool, error) {
+func (fake *fakeRegistry) Token(_ context.Context, _ uint64, address string) (model.Token, bool, error) {
 	fake.query = address
 	token, ok := fake.tokens[address]
 	return token, ok, fake.err
 }
 
-func (fake *fakeRegistry) Pool(_ context.Context, _ uint64, poolID string) (storage.Pool, bool, error) {
+func (fake *fakeRegistry) Pool(_ context.Context, _ uint64, poolID string) (model.Pool, bool, error) {
 	fake.query = poolID
 	pool, ok := fake.pools[poolID]
 	return pool, ok, fake.err
 }
 
-func (fake *fakeRegistry) TokenPools(_ context.Context, _ uint64, token string, limit int) ([]storage.Pool, error) {
+func (fake *fakeRegistry) TokenPools(_ context.Context, _ uint64, token string, limit int) ([]model.Pool, error) {
 	fake.query, fake.limit = token, limit
-	var pools []storage.Pool
+	var pools []model.Pool
 	for _, pool := range fake.pools {
 		pools = append(pools, pool)
 	}
@@ -43,16 +43,16 @@ func (fake *fakeRegistry) TokenPools(_ context.Context, _ uint64, token string, 
 func newFakeRegistry() *fakeRegistry {
 	name, symbol, decimals := "USD Coin", "USDC", uint8(6)
 	return &fakeRegistry{
-		tokens: map[string]storage.Token{
+		tokens: map[string]model.Token{
 			"0xaa": {
 				Address: "0xaa", Standard: "erc20", Recognition: "recognized", MetadataComplete: true,
 				Name: &name, Symbol: &symbol, Decimals: &decimals, Metadata: []byte(`{"Status": 2}`), Created: true,
-				Deployment:   &storage.Deployment{BlockHeight: 5, BlockTime: 50, TransactionHash: "0xd"},
+				Deployment:   &model.Deployment{BlockHeight: 5, BlockTime: 50, TransactionHash: "0xd"},
 				SourceHeight: 7, FirstHeight: 5, UpdatedHeight: 7,
 			},
 			"0xbb": {Address: "0xbb", Standard: "erc20", Recognition: "unknown", SourceHeight: 3, FirstHeight: 3, UpdatedHeight: 3},
 		},
-		pools: map[string]storage.Pool{
+		pools: map[string]model.Pool{
 			"0xcc": {
 				PoolID: "0xcc", Protocol: "uniswap_v2", DexAddress: "0xf", Tokens: []string{"0xaa", "0xbb"},
 				SourceHeight: 8, SourceTime: 80, FirstHeight: 8, UpdatedHeight: 8, Metadata: []byte(`{"fee": 3000}`),

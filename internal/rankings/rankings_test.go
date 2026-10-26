@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/AloneAtWar/chainstream-market/internal/storage"
+	"github.com/AloneAtWar/chainstream-market/internal/pkg/model"
 )
 
 type fakeSource struct {
@@ -25,14 +25,14 @@ func (fake *fakeSource) ChainHead(context.Context, uint64) (time.Time, bool, err
 	return fake.head, fake.hasHead, fake.err
 }
 
-func (fake *fakeSource) TokenActivity(_ context.Context, _ uint64, interval time.Duration, since time.Time) ([]storage.TokenActivity, error) {
+func (fake *fakeSource) TokenActivity(_ context.Context, _ uint64, interval time.Duration, since time.Time) ([]model.TokenActivity, error) {
 	fake.interval, fake.activitySince = interval, since
-	return []storage.TokenActivity{{Token: "0xa"}}, nil
+	return []model.TokenActivity{{Token: "0xa"}}, nil
 }
 
-func (fake *fakeSource) LatestQuotes(_ context.Context, _ uint64, since time.Time, tokens []string) ([]storage.TokenQuote, error) {
+func (fake *fakeSource) LatestQuotes(_ context.Context, _ uint64, since time.Time, tokens []string) ([]model.TokenQuote, error) {
 	fake.quoteSince, fake.quoteTokens = since, tokens
-	return []storage.TokenQuote{{Token: "0xa"}}, nil
+	return []model.TokenQuote{{Token: "0xa"}}, nil
 }
 
 type fakeStore struct {
@@ -40,7 +40,7 @@ type fakeStore struct {
 	cursor      time.Time
 	hasCursor   bool
 	rankedSince time.Time
-	commits     []storage.RankingRefresh
+	commits     []model.RankingRefresh
 }
 
 func (fake *fakeStore) LoadRankingCursor(context.Context, uint64) (time.Time, bool, error) {
@@ -52,7 +52,7 @@ func (fake *fakeStore) RankedSince(_ context.Context, _ uint64, since time.Time)
 	return []string{"0xold"}, nil
 }
 
-func (fake *fakeStore) CommitRankings(_ context.Context, refresh storage.RankingRefresh) error {
+func (fake *fakeStore) CommitRankings(_ context.Context, refresh model.RankingRefresh) error {
 	fake.mu.Lock()
 	defer fake.mu.Unlock()
 	fake.commits = append(fake.commits, refresh)
@@ -139,7 +139,7 @@ func TestRunStopsWithContext(t *testing.T) {
 	<-done
 }
 
-func commitsOf(store *fakeStore) []storage.RankingRefresh {
+func commitsOf(store *fakeStore) []model.RankingRefresh {
 	store.mu.Lock()
 	defer store.mu.Unlock()
 	return store.commits

@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/AloneAtWar/chainstream-market/internal/pkg/model"
 	"github.com/AloneAtWar/chainstream-market/internal/storage"
 )
 
@@ -16,20 +17,20 @@ func (server *Server) WithRegistry(reader storage.RegistryReader) *Server {
 }
 
 type tokenResponse struct {
-	ChainID          uint64              `json:"chain_id"`
-	Address          string              `json:"address"`
-	Standard         string              `json:"standard"`
-	Recognition      string              `json:"recognition"`
-	MetadataComplete bool                `json:"metadata_complete"`
-	Name             *string             `json:"name"`
-	Symbol           *string             `json:"symbol"`
-	Decimals         *uint8              `json:"decimals"`
-	Created          bool                `json:"created"`
-	Deployment       *storage.Deployment `json:"deployment,omitempty"`
-	SourceHeight     int64               `json:"source_height"`
-	FirstHeight      int64               `json:"first_height"`
-	UpdatedHeight    int64               `json:"updated_height"`
-	Metadata         json.RawMessage     `json:"metadata,omitempty"`
+	ChainID          uint64            `json:"chain_id"`
+	Address          string            `json:"address"`
+	Standard         string            `json:"standard"`
+	Recognition      string            `json:"recognition"`
+	MetadataComplete bool              `json:"metadata_complete"`
+	Name             *string           `json:"name"`
+	Symbol           *string           `json:"symbol"`
+	Decimals         *uint8            `json:"decimals"`
+	Created          bool              `json:"created"`
+	Deployment       *model.Deployment `json:"deployment,omitempty"`
+	SourceHeight     int64             `json:"source_height"`
+	FirstHeight      int64             `json:"first_height"`
+	UpdatedHeight    int64             `json:"updated_height"`
+	Metadata         json.RawMessage   `json:"metadata,omitempty"`
 }
 
 type poolResponse struct {
@@ -46,7 +47,7 @@ type poolResponse struct {
 	Metadata      json.RawMessage `json:"metadata,omitempty"`
 }
 
-func newPoolResponse(chain uint64, pool storage.Pool) poolResponse {
+func newPoolResponse(chain uint64, pool model.Pool) poolResponse {
 	return poolResponse{
 		ChainID: chain, PoolID: pool.PoolID, Protocol: pool.Protocol, DexAddress: pool.DexAddress,
 		Tokens: pool.Tokens, Created: pool.Created, SourceHeight: pool.SourceHeight, SourceTime: pool.SourceTime,

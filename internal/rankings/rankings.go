@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/AloneAtWar/chainstream-market/internal/pkg/metrics"
+	"github.com/AloneAtWar/chainstream-market/internal/pkg/model"
 
 	"github.com/AloneAtWar/chainstream-market/internal/storage"
 )
@@ -77,7 +78,7 @@ func (refresher *Refresher) Refresh(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	refresh := storage.RankingRefresh{ChainID: options.ChainID, Head: head}
+	refresh := model.RankingRefresh{ChainID: options.ChainID, Head: head}
 	var recent []string
 	if resumed {
 		refresh.Since = cursor.Add(-options.ReorgWindow)

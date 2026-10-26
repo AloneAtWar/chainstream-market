@@ -7,63 +7,10 @@ import (
 	"math/big"
 
 	"github.com/AloneAtWar/chainstream-market/internal/pkg/chainsync"
+	"github.com/AloneAtWar/chainstream-market/internal/pkg/model"
 	"github.com/AloneAtWar/chainstream-market/internal/storage"
 	"gorm.io/gorm"
 )
-
-// holderSchema creates the holder tables. Balances are raw token units.
-// verified_height is the last height balanceOf confirmed the balance; NULL
-// means it was never confirmed.
-var holderSchema = []string{
-	`CREATE TABLE IF NOT EXISTS holder_checkpoints (
-		chain_id       BIGINT PRIMARY KEY,
-		kafka_offset   BIGINT NOT NULL,
-		block_height   BIGINT NOT NULL,
-		block_hash     TEXT NOT NULL,
-		pruned_through BIGINT NOT NULL,
-		updated_at     TIMESTAMPTZ NOT NULL
-	)`,
-	`CREATE TABLE IF NOT EXISTS holder_balances (
-		chain_id        BIGINT NOT NULL,
-		token           TEXT NOT NULL,
-		holder          TEXT NOT NULL,
-		balance         NUMERIC(78, 0) NOT NULL,
-		verified_height BIGINT,
-		PRIMARY KEY (chain_id, token, holder)
-	)`,
-	`CREATE INDEX IF NOT EXISTS holder_balances_top
-		ON holder_balances (chain_id, token, balance DESC) WHERE balance > 0`,
-	`CREATE INDEX IF NOT EXISTS holder_balances_verified
-		ON holder_balances (chain_id, verified_height NULLS FIRST)`,
-	// Each row undoes one block's change to one holding: a created row is
-	// deleted, otherwise delta is subtracted and verified_height restored.
-	`CREATE TABLE IF NOT EXISTS holder_undo (
-		chain_id      BIGINT NOT NULL,
-		block_height  BIGINT NOT NULL,
-		token         TEXT NOT NULL,
-		holder        TEXT NOT NULL,
-		delta         NUMERIC(78, 0) NOT NULL,
-		created       BOOLEAN NOT NULL,
-		prev_verified BIGINT,
-		PRIMARY KEY (chain_id, block_height, token, holder)
-	)`,
-	// holder_counts keeps the number of positive holdings per token, moved
-	// by CommitHolders whenever a balance crosses zero. A schema that had
-	// holder_balances before this table existed is backfilled once.
-	`DO $$
-	BEGIN
-		IF to_regclass('holder_counts') IS NULL THEN
-			CREATE TABLE holder_counts (
-				chain_id BIGINT NOT NULL,
-				token    TEXT NOT NULL,
-				holders  BIGINT NOT NULL,
-				PRIMARY KEY (chain_id, token)
-			);
-			INSERT INTO holder_counts (chain_id, token, holders)
-			SELECT chain_id, token, count(*) FROM holder_balances WHERE balance > 0 GROUP BY chain_id, token;
-		END IF;
-	END $$`,
-}
 
 // addHolderCounts ends a statement whose CTE "changed" returns the token and
 // the old and new balance of each holding it touched. It adds one holder per
@@ -80,7 +27,7 @@ func (store *Store) LoadHolderCheckpoint(ctx context.Context, chainID uint64) (c
 	return loadCheckpoint(store.db.WithContext(ctx), holderCheckpoints, chainID)
 }
 
-func (store *Store) Holdings(ctx context.Context, chainID uint64, keys []storage.HolderKey) ([]storage.Holding, error) {
+func (store *Store) Holdings(ctx context.Context, chainID uint64, keys []model.HolderKey) ([]model.Holding, error) {
 	if len(keys) == 0 {
 		return nil, nil
 	}
@@ -96,7 +43,7 @@ func (store *Store) Holdings(ctx context.Context, chainID uint64, keys []storage
 	return toHoldings(rows)
 }
 
-func (store *Store) StaleHoldings(ctx context.Context, chainID uint64, limit int) ([]storage.Holding, error) {
+func (store *Store) StaleHoldings(ctx context.Context, chainID uint64, limit int) ([]model.Holding, error) {
 	var rows []holdingRow
 	err := store.db.WithContext(ctx).Table("holder_balances").Select("token, holder, balance::text AS balance").
 		Where("chain_id = ?", int64(chainID)).Order("verified_height NULLS FIRST").Limit(limit).Find(&rows).Error
@@ -106,7 +53,7 @@ func (store *Store) StaleHoldings(ctx context.Context, chainID uint64, limit int
 	return toHoldings(rows)
 }
 
-func (store *Store) TopHolders(ctx context.Context, chainID uint64, token string, limit int) ([]storage.Holding, error) {
+func (store *Store) TopHolders(ctx context.Context, chainID uint64, token string, limit int) ([]model.Holding, error) {
 	var rows []holdingRow
 	err := store.db.WithContext(ctx).Table("holder_balances AS b").Select("token, holder, balance::text AS balance").
 		Where("chain_id = ? AND token = ? AND b.balance > 0", int64(chainID), token).
@@ -130,7 +77,7 @@ func (store *Store) HolderCount(ctx context.Context, chainID uint64, token strin
 }
 
 // CommitHolders applies change and saves checkpoint in one transaction.
-func (store *Store) CommitHolders(ctx context.Context, checkpoint chainsync.Checkpoint, change storage.HolderChange) error {
+func (store *Store) CommitHolders(ctx context.Context, checkpoint chainsync.Checkpoint, change model.HolderChange) error {
 	if checkpoint.ChainID == 0 {
 		return errors.New("postgres store: checkpoint chain id is required")
 	}
@@ -224,7 +171,7 @@ func (store *Store) CommitHolders(ctx context.Context, checkpoint chainsync.Chec
 	return nil
 }
 
-func splitKeys(keys []storage.HolderKey) ([]string, []string) {
+func splitKeys(keys []model.HolderKey) ([]string, []string) {
 	tokens := make([]string, len(keys))
 	holders := make([]string, len(keys))
 	for index, key := range keys {
@@ -233,14 +180,14 @@ func splitKeys(keys []storage.HolderKey) ([]string, []string) {
 	return tokens, holders
 }
 
-func toHoldings(rows []holdingRow) ([]storage.Holding, error) {
-	holdings := make([]storage.Holding, len(rows))
+func toHoldings(rows []holdingRow) ([]model.Holding, error) {
+	holdings := make([]model.Holding, len(rows))
 	for index, row := range rows {
 		value, ok := new(big.Int).SetString(row.Balance, 10)
 		if !ok {
 			return nil, fmt.Errorf("postgres store: read holdings: invalid balance %q", row.Balance)
 		}
-		holdings[index] = storage.Holding{HolderKey: storage.HolderKey{Token: row.Token, Holder: row.Holder}, Balance: value}
+		holdings[index] = model.Holding{HolderKey: model.HolderKey{Token: row.Token, Holder: row.Holder}, Balance: value}
 	}
 	return holdings, nil
 }

@@ -5,17 +5,17 @@ import (
 	"testing"
 	"time"
 
-	"github.com/AloneAtWar/chainstream-market/internal/storage"
+	"github.com/AloneAtWar/chainstream-market/internal/pkg/model"
 	"github.com/shopspring/decimal"
 )
 
 func TestBlockUpdatesSplitLargeBlocks(t *testing.T) {
-	output := storage.BlockOutput{ChainID: 1, Height: 100, BlockTime: time.Unix(1_700_000_000, 0)}
+	output := model.BlockOutput{ChainID: 1, Height: 100, BlockTime: time.Unix(1_700_000_000, 0)}
 	for index := range 700 {
-		output.Trades = append(output.Trades, storage.Trade{LogIndex: uint32(index), PriceUSD: decimal.NewFromInt(1)})
+		output.Trades = append(output.Trades, model.Trade{LogIndex: uint32(index), PriceUSD: decimal.NewFromInt(1)})
 	}
 	for range 400 {
-		output.Candles = append(output.Candles, storage.Candle{Subject: storage.CandleSubjectPool, Interval: time.Minute})
+		output.Candles = append(output.Candles, model.Candle{Subject: model.CandleSubjectPool, Interval: time.Minute})
 	}
 	updates := BlockUpdates(output, 90)
 	if len(updates) != 3 {
@@ -41,18 +41,18 @@ func TestBlockUpdatesSplitLargeBlocks(t *testing.T) {
 		t.Fatalf("trades = %d, candles = %d", trades, candles)
 	}
 
-	if empty := BlockUpdates(storage.BlockOutput{ChainID: 1, Height: 101}, 90); len(empty) != 1 || empty[0].Type != UpdateBlock {
+	if empty := BlockUpdates(model.BlockOutput{ChainID: 1, Height: 101}, 90); len(empty) != 1 || empty[0].Type != UpdateBlock {
 		t.Fatalf("empty block updates = %+v", empty)
 	}
 }
 
 func TestRevertUpdates(t *testing.T) {
-	latest := storage.Candle{Interval: time.Hour, OpenTime: time.Unix(3600, 0), Close: decimal.NewFromInt(2)}
-	revert := storage.Revert{ChainID: 1, RollbackTo: 99, Candles: []storage.CandleReset{
-		{Subject: storage.CandleSubjectToken, Key: "0xa", Interval: time.Hour, Latest: &latest},
+	latest := model.Candle{Interval: time.Hour, OpenTime: time.Unix(3600, 0), Close: decimal.NewFromInt(2)}
+	revert := model.Revert{ChainID: 1, RollbackTo: 99, Candles: []model.CandleReset{
+		{Subject: model.CandleSubjectToken, Key: "0xa", Interval: time.Hour, Latest: &latest},
 	}}
 	for range 600 {
-		revert.Candles = append(revert.Candles, storage.CandleReset{Subject: storage.CandleSubjectPool, Key: "0xb", Interval: time.Minute})
+		revert.Candles = append(revert.Candles, model.CandleReset{Subject: model.CandleSubjectPool, Key: "0xb", Interval: time.Minute})
 	}
 	updates := RevertUpdates(revert)
 	if len(updates) != 2 || updates[1].Part != 1 || len(updates[0].Resets)+len(updates[1].Resets) != 601 {
@@ -81,13 +81,13 @@ func TestPublisherSkipsOldBlocks(t *testing.T) {
 	defer publisher.Close()
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
-	if err := publisher.NotifyBlock(ctx, storage.BlockOutput{ChainID: 1, BlockTime: now.Add(-2 * time.Minute)}, 0); err != nil {
+	if err := publisher.NotifyBlock(ctx, model.BlockOutput{ChainID: 1, BlockTime: now.Add(-2 * time.Minute)}, 0); err != nil {
 		t.Fatalf("NotifyBlock(old) error = %v", err)
 	}
-	if err := publisher.NotifyBlock(ctx, storage.BlockOutput{ChainID: 56, BlockTime: now}, 0); err != nil {
+	if err := publisher.NotifyBlock(ctx, model.BlockOutput{ChainID: 56, BlockTime: now}, 0); err != nil {
 		t.Fatalf("NotifyBlock(other chain) error = %v", err)
 	}
-	if err := publisher.NotifyRevert(ctx, storage.Revert{ChainID: 56}); err != nil {
+	if err := publisher.NotifyRevert(ctx, model.Revert{ChainID: 56}); err != nil {
 		t.Fatalf("NotifyRevert(other chain) error = %v", err)
 	}
 }

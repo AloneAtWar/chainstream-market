@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/AloneAtWar/chainstream-market/internal/pkg/asset"
-	"github.com/AloneAtWar/chainstream-market/internal/storage"
+	"github.com/AloneAtWar/chainstream-market/internal/pkg/model"
 	streamv1 "github.com/AloneAtWar/chainstream-market/proto/stream/v1"
 	"github.com/shopspring/decimal"
 )
@@ -75,7 +75,7 @@ func (processor *Processor) expireMissed(height int64) {
 //
 // When the raw store has not caught up with the heights to read, only the
 // held trades are replayed.
-func (processor *Processor) backfill(ctx context.Context, height int64, chainID uint64, learned map[string]struct{}, ready []readyTrade) ([]readyTrade, map[string][]storage.PricePoint, error) {
+func (processor *Processor) backfill(ctx context.Context, height int64, chainID uint64, learned map[string]struct{}, ready []readyTrade) ([]readyTrade, map[string][]model.PricePoint, error) {
 	if !processor.backfilling() {
 		return ready, nil, nil
 	}
@@ -185,7 +185,7 @@ func isLearned(catalog asset.Catalog, learned map[string]struct{}, canonical str
 
 // priceAt returns token's stored price at the close of height: its latest
 // stored price at or below height, or an anchor's peg when none is stored.
-func (processor *Processor) priceAt(series map[string][]storage.PricePoint, token string, height int64) (decimal.Decimal, uint8, bool) {
+func (processor *Processor) priceAt(series map[string][]model.PricePoint, token string, height int64) (decimal.Decimal, uint8, bool) {
 	points := series[token]
 	index := sort.Search(len(points), func(index int) bool { return points[index].Height > height })
 	if index > 0 {
@@ -198,7 +198,7 @@ func (processor *Processor) priceAt(series map[string][]storage.PricePoint, toke
 }
 
 // streamTrade rebuilds the published trade from ch-loader's copy.
-func streamTrade(raw storage.RawTrade) *streamv1.Trade {
+func streamTrade(raw model.RawTrade) *streamv1.Trade {
 	trade := &streamv1.Trade{
 		TransactionHash: raw.TransactionHash, TransactionIndex: raw.TransactionIndex,
 		OperationIndex: raw.OperationIndex, Protocol: raw.Protocol, DexAddress: raw.DexAddress,
@@ -230,7 +230,7 @@ type pastKey struct {
 // pastPrices are the recomputed prices of tokens whose decimals a block
 // brought, at the earlier blocks of their replayed trades.
 type pastPrices struct {
-	prices []storage.TokenPrice
+	prices []model.TokenPrice
 	byKey  map[pastKey]tokenPrice
 }
 
@@ -252,7 +252,7 @@ type pastQuote struct {
 // trades, and counterpart prices from the stored series a backfill read, or
 // else from the prices the trades carry. A counterpart whose decimals also
 // just arrived has no past price, so it prices nothing.
-func (processor *Processor) pastPrices(chainID uint64, ready []readyTrade, series map[string][]storage.PricePoint, learned map[string]struct{}) pastPrices {
+func (processor *Processor) pastPrices(chainID uint64, ready []readyTrade, series map[string][]model.PricePoint, learned map[string]struct{}) pastPrices {
 	past := pastPrices{byKey: make(map[pastKey]tokenPrice)}
 	catalog := processor.options.Catalog
 	subjects := make(map[string]struct{}, len(learned))
@@ -308,9 +308,9 @@ func (processor *Processor) pastPrices(chainID uint64, ready []readyTrade, serie
 			}
 			best.Height = height
 			past.byKey[pastKey{token, height}] = best
-			past.prices = append(past.prices, storage.TokenPrice{
+			past.prices = append(past.prices, model.TokenPrice{
 				ChainID: chainID, Token: token, BlockHeight: height, BlockTime: blockTime,
-				PriceUSD: best.USD, Source: storage.PriceSourceGraph, Hops: best.Hops, LiquidityUSD: best.LiquidityUSD,
+				PriceUSD: best.USD, Source: model.PriceSourceGraph, Hops: best.Hops, LiquidityUSD: best.LiquidityUSD,
 			})
 		}
 		start = end

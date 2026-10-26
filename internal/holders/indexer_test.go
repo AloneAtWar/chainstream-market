@@ -10,9 +10,10 @@ import (
 	"time"
 
 	"github.com/AloneAtWar/chainstream-market/internal/pkg/chainsync"
+	"github.com/AloneAtWar/chainstream-market/internal/pkg/model"
+	"github.com/AloneAtWar/chainstream-market/internal/pkg/pgdb"
 	"github.com/AloneAtWar/chainstream-market/internal/pkg/rpc"
 	"github.com/AloneAtWar/chainstream-market/internal/pkg/rpc/rpctest"
-	"github.com/AloneAtWar/chainstream-market/internal/storage"
 	"github.com/AloneAtWar/chainstream-market/internal/storage/pgstore"
 	streamv1 "github.com/AloneAtWar/chainstream-market/proto/stream/v1"
 )
@@ -31,7 +32,7 @@ func openStore(t *testing.T) *pgstore.Store {
 	if dsn == "" {
 		t.Skip("POSTGRES_DSN not set")
 	}
-	store, err := pgstore.Open(context.Background(), pgstore.Options{
+	store, err := pgstore.Open(context.Background(), pgdb.Options{
 		DSN: dsn, Schema: fmt.Sprintf("holders_test_%d", time.Now().UnixNano()),
 	})
 	if err != nil {
@@ -122,7 +123,7 @@ func (f *fixture) commit(height int64, hash string) {
 // balances returns every stored holding of asset.
 func (f *fixture) balances(asset string) map[string]int64 {
 	f.t.Helper()
-	holdings, err := f.store.Holdings(context.Background(), 1, []storage.HolderKey{
+	holdings, err := f.store.Holdings(context.Background(), 1, []model.HolderKey{
 		{Token: asset, Holder: alice}, {Token: asset, Holder: bob}, {Token: asset, Holder: carol},
 	})
 	if err != nil {
@@ -234,7 +235,7 @@ func TestNetTransfers(t *testing.T) {
 		transfer(token, bob, alice, 0),
 		{Token: token, From: alice, To: bob, RawAmount: "bad"},
 	})
-	want := map[storage.HolderKey]int64{{Token: token, Holder: alice}: 6, {Token: token, Holder: bob}: 4}
+	want := map[model.HolderKey]int64{{Token: token, Holder: alice}: 6, {Token: token, Holder: bob}: 4}
 	if len(deltas) != len(want) {
 		t.Fatalf("deltas = %v", deltas)
 	}
