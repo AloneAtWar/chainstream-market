@@ -15,6 +15,7 @@ import (
 	"github.com/AloneAtWar/chainstream-market/internal/live"
 	"github.com/AloneAtWar/chainstream-market/internal/market"
 	"github.com/AloneAtWar/chainstream-market/internal/pkg/chdb"
+	"github.com/AloneAtWar/chainstream-market/internal/pkg/config"
 	"github.com/AloneAtWar/chainstream-market/internal/pkg/source"
 	"github.com/AloneAtWar/chainstream-market/internal/storage"
 	"github.com/google/wire"
@@ -53,7 +54,7 @@ type Sources struct {
 
 // sourceDrivers open a chain topic at an offset, by source.driver.
 var sourceDrivers = map[string]func(bootstrap *conf.Bootstrap) func(topic string, start int64) (source.Source, error){
-	conf.SourceKafka: func(bootstrap *conf.Bootstrap) func(string, int64) (source.Source, error) {
+	config.SourceKafka: func(bootstrap *conf.Bootstrap) func(string, int64) (source.Source, error) {
 		kafka := bootstrap.GetKafka()
 		options := source.KafkaOptions{
 			Brokers: kafka.GetBrokers(), ClientID: kafka.GetClientId(),
@@ -65,7 +66,7 @@ var sourceDrivers = map[string]func(bootstrap *conf.Bootstrap) func(topic string
 			return source.NewKafka(topicOptions, start)
 		}
 	},
-	conf.SourceFile: func(bootstrap *conf.Bootstrap) func(string, int64) (source.Source, error) {
+	config.SourceFile: func(bootstrap *conf.Bootstrap) func(string, int64) (source.Source, error) {
 		file := bootstrap.GetSource().GetFile()
 		return func(topic string, start int64) (source.Source, error) {
 			return source.NewFile(source.FileOptions{
@@ -96,7 +97,7 @@ var liveDrivers = map[string]struct {
 	sink func(bootstrap *conf.Bootstrap) (live.Sink, error)
 	feed func(bootstrap *conf.Bootstrap, logger *slog.Logger) (live.Feed, error)
 }{
-	conf.LiveKafka: {
+	config.LiveKafka: {
 		sink: func(bootstrap *conf.Bootstrap) (live.Sink, error) {
 			return live.NewKafkaSink(liveKafkaOptions(bootstrap, nil))
 		},
@@ -104,7 +105,7 @@ var liveDrivers = map[string]struct {
 			return live.NewKafkaFeed(liveKafkaOptions(bootstrap, logger))
 		},
 	},
-	conf.LiveRedis: {
+	config.LiveRedis: {
 		sink: func(bootstrap *conf.Bootstrap) (live.Sink, error) {
 			return live.NewRedisSink(liveRedisOptions(bootstrap))
 		},
@@ -185,7 +186,7 @@ func NewHub(bootstrap *conf.Bootstrap, logger *slog.Logger) (*live.Hub, error) {
 }
 
 // Retention turns storage.clickhouse.retention into the store's retention.
-func Retention(retention *conf.Retention) chdb.Retention {
+func Retention(retention *config.Retention) chdb.Retention {
 	return chdb.Retention{
 		StoragePolicy: retention.GetStoragePolicy(), ColdVolume: retention.GetColdVolume(),
 		ColdAfterDays: int(retention.GetColdAfterDays()), TradesDays: int(retention.GetTradesDays()),

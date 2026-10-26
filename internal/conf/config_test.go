@@ -6,10 +6,12 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	config "github.com/AloneAtWar/chainstream-market/internal/pkg/config"
 )
 
 func TestParseAppliesDefaults(t *testing.T) {
-	config, err := Parse([]byte(`
+	bootstrap, err := Parse([]byte(`
 kafka:
   brokers: [127.0.0.1:9092]
 chains:
@@ -18,37 +20,37 @@ chains:
 	if err != nil {
 		t.Fatalf("Parse() error = %v", err)
 	}
-	if config.Kafka.FetchMaxBytes != defaultFetchMaxBytes || config.Kafka.FetchMaxWait.AsDuration() != defaultFetchMaxWait {
-		t.Fatalf("kafka defaults = %+v", config.Kafka)
+	if bootstrap.Kafka.FetchMaxBytes != 104857600 || bootstrap.Kafka.FetchMaxWait.AsDuration() != 500*time.Millisecond {
+		t.Fatalf("kafka defaults = %+v", bootstrap.Kafka)
 	}
-	if config.Storage.Driver != StorageMemory {
-		t.Fatalf("storage driver = %q", config.Storage.Driver)
+	if bootstrap.Storage.Driver != config.StorageMemory {
+		t.Fatalf("storage driver = %q", bootstrap.Storage.Driver)
 	}
-	if config.Source.Driver != SourceKafka || config.Live.Driver != LiveKafka {
-		t.Fatalf("source driver = %q, live driver = %q", config.Source.Driver, config.Live.Driver)
+	if bootstrap.Source.Driver != config.SourceKafka || bootstrap.Live.Driver != config.LiveKafka {
+		t.Fatalf("source driver = %q, live driver = %q", bootstrap.Source.Driver, bootstrap.Live.Driver)
 	}
-	if config.Holders.ReconcileEvery != defaultHoldersReconcileEvery || config.Holders.RpcBatchSize != defaultRPCBatchSize ||
-		config.Holders.HistoryDepth != defaultHistoryDepth {
-		t.Fatalf("holders defaults = %+v", config.Holders)
+	if bootstrap.Holders.ReconcileEvery != defaultHoldersReconcileEvery || bootstrap.Holders.RpcBatchSize != defaultRPCBatchSize ||
+		bootstrap.Holders.HistoryDepth != defaultHistoryDepth {
+		t.Fatalf("holders defaults = %+v", bootstrap.Holders)
 	}
-	if config.Registry.HistoryDepth != defaultHistoryDepth {
-		t.Fatalf("registry defaults = %+v", config.Registry)
+	if bootstrap.Registry.HistoryDepth != defaultHistoryDepth {
+		t.Fatalf("registry defaults = %+v", bootstrap.Registry)
 	}
-	if config.ChLoader.BatchLag.AsDuration() != defaultLoaderBatchLag || config.ChLoader.FlushRows != defaultLoaderFlushRows ||
-		config.ChLoader.FlushInterval.AsDuration() != defaultLoaderFlushInterval {
-		t.Fatalf("ch_loader defaults = %+v", config.ChLoader)
+	if bootstrap.ChLoader.BatchLag.AsDuration() != defaultLoaderBatchLag || bootstrap.ChLoader.FlushRows != defaultLoaderFlushRows ||
+		bootstrap.ChLoader.FlushInterval.AsDuration() != defaultLoaderFlushInterval {
+		t.Fatalf("ch_loader defaults = %+v", bootstrap.ChLoader)
 	}
-	if config.State.Driver != StateMemory {
-		t.Fatalf("state driver = %q", config.State.Driver)
+	if bootstrap.State.Driver != config.StateMemory {
+		t.Fatalf("state driver = %q", bootstrap.State.Driver)
 	}
-	if config.Rankings.RefreshInterval.AsDuration() != defaultRankingsRefreshInterval ||
-		config.Rankings.CandleInterval.AsDuration() != defaultRankingsCandleInterval ||
-		config.Rankings.ReorgWindow.AsDuration() != defaultRankingsReorgWindow {
-		t.Fatalf("rankings defaults = %+v", config.Rankings)
+	if bootstrap.Rankings.RefreshInterval.AsDuration() != defaultRankingsRefreshInterval ||
+		bootstrap.Rankings.CandleInterval.AsDuration() != defaultRankingsCandleInterval ||
+		bootstrap.Rankings.ReorgWindow.AsDuration() != defaultRankingsReorgWindow {
+		t.Fatalf("rankings defaults = %+v", bootstrap.Rankings)
 	}
-	if config.Market.MaxHops != defaultMaxHops || len(config.Market.Intervals) != len(DefaultIntervals()) ||
-		config.Market.MinLiquidityUsd != defaultMinLiquidityUSD || config.Market.HistoryDepth != defaultHistoryDepth {
-		t.Fatalf("market defaults = %+v", config.Market)
+	if bootstrap.Market.MaxHops != defaultMaxHops || len(bootstrap.Market.Intervals) != len(DefaultIntervals()) ||
+		bootstrap.Market.MinLiquidityUsd != defaultMinLiquidityUSD || bootstrap.Market.HistoryDepth != defaultHistoryDepth {
+		t.Fatalf("market defaults = %+v", bootstrap.Market)
 	}
 }
 
@@ -101,7 +103,7 @@ func TestParseRejectsInvalidConfig(t *testing.T) {
 }
 
 func TestParseLive(t *testing.T) {
-	config, err := Parse([]byte(`
+	bootstrap, err := Parse([]byte(`
 kafka:
   brokers: [127.0.0.1:9092]
 live:
@@ -115,18 +117,18 @@ chains:
 	if err != nil {
 		t.Fatalf("Parse() error = %v", err)
 	}
-	live := config.Live
-	if live.MaxLag.AsDuration() != -time.Second || live.CandleThrottle.AsDuration() != defaultLiveCandleThrottle ||
-		live.ClientBuffer != defaultLiveClientBuffer || live.MaxSubscriptions != defaultLiveMaxSubscriptions ||
+	live := bootstrap.Live
+	if live.MaxLag.AsDuration() != -time.Second || live.CandleThrottle.AsDuration() != 250*time.Millisecond ||
+		live.ClientBuffer != 1024 || live.MaxSubscriptions != 200 ||
 		len(live.AllowedOrigins) != 1 {
 		t.Fatalf("live = %+v", live)
 	}
-	topics := config.LiveTopics()
+	topics := bootstrap.LiveTopics()
 	if len(topics) != 2 || topics[1] != "chainstream-eth-live" || topics[8453] != "base-push" {
 		t.Fatalf("LiveTopics() = %v", topics)
 	}
-	config.Live.Enabled = false
-	if topics := config.LiveTopics(); topics != nil {
+	bootstrap.Live.Enabled = false
+	if topics := bootstrap.LiveTopics(); topics != nil {
 		t.Fatalf("disabled LiveTopics() = %v", topics)
 	}
 }
@@ -134,7 +136,7 @@ chains:
 // TestParseWithoutKafka reads chain topics from files and pushes live
 // updates through Redis, so no kafka brokers are needed.
 func TestParseWithoutKafka(t *testing.T) {
-	config, err := Parse([]byte(`
+	bootstrap, err := Parse([]byte(`
 source:
   driver: file
   file: {dir: data}
@@ -148,14 +150,14 @@ chains:
 	if err != nil {
 		t.Fatalf("Parse() error = %v", err)
 	}
-	if config.Source.File.PollInterval.AsDuration() != defaultSourcePollInterval ||
-		config.Live.Redis.DialTimeout.AsDuration() != defaultRedisDialTimeout {
-		t.Fatalf("source = %+v, live = %+v", config.Source, config.Live)
+	if bootstrap.Source.File.PollInterval.AsDuration() != 200*time.Millisecond ||
+		bootstrap.Live.Redis.DialTimeout.AsDuration() != 5*time.Second {
+		t.Fatalf("source = %+v, live = %+v", bootstrap.Source, bootstrap.Live)
 	}
 }
 
 func TestParseFeeds(t *testing.T) {
-	config, err := Parse([]byte(`
+	bootstrap, err := Parse([]byte(`
 kafka: {brokers: [b]}
 chains:
   - name: eth
@@ -170,20 +172,20 @@ chains:
 	if err != nil {
 		t.Fatalf("Parse() error = %v", err)
 	}
-	feeds := config.Chains[0].Feeds
+	feeds := bootstrap.Chains[0].Feeds
 	if len(feeds) != 3 || feeds[1].Proxy != "0xproxy" || feeds[1].Description != "ETH / USD" || feeds[2].Token != "0xother" {
 		t.Fatalf("feeds = %+v", feeds)
 	}
 	if feeds[0].Address != "0xfeed" || feeds[0].Token != "0xtoken" || feeds[0].Decimals != 8 {
 		t.Fatalf("feeds = %+v", feeds)
 	}
-	if config.Market.OracleDeviation != defaultOracleDeviation || config.Market.OutlierDeviation != defaultOutlierDeviation {
-		t.Fatalf("deviations = %v, %v", config.Market.OracleDeviation, config.Market.OutlierDeviation)
+	if bootstrap.Market.OracleDeviation != defaultOracleDeviation || bootstrap.Market.OutlierDeviation != defaultOutlierDeviation {
+		t.Fatalf("deviations = %v, %v", bootstrap.Market.OracleDeviation, bootstrap.Market.OutlierDeviation)
 	}
 }
 
 func TestParseClickHouseStorage(t *testing.T) {
-	config, err := Parse([]byte(`
+	bootstrap, err := Parse([]byte(`
 kafka: {brokers: [b]}
 storage:
   driver: clickhouse
@@ -193,13 +195,13 @@ chains: [{name: eth, chain_id: 1, topic: a}]
 	if err != nil {
 		t.Fatalf("Parse() error = %v", err)
 	}
-	if config.Storage.Clickhouse.Database != defaultClickHouseDatabase {
-		t.Fatalf("database = %q", config.Storage.Clickhouse.Database)
+	if bootstrap.Storage.Clickhouse.Database != "market" {
+		t.Fatalf("database = %q", bootstrap.Storage.Clickhouse.Database)
 	}
 }
 
 func TestParsePostgresState(t *testing.T) {
-	config, err := Parse([]byte(`
+	bootstrap, err := Parse([]byte(`
 kafka: {brokers: [b]}
 state:
   driver: postgres
@@ -209,26 +211,26 @@ chains: [{name: eth, chain_id: 1, topic: a}]
 	if err != nil {
 		t.Fatalf("Parse() error = %v", err)
 	}
-	if config.State.Postgres.Dsn != "postgres://market@127.0.0.1:5432/market" || config.State.Postgres.Schema != "engine" {
-		t.Fatalf("state = %+v", config.State)
+	if bootstrap.State.Postgres.Dsn != "postgres://market@127.0.0.1:5432/market" || bootstrap.State.Postgres.Schema != "engine" {
+		t.Fatalf("state = %+v", bootstrap.State)
 	}
 }
 
 func TestLoadRepositoryConfig(t *testing.T) {
-	config := mustLoad(t, filepath.Join("..", "..", "configs", "config.yaml"))
-	if len(config.Chains) != 3 {
-		t.Fatalf("chains = %d, want 3", len(config.Chains))
+	bootstrap := mustLoad(t, filepath.Join("..", "..", "configs", "config.yaml"))
+	if len(bootstrap.Chains) != 3 {
+		t.Fatalf("chains = %d, want 3", len(bootstrap.Chains))
 	}
-	if config.Kafka.FetchMaxWait.AsDuration() != time.Second/2 {
-		t.Fatalf("fetch_max_wait = %s", config.Kafka.FetchMaxWait)
+	if bootstrap.Kafka.FetchMaxWait.AsDuration() != time.Second/2 {
+		t.Fatalf("fetch_max_wait = %s", bootstrap.Kafka.FetchMaxWait)
 	}
-	if days := config.Storage.Clickhouse.Retention.CandleDayDurations(); days[time.Minute] != 30 || days[5*time.Minute] != 180 {
+	if days := bootstrap.Storage.Clickhouse.Retention.CandleDayDurations(); days[time.Minute] != 30 || days[5*time.Minute] != 180 {
 		t.Fatalf("candle_days = %v", days)
 	}
 }
 
 func TestParseRetention(t *testing.T) {
-	config, err := Parse([]byte(`
+	bootstrap, err := Parse([]byte(`
 kafka: {brokers: [b]}
 storage:
   driver: clickhouse
@@ -244,8 +246,8 @@ chains: [{name: eth, chain_id: 1, topic: a}]
 	if err != nil {
 		t.Fatalf("Parse() error = %v", err)
 	}
-	retention := config.Storage.Clickhouse.Retention
-	if retention.ColdVolume != defaultColdVolume || retention.ColdAfterDays != 30 || retention.TradesDays != 180 {
+	retention := bootstrap.Storage.Clickhouse.Retention
+	if retention.ColdVolume != "cold" || retention.ColdAfterDays != 30 || retention.TradesDays != 180 {
 		t.Fatalf("retention = %+v", retention)
 	}
 	if days := retention.CandleDayDurations(); len(days) != 2 || days[time.Minute] != 7 {
@@ -281,13 +283,13 @@ chains:
 	if err := os.WriteFile(path, []byte(raw), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	config := mustLoad(t, path)
-	if config.Kafka.Brokers[0] != "127.0.0.1:9092" || config.Kafka.FetchMaxWait.AsDuration() != 2*time.Second {
-		t.Fatalf("kafka = %+v", config.Kafka)
+	bootstrap := mustLoad(t, path)
+	if bootstrap.Kafka.Brokers[0] != "127.0.0.1:9092" || bootstrap.Kafka.FetchMaxWait.AsDuration() != 2*time.Second {
+		t.Fatalf("kafka = %+v", bootstrap.Kafka)
 	}
-	chain := config.Chains[0]
-	if !config.Live.Enabled || chain.RpcUrl != "http://node:8545" || chain.LiveTopic != "a-live" {
-		t.Fatalf("chain = %+v, live = %+v", chain, config.Live)
+	chain := bootstrap.Chains[0]
+	if !bootstrap.Live.Enabled || chain.RpcUrl != "http://node:8545" || chain.LiveTopic != "a-live" {
+		t.Fatalf("chain = %+v, live = %+v", chain, bootstrap.Live)
 	}
 	// Unquoted hex stays text in string fields.
 	if feed := chain.Feeds[0]; feed.Address != "0x1f" || feed.Token != "0x00a1" {
@@ -298,23 +300,23 @@ chains:
 // mustLoad calls Load and closes the config.
 func mustLoad(t *testing.T, path string) *Bootstrap {
 	t.Helper()
-	config, closeConfig, err := Load(path)
+	bootstrap, closeConfig, err := Load(path)
 	if err != nil {
 		t.Fatalf("Load() error = %v", err)
 	}
 	if err := closeConfig(); err != nil {
 		t.Fatalf("close config: %v", err)
 	}
-	return config
+	return bootstrap
 }
 
 func TestLoadDeployConfig(t *testing.T) {
 	t.Setenv("ETH_RPC_URL", "http://node:8545")
-	config := mustLoad(t, filepath.Join("..", "..", "deploy", "config.yaml"))
-	if config.Storage.Driver != StorageClickHouse || config.State.Driver != StatePostgres || config.Metrics.Addr != ":9100" {
-		t.Fatalf("config = %+v", config)
+	bootstrap := mustLoad(t, filepath.Join("..", "..", "deploy", "config.yaml"))
+	if bootstrap.Storage.Driver != config.StorageClickHouse || bootstrap.State.Driver != config.StatePostgres || bootstrap.Metrics.Addr != ":9100" {
+		t.Fatalf("config = %+v", bootstrap)
 	}
-	if len(config.Chains) != 1 || config.Chains[0].RpcUrl != "http://node:8545" {
-		t.Fatalf("chains = %+v", config.Chains)
+	if len(bootstrap.Chains) != 1 || bootstrap.Chains[0].RpcUrl != "http://node:8545" {
+		t.Fatalf("chains = %+v", bootstrap.Chains)
 	}
 }

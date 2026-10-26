@@ -5,31 +5,12 @@ import (
 	"strings"
 	"time"
 
+	"github.com/AloneAtWar/chainstream-market/internal/pkg/config"
 	"google.golang.org/protobuf/types/known/durationpb"
 )
 
 const (
-	StorageMemory     = "memory"
-	StorageClickHouse = "clickhouse"
-
-	StateMemory   = "memory"
-	StatePostgres = "postgres"
-
-	SourceKafka = "kafka"
-	SourceFile  = "file"
-
-	LiveKafka = "kafka"
-	LiveRedis = "redis"
-
-	defaultClickHouseDatabase = "market"
-	defaultAPIAddr            = ":8080"
-	defaultColdVolume         = "cold"
-
-	defaultFetchMaxBytes = 104857600
-	defaultFetchMaxWait  = 500 * time.Millisecond
-
-	defaultSourcePollInterval = 200 * time.Millisecond
-	defaultRedisDialTimeout   = 5 * time.Second
+	defaultAPIAddr = ":8080"
 
 	defaultMinLiquidityUSD       = 1000
 	defaultCandleMinLiquidityUSD = 10000
@@ -56,12 +37,6 @@ const (
 	defaultLoaderBatchLag      = 5 * time.Minute
 	defaultLoaderFlushRows     = 100000
 	defaultLoaderFlushInterval = 2 * time.Second
-
-	defaultLiveMaxLag           = 10 * time.Minute
-	defaultLiveCandleThrottle   = 250 * time.Millisecond
-	defaultLiveClientBuffer     = 1024
-	defaultLiveMaxSubscriptions = 200
-	liveTopicSuffix             = "-live"
 )
 
 // DefaultIntervals are the candle sizes used when none are configured.
@@ -71,32 +46,20 @@ func DefaultIntervals() []time.Duration {
 	}
 }
 
-// applyDefaults fills every section, so readers may use the fields of
+// ApplyDefaults fills every section, so readers may use the fields of
 // Bootstrap directly, and replaces unset settings with their defaults.
-func (bootstrap *Bootstrap) applyDefaults() {
+func (bootstrap *Bootstrap) ApplyDefaults() {
 	if bootstrap.Kafka == nil {
-		bootstrap.Kafka = &Kafka{}
+		bootstrap.Kafka = &config.Kafka{}
 	}
 	if bootstrap.Source == nil {
-		bootstrap.Source = &Source{}
-	}
-	if bootstrap.Source.File == nil {
-		bootstrap.Source.File = &FileSource{}
+		bootstrap.Source = &config.Source{}
 	}
 	if bootstrap.Storage == nil {
-		bootstrap.Storage = &Storage{}
-	}
-	if bootstrap.Storage.Clickhouse == nil {
-		bootstrap.Storage.Clickhouse = &ClickHouse{}
-	}
-	if bootstrap.Storage.Clickhouse.Retention == nil {
-		bootstrap.Storage.Clickhouse.Retention = &Retention{}
+		bootstrap.Storage = &config.Storage{}
 	}
 	if bootstrap.State == nil {
-		bootstrap.State = &State{}
-	}
-	if bootstrap.State.Postgres == nil {
-		bootstrap.State.Postgres = &Postgres{}
+		bootstrap.State = &config.State{}
 	}
 	if bootstrap.Market == nil {
 		bootstrap.Market = &Market{}
@@ -117,20 +80,17 @@ func (bootstrap *Bootstrap) applyDefaults() {
 		bootstrap.ChLoader = &ChLoader{}
 	}
 	if bootstrap.Live == nil {
-		bootstrap.Live = &Live{}
-	}
-	if bootstrap.Live.Redis == nil {
-		bootstrap.Live.Redis = &Redis{}
+		bootstrap.Live = &config.Live{}
 	}
 	if bootstrap.Metrics == nil {
-		bootstrap.Metrics = &Metrics{}
+		bootstrap.Metrics = &config.Metrics{}
 	}
-
-	kafka := bootstrap.Kafka
-	if kafka.FetchMaxBytes == 0 {
-		kafka.FetchMaxBytes = defaultFetchMaxBytes
-	}
-	defaultDuration(&kafka.FetchMaxWait, defaultFetchMaxWait)
+	bootstrap.Kafka.ApplyDefaults()
+	bootstrap.Source.ApplyDefaults()
+	bootstrap.Storage.ApplyDefaults()
+	bootstrap.State.ApplyDefaults()
+	bootstrap.Live.ApplyDefaults()
+	config.ApplyChainDefaults(bootstrap.Chains)
 
 	market := bootstrap.Market
 	if market.MinLiquidityUsd == 0 {
@@ -165,11 +125,8 @@ func (bootstrap *Bootstrap) applyDefaults() {
 	if market.BackfillBlocks == 0 {
 		market.BackfillBlocks = defaultBackfillBlocks
 	}
-	defaultDuration(&market.BackfillWait, defaultBackfillWait)
+	config.DefaultDuration(&market.BackfillWait, defaultBackfillWait)
 
-	if strings.TrimSpace(bootstrap.Storage.Driver) == "" {
-		bootstrap.Storage.Driver = StorageMemory
-	}
 	holders := bootstrap.Holders
 	if holders.HistoryDepth == 0 {
 		holders.HistoryDepth = defaultHistoryDepth
@@ -186,10 +143,10 @@ func (bootstrap *Bootstrap) applyDefaults() {
 	if holders.RpcBatchSize == 0 {
 		holders.RpcBatchSize = defaultRPCBatchSize
 	}
-	defaultDuration(&holders.RpcTimeout, defaultRPCTimeout)
+	config.DefaultDuration(&holders.RpcTimeout, defaultRPCTimeout)
 
 	rankings := bootstrap.Rankings
-	defaultDuration(&rankings.RefreshInterval, defaultRankingsRefreshInterval)
+	config.DefaultDuration(&rankings.RefreshInterval, defaultRankingsRefreshInterval)
 	if rankings.CandleInterval.AsDuration() == 0 {
 		intervals := market.IntervalDurations()
 		candleInterval := slices.Min(intervals)
@@ -198,57 +155,17 @@ func (bootstrap *Bootstrap) applyDefaults() {
 		}
 		rankings.CandleInterval = durationpb.New(candleInterval)
 	}
-	defaultDuration(&rankings.ReorgWindow, defaultRankingsReorgWindow)
+	config.DefaultDuration(&rankings.ReorgWindow, defaultRankingsReorgWindow)
 
 	loader := bootstrap.ChLoader
-	defaultDuration(&loader.BatchLag, defaultLoaderBatchLag)
+	config.DefaultDuration(&loader.BatchLag, defaultLoaderBatchLag)
 	if loader.FlushRows == 0 {
 		loader.FlushRows = defaultLoaderFlushRows
 	}
-	defaultDuration(&loader.FlushInterval, defaultLoaderFlushInterval)
+	config.DefaultDuration(&loader.FlushInterval, defaultLoaderFlushInterval)
 
-	if strings.TrimSpace(bootstrap.Source.Driver) == "" {
-		bootstrap.Source.Driver = SourceKafka
-	}
-	defaultDuration(&bootstrap.Source.File.PollInterval, defaultSourcePollInterval)
-
-	live := bootstrap.Live
-	if strings.TrimSpace(live.Driver) == "" {
-		live.Driver = LiveKafka
-	}
-	defaultDuration(&live.Redis.DialTimeout, defaultRedisDialTimeout)
-	defaultDuration(&live.MaxLag, defaultLiveMaxLag)
-	defaultDuration(&live.CandleThrottle, defaultLiveCandleThrottle)
-	if live.ClientBuffer == 0 {
-		live.ClientBuffer = defaultLiveClientBuffer
-	}
-	if live.MaxSubscriptions == 0 {
-		live.MaxSubscriptions = defaultLiveMaxSubscriptions
-	}
-	for _, chain := range bootstrap.Chains {
-		if strings.TrimSpace(chain.LiveTopic) == "" && chain.Topic != "" {
-			chain.LiveTopic = chain.Topic + liveTopicSuffix
-		}
-	}
-	if strings.TrimSpace(bootstrap.State.Driver) == "" {
-		bootstrap.State.Driver = StateMemory
-	}
 	if strings.TrimSpace(bootstrap.Api.Addr) == "" {
 		bootstrap.Api.Addr = defaultAPIAddr
-	}
-	clickhouse := bootstrap.Storage.Clickhouse
-	if bootstrap.Storage.Driver == StorageClickHouse && clickhouse.Database == "" {
-		clickhouse.Database = defaultClickHouseDatabase
-	}
-	if clickhouse.Retention.ColdVolume == "" {
-		clickhouse.Retention.ColdVolume = defaultColdVolume
-	}
-}
-
-// defaultDuration sets *value to fallback when it is unset or zero.
-func defaultDuration(value **durationpb.Duration, fallback time.Duration) {
-	if (*value).AsDuration() == 0 {
-		*value = durationpb.New(fallback)
 	}
 }
 
@@ -261,27 +178,8 @@ func (market *Market) IntervalDurations() []time.Duration {
 	return intervals
 }
 
-// CandleDayDurations returns candle_days keyed by interval. Validate has
-// checked that every key parses.
-func (retention *Retention) CandleDayDurations() map[time.Duration]int {
-	days := make(map[time.Duration]int, len(retention.GetCandleDays()))
-	for key, age := range retention.GetCandleDays() {
-		if interval, err := time.ParseDuration(key); err == nil {
-			days[interval] = int(age)
-		}
-	}
-	return days
-}
-
 // LiveTopics maps chain IDs to their live topics, or returns nil when live
 // push is disabled.
 func (bootstrap *Bootstrap) LiveTopics() map[uint64]string {
-	if !bootstrap.GetLive().GetEnabled() {
-		return nil
-	}
-	topics := make(map[uint64]string, len(bootstrap.Chains))
-	for _, chain := range bootstrap.Chains {
-		topics[chain.ChainId] = chain.LiveTopic
-	}
-	return topics
+	return config.LiveTopics(bootstrap.GetLive(), bootstrap.GetChains())
 }

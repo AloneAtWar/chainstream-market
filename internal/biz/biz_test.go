@@ -12,9 +12,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/AloneAtWar/chainstream-market/internal/conf"
 	"github.com/AloneAtWar/chainstream-market/internal/market"
 	"github.com/AloneAtWar/chainstream-market/internal/pkg/asset"
+	"github.com/AloneAtWar/chainstream-market/internal/pkg/config"
 )
 
 const (
@@ -62,7 +62,7 @@ func TestResolveFeedsReadsProxies(t *testing.T) {
 	node := proxyNode(t)
 	defer node.Close()
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	chain := &conf.Chain{Name: "base", RpcUrl: node.URL, Feeds: []*conf.Feed{
+	chain := &config.Chain{Name: "base", RpcUrl: node.URL, Feeds: []*config.Feed{
 		{Proxy: proxy, Token: weth, Description: "eth / usd"},
 		{Proxy: proxy, Token: asset.NativeAddress, Decimals: 8},
 		{Address: "0xcc", Token: "0xdd", Decimals: 18},
@@ -80,12 +80,12 @@ func TestResolveFeedsReadsProxies(t *testing.T) {
 		t.Fatalf("ResolveFeeds() = %+v, want %+v", feeds, want)
 	}
 
-	for name, feed := range map[string]*conf.Feed{
+	for name, feed := range map[string]*config.Feed{
 		"wrong decimals":    {Proxy: proxy, Token: weth, Decimals: 18},
 		"wrong description": {Proxy: proxy, Token: weth, Description: "BTC / USD"},
 		"not a proxy":       {Proxy: "0x00000000000000000000000000000000000000ee", Token: weth},
 	} {
-		chain.Feeds = []*conf.Feed{feed}
+		chain.Feeds = []*config.Feed{feed}
 		if _, err := ResolveFeeds(context.Background(), chain, logger); err == nil {
 			t.Fatalf("ResolveFeeds() with %s error = nil", name)
 		}

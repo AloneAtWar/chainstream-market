@@ -19,6 +19,7 @@ import (
 	"github.com/AloneAtWar/chainstream-market/internal/pkg/asset"
 	"github.com/AloneAtWar/chainstream-market/internal/pkg/chainlink"
 	"github.com/AloneAtWar/chainstream-market/internal/pkg/chainsync"
+	"github.com/AloneAtWar/chainstream-market/internal/pkg/config"
 	"github.com/AloneAtWar/chainstream-market/internal/pkg/rpc"
 	"github.com/AloneAtWar/chainstream-market/internal/rankings"
 	"github.com/AloneAtWar/chainstream-market/internal/registry"
@@ -47,14 +48,14 @@ type Runner struct {
 // so the process restarts from consistent checkpoints.
 type Runners []Runner
 
-func engineRunner(chain *conf.Chain, chainEngine *chainsync.Engine) Runner {
+func engineRunner(chain *config.Chain, chainEngine *chainsync.Engine) Runner {
 	return Runner{Name: "chain " + chain.GetName(), Run: chainEngine.Run}
 }
 
 // NewMarketEngines builds market-engine's processor and engine per chain.
 func NewMarketEngines(
 	ctx context.Context,
-	chains []*conf.Chain,
+	chains []*config.Chain,
 	marketConfig *conf.Market,
 	sources *data.Sources,
 	output storage.Output,
@@ -111,7 +112,7 @@ func NewMarketEngines(
 // ResolveFeeds turns a chain's configured feeds into trusted aggregators.
 // A proxy is read over the chain's rpc_url for the aggregator of every phase,
 // and its decimals and description are checked against the config.
-func ResolveFeeds(ctx context.Context, chain *conf.Chain, logger *slog.Logger) ([]market.Feed, error) {
+func ResolveFeeds(ctx context.Context, chain *config.Chain, logger *slog.Logger) ([]market.Feed, error) {
 	var client *rpc.Client
 	proxies := make(map[string]chainlink.Proxy)
 	var feeds []market.Feed
@@ -154,7 +155,7 @@ func ResolveFeeds(ctx context.Context, chain *conf.Chain, logger *slog.Logger) (
 
 // NewHolderEngines builds holder-indexer's balanceOf client, indexer and
 // engine per chain.
-func NewHolderEngines(chains []*conf.Chain, holderConfig *conf.Holders, sources *data.Sources, store storage.HolderStore, logger *slog.Logger) (Runners, error) {
+func NewHolderEngines(chains []*config.Chain, holderConfig *conf.Holders, sources *data.Sources, store storage.HolderStore, logger *slog.Logger) (Runners, error) {
 	runners := make(Runners, 0, len(chains))
 	for _, chain := range chains {
 		if strings.TrimSpace(chain.GetRpcUrl()) == "" {
@@ -190,7 +191,7 @@ func NewHolderEngines(chains []*conf.Chain, holderConfig *conf.Holders, sources 
 }
 
 // NewRegistryEngines builds market-registry's handler and engine per chain.
-func NewRegistryEngines(chains []*conf.Chain, registryConfig *conf.Registry, sources *data.Sources, store storage.RegistryStore, logger *slog.Logger) (Runners, error) {
+func NewRegistryEngines(chains []*config.Chain, registryConfig *conf.Registry, sources *data.Sources, store storage.RegistryStore, logger *slog.Logger) (Runners, error) {
 	runners := make(Runners, 0, len(chains))
 	for _, chain := range chains {
 		handler, err := registry.New(registry.Options{
@@ -215,7 +216,7 @@ func NewRegistryEngines(chains []*conf.Chain, registryConfig *conf.Registry, sou
 // NewLoaderEngines builds ch-loader's loader and engine per chain. A chain that stops cleanly writes its buffered batch, so
 // a restart replays less.
 func NewLoaderEngines(
-	chains []*conf.Chain,
+	chains []*config.Chain,
 	loaderConfig *conf.ChLoader,
 	sources *data.Sources,
 	store storage.RawStore,
@@ -255,7 +256,7 @@ func NewLoaderEngines(
 }
 
 // NewRefreshers builds market-rankings' refresher per chain.
-func NewRefreshers(chains []*conf.Chain, rankingConfig *conf.Rankings, source storage.RankingSource, store storage.RankingStore, logger *slog.Logger) (Runners, error) {
+func NewRefreshers(chains []*config.Chain, rankingConfig *conf.Rankings, source storage.RankingSource, store storage.RankingStore, logger *slog.Logger) (Runners, error) {
 	period := rankingConfig.GetRefreshInterval().AsDuration()
 	logger.Info("refreshing rankings", "every", period, "candle_interval", rankingConfig.GetCandleInterval().AsDuration())
 	runners := make(Runners, 0, len(chains))

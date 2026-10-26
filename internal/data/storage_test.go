@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/AloneAtWar/chainstream-market/internal/conf"
+	"github.com/AloneAtWar/chainstream-market/internal/pkg/config"
 	"github.com/AloneAtWar/chainstream-market/internal/storage"
 	"github.com/AloneAtWar/chainstream-market/internal/storage/chraw"
 	"github.com/AloneAtWar/chainstream-market/internal/storage/chstore"
@@ -42,7 +43,7 @@ var (
 
 func TestMemoryMarketBackend(t *testing.T) {
 	ctx := context.Background()
-	config := &conf.Storage{Driver: conf.StorageMemory}
+	config := &config.Storage{Driver: config.StorageMemory}
 	backend, cleanup, err := NewMarketBackend(ctx, config, slog.Default())
 	if err != nil {
 		t.Fatalf("NewMarketBackend() error = %v", err)
@@ -62,7 +63,7 @@ func TestMemoryMarketBackend(t *testing.T) {
 }
 
 func TestMemoryHasNoRawBackend(t *testing.T) {
-	config := &conf.Storage{Driver: conf.StorageMemory}
+	config := &config.Storage{Driver: config.StorageMemory}
 	_, _, err := NewRawBackend(context.Background(), config, slog.Default())
 	if err == nil || !strings.Contains(err.Error(), `storage.driver "memory" has no raw backend; use one of: clickhouse`) {
 		t.Fatalf("NewRawBackend() error = %v", err)
@@ -75,7 +76,7 @@ func TestMemoryHasNoRawBackend(t *testing.T) {
 }
 
 func TestMemoryStateBackend(t *testing.T) {
-	backend, cleanup, err := NewStateBackend(context.Background(), &conf.State{Driver: conf.StateMemory}, slog.Default())
+	backend, cleanup, err := NewStateBackend(context.Background(), &config.State{Driver: config.StateMemory}, slog.Default())
 	if err != nil {
 		t.Fatalf("NewStateBackend() error = %v", err)
 	}
@@ -98,7 +99,7 @@ func TestMemoryStateBackend(t *testing.T) {
 }
 
 func TestUnknownDriver(t *testing.T) {
-	_, _, err := NewStateBackend(context.Background(), &conf.State{Driver: "sqlite"}, slog.Default())
+	_, _, err := NewStateBackend(context.Background(), &config.State{Driver: "sqlite"}, slog.Default())
 	if err == nil || err.Error() != `state.driver "sqlite" has no state backend; use one of: memory, postgres` {
 		t.Fatalf("NewStateBackend() error = %v", err)
 	}

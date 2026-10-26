@@ -24,11 +24,12 @@ Market data services built on the [chainstream-evm](https://github.com/AloneAtWa
 | `internal/storage/chstore` | market-engine's ClickHouse output store and its queries, through GORM. |
 | `internal/storage/chraw` | ch-loader's ClickHouse raw fact store and its queries, through GORM. |
 | `internal/storage/pgstore` | PostgreSQL (through GORM) queries over checkpoints, market state, holder balances and the token and pool registry. |
-| `internal/conf` | Configuration: the `Bootstrap` proto in `conf.proto`, loaded with Kratos config, plus defaults and validation. |
+| `internal/conf` | Configuration: the `Bootstrap` proto in `conf.proto`, plus the defaults and validation of the sections that belong to one command. |
 | `internal/data` | wire providers for the stores, Kafka sources and live publisher, built from the config. Stores are opened by the driver the config names and provided by role; see [Storage backends](#storage-backends). |
 | `internal/biz` | wire providers for each command's handlers and the workers they run. |
 | `internal/service` | wire provider for market-api's HTTP handler. |
 | `internal/server` | Kratos transport servers: HTTP, metrics and the long-running workers. |
+| `internal/pkg/config` | The config loader, and the sections more than one command reads in `common.proto`: the chain source, the databases, live push, metrics and the chains. |
 | `internal/pkg/model` | The data the components exchange: block output (oriented trades, token prices, candles), holder balances, token and pool metadata, raw facts and rankings. |
 | `internal/pkg/chdb` | The shared ClickHouse connection, the DDL of every table in it and their retention TTLs. |
 | `internal/pkg/pgdb` | The shared PostgreSQL connection and the DDL of every table in it. Each service creates them all under an advisory lock, so services can start in any order. |
@@ -406,11 +407,11 @@ The config file may read the environment: `${NAME}` is replaced by the variable,
 Requires Go 1.26.10 and Buf.
 
 ```sh
-make generate   # regenerate internal/conf, the abigen bindings, wire_gen.go and proto/stream/v1, and tidy both modules
+make generate   # regenerate the config protos, the abigen bindings, wire_gen.go and proto/stream/v1, and tidy both modules
 make verify     # buf lint, gofmt, golangci-lint, go test -race
 ```
 
-Every command follows chainstream-evm's layout. `main.go` loads `-conf` into `conf.Bootstrap` with Kratos config, and `wire.go` lists the provider sets that `wireApp` assembles into a `kratos.App`. Change a constructor or a provider set, then run `make wire` (or `go generate ./cmd/...`) to rewrite the `wire_gen.go` files; change `internal/conf/conf.proto`, then run `make config`. CI runs `make generate` and fails when it changes or adds any file.
+Every command follows chainstream-evm's layout. `main.go` loads `-conf` into `conf.Bootstrap` with Kratos config, and `wire.go` lists the provider sets that `wireApp` assembles into a `kratos.App`. Change a constructor or a provider set, then run `make wire` (or `go generate ./cmd/...`) to rewrite the `wire_gen.go` files; change `internal/conf/conf.proto` or `internal/pkg/config/common.proto`, then run `make config`. CI runs `make generate` and fails when it changes or adds any file.
 
 ### Chain calls
 

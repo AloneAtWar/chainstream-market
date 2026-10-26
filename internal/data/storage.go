@@ -12,6 +12,7 @@ import (
 
 	"github.com/AloneAtWar/chainstream-market/internal/conf"
 	"github.com/AloneAtWar/chainstream-market/internal/pkg/chdb"
+	"github.com/AloneAtWar/chainstream-market/internal/pkg/config"
 	"github.com/AloneAtWar/chainstream-market/internal/pkg/pgdb"
 	"github.com/AloneAtWar/chainstream-market/internal/storage"
 	"github.com/AloneAtWar/chainstream-market/internal/storage/chraw"
@@ -36,16 +37,16 @@ import (
 type Opener[Config any] func(ctx context.Context, config Config, logger *slog.Logger) (store any, cleanup func(), err error)
 
 var (
-	marketDrivers = map[string]Opener[*conf.Storage]{
-		conf.StorageMemory:     openMemory,
-		conf.StorageClickHouse: openClickHouse,
+	marketDrivers = map[string]Opener[*config.Storage]{
+		config.StorageMemory:     openMemory,
+		config.StorageClickHouse: openClickHouse,
 	}
-	rawDrivers = map[string]Opener[*conf.Storage]{
-		conf.StorageClickHouse: openClickHouseRaw,
+	rawDrivers = map[string]Opener[*config.Storage]{
+		config.StorageClickHouse: openClickHouseRaw,
 	}
-	stateDrivers = map[string]Opener[*conf.State]{
-		conf.StateMemory:   openMemoryState,
-		conf.StatePostgres: openPostgres,
+	stateDrivers = map[string]Opener[*config.State]{
+		config.StateMemory:   openMemoryState,
+		config.StatePostgres: openPostgres,
 	}
 )
 
@@ -85,7 +86,7 @@ func driverNames[Driver any](drivers map[string]Driver) string {
 }
 
 // NewMarketBackend opens the market backend storage.driver names.
-func NewMarketBackend(ctx context.Context, config *conf.Storage, logger *slog.Logger) (*MarketBackend, func(), error) {
+func NewMarketBackend(ctx context.Context, config *config.Storage, logger *slog.Logger) (*MarketBackend, func(), error) {
 	backend, cleanup, err := openBackend(ctx, "market", "storage.driver", config.GetDriver(), marketDrivers, config, logger)
 	if err != nil {
 		return nil, nil, err
@@ -94,7 +95,7 @@ func NewMarketBackend(ctx context.Context, config *conf.Storage, logger *slog.Lo
 }
 
 // NewRawBackend opens the raw backend storage.driver names.
-func NewRawBackend(ctx context.Context, config *conf.Storage, logger *slog.Logger) (*RawBackend, func(), error) {
+func NewRawBackend(ctx context.Context, config *config.Storage, logger *slog.Logger) (*RawBackend, func(), error) {
 	backend, cleanup, err := openBackend(ctx, "raw", "storage.driver", config.GetDriver(), rawDrivers, config, logger)
 	if err != nil {
 		return nil, nil, err
@@ -103,7 +104,7 @@ func NewRawBackend(ctx context.Context, config *conf.Storage, logger *slog.Logge
 }
 
 // NewStateBackend opens the state backend state.driver names.
-func NewStateBackend(ctx context.Context, config *conf.State, logger *slog.Logger) (*StateBackend, func(), error) {
+func NewStateBackend(ctx context.Context, config *config.State, logger *slog.Logger) (*StateBackend, func(), error) {
 	backend, cleanup, err := openBackend(ctx, "state", "state.driver", config.GetDriver(), stateDrivers, config, logger)
 	if err != nil {
 		return nil, nil, err
@@ -135,7 +136,7 @@ type retainer interface {
 
 // retain applies storage.clickhouse.retention to store when it ages rows
 // out.
-func retain(ctx context.Context, store any, config *conf.Storage) error {
+func retain(ctx context.Context, store any, config *config.Storage) error {
 	if store, ok := store.(retainer); ok {
 		return store.ApplyRetention(ctx, Retention(config.GetClickhouse().GetRetention()))
 	}
@@ -144,7 +145,7 @@ func retain(ctx context.Context, store any, config *conf.Storage) error {
 
 // NewOutput returns market-engine's output and applies the backend's
 // retention.
-func NewOutput(ctx context.Context, backend *MarketBackend, config *conf.Storage) (storage.Output, error) {
+func NewOutput(ctx context.Context, backend *MarketBackend, config *config.Storage) (storage.Output, error) {
 	output, err := Role[storage.Output](backend.Backend)
 	if err != nil {
 		return nil, err
@@ -168,7 +169,7 @@ func NewRankingSource(backend *MarketBackend) (storage.RankingSource, error) {
 
 // NewRawStore returns ch-loader's raw store and applies the backend's
 // retention.
-func NewRawStore(ctx context.Context, backend *RawBackend, config *conf.Storage) (storage.RawStore, error) {
+func NewRawStore(ctx context.Context, backend *RawBackend, config *config.Storage) (storage.RawStore, error) {
 	store, err := Role[storage.RawStore](backend.Backend)
 	if err != nil {
 		return nil, err
@@ -194,7 +195,7 @@ type historian interface {
 // or nil when backfills are off or storage.driver has no raw backend that
 // serves them. It opens its own raw backend, so market-engine only touches
 // ch-loader's tables when it backfills.
-func NewHistory(ctx context.Context, config *conf.Storage, market *conf.Market, logger *slog.Logger) (storage.History, func(), error) {
+func NewHistory(ctx context.Context, config *config.Storage, market *conf.Market, logger *slog.Logger) (storage.History, func(), error) {
 	if _, ok := rawDrivers[config.GetDriver()]; !ok || market.GetBackfillBlocks() <= 0 {
 		return nil, func() {}, nil
 	}
@@ -249,17 +250,17 @@ func NewStateReaders(backend *StateBackend) StateReaders {
 	}
 }
 
-func openMemory(context.Context, *conf.Storage, *slog.Logger) (any, func(), error) {
+func openMemory(context.Context, *config.Storage, *slog.Logger) (any, func(), error) {
 	return storage.NewMemory(), func() {}, nil
 }
 
 // openMemoryState serves no role: market-engine keeps its state in memory.
-func openMemoryState(context.Context, *conf.State, *slog.Logger) (any, func(), error) {
+func openMemoryState(context.Context, *config.State, *slog.Logger) (any, func(), error) {
 	return nil, func() {}, nil
 }
 
 // clickHouseOptions turns storage.clickhouse into store options.
-func clickHouseOptions(config *conf.Storage, logger *slog.Logger) chdb.Options {
+func clickHouseOptions(config *config.Storage, logger *slog.Logger) chdb.Options {
 	clickhouse := config.GetClickhouse()
 	return chdb.Options{
 		Addr: clickhouse.GetAddr(), Database: clickhouse.GetDatabase(),
@@ -268,7 +269,7 @@ func clickHouseOptions(config *conf.Storage, logger *slog.Logger) chdb.Options {
 	}
 }
 
-func openClickHouse(ctx context.Context, config *conf.Storage, logger *slog.Logger) (any, func(), error) {
+func openClickHouse(ctx context.Context, config *config.Storage, logger *slog.Logger) (any, func(), error) {
 	store, err := chstore.Open(ctx, clickHouseOptions(config, logger))
 	if err != nil {
 		return nil, nil, err
@@ -276,7 +277,7 @@ func openClickHouse(ctx context.Context, config *conf.Storage, logger *slog.Logg
 	return store, closer(store.Close, logger, "clickhouse"), nil
 }
 
-func openClickHouseRaw(ctx context.Context, config *conf.Storage, logger *slog.Logger) (any, func(), error) {
+func openClickHouseRaw(ctx context.Context, config *config.Storage, logger *slog.Logger) (any, func(), error) {
 	store, err := chraw.Open(ctx, clickHouseOptions(config, logger))
 	if err != nil {
 		return nil, nil, err
@@ -284,7 +285,7 @@ func openClickHouseRaw(ctx context.Context, config *conf.Storage, logger *slog.L
 	return store, closer(store.Close, logger, "clickhouse raw"), nil
 }
 
-func openPostgres(ctx context.Context, config *conf.State, logger *slog.Logger) (any, func(), error) {
+func openPostgres(ctx context.Context, config *config.State, logger *slog.Logger) (any, func(), error) {
 	store, err := pgstore.Open(ctx, pgdb.Options{
 		DSN: config.GetPostgres().GetDsn(), Schema: config.GetPostgres().GetSchema(), Logger: logger,
 	})

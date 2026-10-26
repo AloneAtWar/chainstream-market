@@ -9,6 +9,7 @@ import (
 	"github.com/AloneAtWar/chainstream-market/internal/biz"
 	"github.com/AloneAtWar/chainstream-market/internal/conf"
 	"github.com/AloneAtWar/chainstream-market/internal/live"
+	"github.com/AloneAtWar/chainstream-market/internal/pkg/config"
 	"github.com/AloneAtWar/chainstream-market/internal/pkg/metrics"
 	"github.com/AloneAtWar/chainstream-market/internal/pkg/transport"
 	kratostransport "github.com/go-kratos/kratos/v2/transport"
@@ -25,7 +26,7 @@ var (
 
 // NewMetricsServer serves /metrics on metrics.addr, or returns nil when it
 // is empty.
-func NewMetricsServer(config *conf.Metrics, logger *slog.Logger) *metrics.Server {
+func NewMetricsServer(config *config.Metrics, logger *slog.Logger) *metrics.Server {
 	if config.GetAddr() == "" {
 		return nil
 	}
