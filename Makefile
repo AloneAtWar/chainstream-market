@@ -2,7 +2,7 @@ APP := market-engine
 VERSION := $(shell git describe --tags --always --dirty)
 GOLANGCI_LINT_VERSION := v2.12.2
 
-.PHONY: build generate lint lint-install proto-check test test-race fmt fmt-check verify
+.PHONY: build clean docker down generate logs up lint lint-install proto-check test test-race fmt fmt-check verify
 
 build:
 	go build -trimpath -ldflags "-X main.Version=$(VERSION)" -o bin/$(APP) ./cmd/market-engine
@@ -11,6 +11,27 @@ build:
 	go build -trimpath -ldflags "-X main.Version=$(VERSION)" -o bin/market-registry ./cmd/market-registry
 	go build -trimpath -ldflags "-X main.Version=$(VERSION)" -o bin/market-rankings ./cmd/market-rankings
 	go build -trimpath -ldflags "-X main.Version=$(VERSION)" -o bin/ch-loader ./cmd/ch-loader
+
+# The local stack in deploy/ runs chainstream-evm from its own checkout,
+# by default next to this one.
+EVM_DIR ?= ../chainstream-evm
+COMPOSE := docker compose -f deploy/docker-compose.yml
+
+docker:
+	docker build --build-arg VERSION=$(VERSION) -t chainstream-market:latest .
+
+up: docker
+	$(MAKE) -C $(EVM_DIR) docker
+	$(COMPOSE) up -d
+
+down:
+	$(COMPOSE) down
+
+clean:
+	$(COMPOSE) down -v
+
+logs:
+	$(COMPOSE) logs -f --tail=100
 
 generate:
 	cd proto && buf generate

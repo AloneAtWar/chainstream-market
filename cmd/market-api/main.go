@@ -6,6 +6,7 @@
 package main
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"flag"
@@ -16,6 +17,8 @@ import (
 	"os/signal"
 	"syscall"
 	"time"
+
+	"github.com/AloneAtWar/chainstream-market/internal/metrics"
 
 	"github.com/AloneAtWar/chainstream-market/internal/api"
 	"github.com/AloneAtWar/chainstream-market/internal/conf"
@@ -28,8 +31,12 @@ import (
 // Version is set at build time.
 var Version = "dev"
 
+// metricsAddr, when set, overrides metrics.addr.
+var metricsAddr string
+
 func main() {
 	configPath := flag.String("conf", "configs/config.yaml", "config file path")
+	flag.StringVar(&metricsAddr, "metrics-addr", "", "address to serve /metrics on, overriding metrics.addr")
 	flag.Parse()
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil)).With("service", "market-api", "version", Version)
 	if err := run(*configPath, logger); err != nil {
@@ -48,6 +55,9 @@ func run(configPath string, logger *slog.Logger) error {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	if err = metrics.Start(ctx, cmp.Or(metricsAddr, config.Metrics.Addr), logger); err != nil {
+		return err
+	}
 
 	clickhouse := chstore.Options{
 		Addr: config.Storage.ClickHouse.Addr, Database: config.Storage.ClickHouse.Database,
@@ -101,7 +111,7 @@ func run(configPath string, logger *slog.Logger) error {
 	}
 	server := &http.Server{
 		Addr:              config.API.Addr,
-		Handler:           handler.Handler(),
+		Handler:           metrics.Instrument(handler.Handler()),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 	errs := make(chan error, 1)

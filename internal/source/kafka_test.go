@@ -57,6 +57,9 @@ func TestKafkaFetchesFromStartOffset(t *testing.T) {
 			t.Fatalf("message %d = %d/%s, want offset %d", index, message.Offset, message.Value, wantOffset)
 		}
 	}
+	if end := source.HighWatermark(); end != 5 {
+		t.Fatalf("HighWatermark() = %d, want 5", end)
+	}
 }
 
 func TestNewKafkaValidatesOptions(t *testing.T) {

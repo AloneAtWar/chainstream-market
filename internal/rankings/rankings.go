@@ -17,6 +17,8 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/AloneAtWar/chainstream-market/internal/metrics"
+
 	"github.com/AloneAtWar/chainstream-market/internal/storage"
 )
 
@@ -25,8 +27,10 @@ const Window = 24 * time.Hour
 
 type Options struct {
 	ChainID uint64
-	Source  storage.RankingSource
-	Store   storage.RankingStore
+	// Chain labels the refresher's metrics.
+	Chain  string
+	Source storage.RankingSource
+	Store  storage.RankingStore
 	// Interval is the token candle size summed over the window; it must be
 	// one market-engine writes.
 	Interval time.Duration
@@ -103,11 +107,16 @@ func (refresher *Refresher) Run(ctx context.Context, period time.Duration) {
 	ticker := time.NewTicker(period)
 	defer ticker.Stop()
 	for {
-		if err := refresher.Refresh(ctx); err != nil {
+		start := time.Now()
+		err := refresher.Refresh(ctx)
+		if err != nil {
 			if ctx.Err() != nil {
 				return
 			}
+			metrics.RankingsRefreshFailures.WithLabelValues(refresher.options.Chain).Inc()
 			refresher.options.Logger.Error("refresh rankings", "error", err)
+		} else {
+			metrics.RankingsRefreshSeconds.WithLabelValues(refresher.options.Chain).Observe(time.Since(start).Seconds())
 		}
 		select {
 		case <-ctx.Done():

@@ -4,6 +4,7 @@
 package main
 
 import (
+	"cmp"
 	"context"
 	"flag"
 	"fmt"
@@ -12,6 +13,8 @@ import (
 	"os/signal"
 	"sync"
 	"syscall"
+
+	"github.com/AloneAtWar/chainstream-market/internal/metrics"
 
 	"github.com/AloneAtWar/chainstream-market/internal/conf"
 	"github.com/AloneAtWar/chainstream-market/internal/rankings"
@@ -22,8 +25,12 @@ import (
 // Version is set at build time.
 var Version = "dev"
 
+// metricsAddr, when set, overrides metrics.addr.
+var metricsAddr string
+
 func main() {
 	configPath := flag.String("conf", "configs/config.yaml", "config file path")
+	flag.StringVar(&metricsAddr, "metrics-addr", "", "address to serve /metrics on, overriding metrics.addr")
 	flag.Parse()
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil)).With("service", "market-rankings", "version", Version)
 	if err := run(*configPath, logger); err != nil {
@@ -42,6 +49,9 @@ func run(configPath string, logger *slog.Logger) error {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	if err = metrics.Start(ctx, cmp.Or(metricsAddr, config.Metrics.Addr), logger); err != nil {
+		return err
+	}
 
 	source, err := chstore.Open(ctx, chstore.Options{
 		Addr: config.Storage.ClickHouse.Addr, Database: config.Storage.ClickHouse.Database,
@@ -65,7 +75,7 @@ func run(configPath string, logger *slog.Logger) error {
 	refreshers := make([]*rankings.Refresher, 0, len(config.Chains))
 	for _, chain := range config.Chains {
 		refresher, newErr := rankings.New(rankings.Options{
-			ChainID: chain.ChainID, Source: source, Store: store,
+			ChainID: chain.ChainID, Chain: chain.Name, Source: source, Store: store,
 			Interval: config.Rankings.CandleInterval, ReorgWindow: config.Rankings.ReorgWindow,
 			Logger: logger.With("chain", chain.Name),
 		})

@@ -230,3 +230,38 @@ func TestLoadMissingFile(t *testing.T) {
 		t.Fatalf("Load() error = %v", err)
 	}
 }
+
+func TestExpandEnv(t *testing.T) {
+	env := map[string]string{"RPC_URL": "http://node:8545", "EMPTY": ""}
+	lookup := func(name string) (string, bool) {
+		value, ok := env[name]
+		return value, ok
+	}
+	raw := []byte(`rpc_url: ${RPC_URL}
+dsn: ${PG_DSN:-postgres://market@pg/market}
+empty: ${EMPTY:-fallback}
+missing: "${MISSING}"
+price: $5 and $HOME`)
+	want := `rpc_url: http://node:8545
+dsn: postgres://market@pg/market
+empty: fallback
+missing: ""
+price: $5 and $HOME`
+	if got := string(ExpandEnv(raw, lookup)); got != want {
+		t.Fatalf("ExpandEnv() =\n%s\nwant\n%s", got, want)
+	}
+}
+
+func TestLoadDeployConfig(t *testing.T) {
+	t.Setenv("ETH_RPC_URL", "http://node:8545")
+	config, err := Load(filepath.Join("..", "..", "deploy", "config.yaml"))
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if config.Storage.Driver != StorageClickHouse || config.State.Driver != StatePostgres || config.Metrics.Addr != ":9100" {
+		t.Fatalf("config = %+v", config)
+	}
+	if len(config.Chains) != 1 || config.Chains[0].RPCURL != "http://node:8545" {
+		t.Fatalf("chains = %+v", config.Chains)
+	}
+}

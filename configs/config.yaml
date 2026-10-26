@@ -147,6 +147,12 @@ live:
   # Other origins browsers may connect from, e.g. [localhost:5173].
   allowed_origins: []
 
+# Every command serves Prometheus metrics at /metrics on addr; empty turns
+# it off. Commands sharing a host pass -metrics-addr to take their own port.
+# Any ${NAME} or ${NAME:-default} in this file is read from the environment.
+metrics:
+  addr: ""
+
 # One chainstream-evm topic per chain, each consumed in order by its own engine.
 #
 # feeds are the Chainlink USD feeds trusted on each chain. Each names the

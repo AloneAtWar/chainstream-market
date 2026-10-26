@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/AloneAtWar/chainstream-market/internal/metrics"
 	"github.com/AloneAtWar/chainstream-market/internal/source"
 	"github.com/AloneAtWar/chainstream-market/internal/storage"
 	streamv1 "github.com/AloneAtWar/chainstream-market/proto/stream/v1"
@@ -54,6 +55,7 @@ type Options struct {
 // before the next, so a restart resumes at the first uncommitted record.
 type Engine struct {
 	chainID uint64
+	chain   string
 	open    SourceFactory
 	handler Handler
 	logger  *slog.Logger
@@ -80,7 +82,7 @@ func New(options Options) (*Engine, error) {
 	if now == nil {
 		now = time.Now
 	}
-	return &Engine{chainID: options.ChainID, open: options.Open, handler: handler, logger: logger, now: now}, nil
+	return &Engine{chainID: options.ChainID, chain: options.Chain, open: options.Open, handler: handler, logger: logger, now: now}, nil
 }
 
 // Run consumes until ctx is done, returning nil, or a record fails to apply.
@@ -98,6 +100,10 @@ func (engine *Engine) Run(ctx context.Context) error {
 	}
 	defer stream.Close()
 	engine.logger.Info("engine started", "offset", checkpoint.Offset+1, "height", checkpoint.Height)
+	if applied(checkpoint) {
+		metrics.Height.WithLabelValues(engine.chain).Set(float64(checkpoint.Height))
+	}
+	lagger, _ := stream.(source.Lagger)
 
 	for {
 		messages, fetchErr := stream.Fetch(ctx)
@@ -116,6 +122,11 @@ func (engine *Engine) Run(ctx context.Context) error {
 				return fmt.Errorf("engine: offset %d: %w", message.Offset, err)
 			}
 		}
+		if lagger != nil {
+			if end := lagger.HighWatermark(); end >= 0 {
+				metrics.ConsumerLag.WithLabelValues(engine.chain).Set(float64(max(end-checkpoint.Offset-1, 0)))
+			}
+		}
 	}
 }
 
@@ -127,13 +138,17 @@ func (engine *Engine) handle(ctx context.Context, checkpoint storage.Checkpoint,
 	if err := proto.Unmarshal(message.Value, &record); err != nil {
 		return checkpoint, fmt.Errorf("decode record: %w", err)
 	}
+	start := time.Now()
 	next := checkpoint
+	var kind string
 	switch payload := record.GetPayload().(type) {
 	case *streamv1.StreamRecord_Revert:
+		kind = "revert"
 		if err := engine.revert(ctx, checkpoint, payload.Revert, &next); err != nil {
 			return checkpoint, err
 		}
 	case *streamv1.StreamRecord_Block:
+		kind = "block"
 		if err := engine.apply(ctx, checkpoint, payload.Block, &next); err != nil {
 			return checkpoint, err
 		}
@@ -144,6 +159,15 @@ func (engine *Engine) handle(ctx context.Context, checkpoint storage.Checkpoint,
 	next.UpdatedAt = engine.now()
 	if err := engine.handler.Commit(ctx, next); err != nil {
 		return checkpoint, fmt.Errorf("commit: %w", err)
+	}
+	metrics.Records.WithLabelValues(engine.chain, kind).Inc()
+	metrics.RecordSeconds.WithLabelValues(engine.chain, kind).Observe(time.Since(start).Seconds())
+	if next.Height != checkpoint.Height {
+		metrics.Height.WithLabelValues(engine.chain).Set(float64(next.Height))
+	}
+	if block := record.GetBlock(); block != nil && next.Height == block.GetBlockHeight() {
+		lag := engine.now().Sub(time.Unix(block.GetBlockTime(), 0))
+		metrics.BlockLag.WithLabelValues(engine.chain).Set(max(lag.Seconds(), 0))
 	}
 	return next, nil
 }
@@ -162,6 +186,8 @@ func (engine *Engine) revert(ctx context.Context, checkpoint storage.Checkpoint,
 		return fmt.Errorf("revert to %d: %w", rollbackTo, err)
 	}
 	engine.logger.Warn("reverted", "from", checkpoint.Height, "to", rollbackTo)
+	metrics.Reorgs.WithLabelValues(engine.chain).Inc()
+	metrics.ReorgDepth.WithLabelValues(engine.chain).Observe(float64(checkpoint.Height - rollbackTo))
 	next.Height, next.Hash = rollbackTo, ""
 	return nil
 }

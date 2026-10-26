@@ -3,6 +3,7 @@
 package main
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"flag"
@@ -13,6 +14,8 @@ import (
 	"strings"
 	"sync"
 	"syscall"
+
+	"github.com/AloneAtWar/chainstream-market/internal/metrics"
 
 	"github.com/AloneAtWar/chainstream-market/internal/chainlink"
 	"github.com/AloneAtWar/chainstream-market/internal/conf"
@@ -31,8 +34,12 @@ import (
 // Version is set at build time.
 var Version = "dev"
 
+// metricsAddr, when set, overrides metrics.addr.
+var metricsAddr string
+
 func main() {
 	configPath := flag.String("conf", "configs/config.yaml", "config file path")
+	flag.StringVar(&metricsAddr, "metrics-addr", "", "address to serve /metrics on, overriding metrics.addr")
 	flag.Parse()
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil)).With("service", "market-engine", "version", Version)
 	if err := run(*configPath, logger); err != nil {
@@ -48,6 +55,9 @@ func run(configPath string, logger *slog.Logger) error {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	if err = metrics.Start(ctx, cmp.Or(metricsAddr, config.Metrics.Addr), logger); err != nil {
+		return err
+	}
 
 	memory := storage.NewMemory()
 	output, closeOutput, err := openOutput(ctx, config.Storage, memory)
@@ -154,7 +164,7 @@ func resolveFeeds(ctx context.Context, chain conf.Chain, logger *slog.Logger) ([
 		if !ok {
 			var err error
 			if client == nil {
-				if client, err = rpc.New(rpc.Options{URL: chain.RPCURL}); err != nil {
+				if client, err = rpc.New(rpc.Options{URL: chain.RPCURL, Chain: chain.Name}); err != nil {
 					return nil, err
 				}
 			}

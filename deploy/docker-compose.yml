@@ -1,0 +1,175 @@
+# One-command local stack: Kafka, ClickHouse, PostgreSQL and Redis, the
+# chainstream-evm scanner for eth, every chainstream-market service, and
+# Prometheus and Grafana scraping them. From the repository root:
+#   make up        # build images and start everything
+#   make down      # stop; make clean also drops the data volumes
+# See the "Local stack" section of README.md.
+name: chainstream
+
+x-market: &market
+  image: chainstream-market:latest
+  restart: unless-stopped
+  environment:
+    ETH_RPC_URL: ${ETH_RPC_URL:-http://host.docker.internal:8545}
+  extra_hosts: ["host.docker.internal:host-gateway"]
+  volumes:
+    - ./config.yaml:/etc/chainstream-market/config.yaml:ro
+  depends_on: &market-deps
+    kafka-init: {condition: service_completed_successfully}
+    clickhouse: {condition: service_healthy}
+    postgres: {condition: service_healthy}
+
+services:
+  kafka:
+    image: apache/kafka:4.1.1
+    restart: unless-stopped
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093,HOST://:19092
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,HOST://localhost:19092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,HOST:PLAINTEXT
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
+      # chainstream-evm publishes blocks up to max_message_bytes.
+      KAFKA_MESSAGE_MAX_BYTES: 104857600
+      KAFKA_REPLICA_FETCH_MAX_BYTES: 104857600
+      KAFKA_SOCKET_REQUEST_MAX_BYTES: 209715200
+    ports: ["19092:19092"]
+    volumes: [kafka:/var/lib/kafka/data]
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 >/dev/null 2>&1"]
+      interval: 5s
+      timeout: 10s
+      retries: 30
+
+  # Creates the chain and live topics: one partition each, kept forever,
+  # since the consumers resume from offsets they committed.
+  kafka-init:
+    image: apache/kafka:4.1.1
+    depends_on: {kafka: {condition: service_healthy}}
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -e
+        for topic in chainstream-eth chainstream-eth-live; do
+          /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists \
+            --topic "$$topic" --partitions 1 --replication-factor 1 \
+            --config max.message.bytes=104857600 --config retention.ms=-1
+        done
+
+  clickhouse:
+    image: clickhouse/clickhouse-server:25.8
+    restart: unless-stopped
+    environment:
+      CLICKHOUSE_SKIP_USER_SETUP: "1"
+    ports: ["8123:8123", "9000:9000"]
+    volumes: [clickhouse:/var/lib/clickhouse]
+    healthcheck:
+      test: ["CMD", "clickhouse-client", "--query", "SELECT 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+  postgres:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: market
+      POSTGRES_PASSWORD: market
+      POSTGRES_DB: market
+    ports: ["5432:5432"]
+    volumes: [postgres:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "market"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+  redis:
+    image: redis:7.4
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes: [redis:/data]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+  chainstream-evm:
+    image: chainstream-evm:latest
+    restart: unless-stopped
+    environment:
+      CHAINSTREAM_RPC_URL: ${ETH_RPC_URL:-http://host.docker.internal:8545}
+      CHAINSTREAM_START_HEIGHT: ${ETH_START_HEIGHT:--1}
+    extra_hosts: ["host.docker.internal:host-gateway"]
+    command: ["-conf", "/etc/chainstream-evm"]
+    volumes:
+      - ./evm:/etc/chainstream-evm:ro
+    ports: ["8000:8000"]
+    depends_on:
+      kafka-init: {condition: service_completed_successfully}
+      redis: {condition: service_healthy}
+
+  market-engine:
+    <<: *market
+    command: ["/usr/local/bin/market-engine", "-conf", "/etc/chainstream-market/config.yaml"]
+
+  ch-loader:
+    <<: *market
+    command: ["/usr/local/bin/ch-loader", "-conf", "/etc/chainstream-market/config.yaml"]
+
+  holder-indexer:
+    <<: *market
+    command: ["/usr/local/bin/holder-indexer", "-conf", "/etc/chainstream-market/config.yaml"]
+
+  market-registry:
+    <<: *market
+    command: ["/usr/local/bin/market-registry", "-conf", "/etc/chainstream-market/config.yaml"]
+
+  market-rankings:
+    <<: *market
+    command: ["/usr/local/bin/market-rankings", "-conf", "/etc/chainstream-market/config.yaml"]
+
+  market-api:
+    <<: *market
+    command: ["/usr/local/bin/market-api", "-conf", "/etc/chainstream-market/config.yaml"]
+    ports: ["8080:8080"]
+
+  prometheus:
+    image: prom/prometheus:v3.7.3
+    restart: unless-stopped
+    command: ["--config.file=/etc/prometheus/prometheus.yml", "--storage.tsdb.retention.time=15d"]
+    volumes:
+      - ./prometheus:/etc/prometheus:ro
+      - prometheus:/prometheus
+    ports: ["9090:9090"]
+
+  grafana:
+    image: grafana/grafana:12.2.1
+    restart: unless-stopped
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Admin
+      GF_AUTH_DISABLE_LOGIN_FORM: "true"
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /var/lib/grafana/dashboards/chainstream.json
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana:/var/lib/grafana
+    ports: ["3000:3000"]
+    depends_on: [prometheus]
+
+volumes:
+  kafka:
+  clickhouse:
+  postgres:
+  redis:
+  prometheus:
+  grafana:

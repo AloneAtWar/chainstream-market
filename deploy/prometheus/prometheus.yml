@@ -1,0 +1,20 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  # The job label names the service; every metric carries a chain label.
+  - job_name: chainstream-evm
+    static_configs: [{targets: ["chainstream-evm:8000"]}]
+  - job_name: market-engine
+    static_configs: [{targets: ["market-engine:9100"]}]
+  - job_name: ch-loader
+    static_configs: [{targets: ["ch-loader:9100"]}]
+  - job_name: holder-indexer
+    static_configs: [{targets: ["holder-indexer:9100"]}]
+  - job_name: market-registry
+    static_configs: [{targets: ["market-registry:9100"]}]
+  - job_name: market-rankings
+    static_configs: [{targets: ["market-rankings:9100"]}]
+  - job_name: market-api
+    static_configs: [{targets: ["market-api:9100"]}]

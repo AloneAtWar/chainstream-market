@@ -1,0 +1,49 @@
+# chainstream-evm config for the docker-compose stack. CHAINSTREAM_<NAME>
+# environment variables fill the ${NAME:default} placeholders.
+server:
+  http:
+    addr: 0.0.0.0:8000
+    timeout: 1s
+  grpc:
+    addr: 0.0.0.0:9000
+    timeout: 1s
+
+chain:
+  chain_type: eth
+  rpc_url: ${RPC_URL:http://host.docker.internal:8545}
+  rpc_timeout: 30s
+  # Internal transactions need debug_traceBlock*; most hosted endpoints
+  # do not serve it.
+  need_internal: false
+  scanner:
+    # Last committed height on the first start; -1 starts at the chain tip.
+    # Later starts resume from the cursor kept in Redis.
+    start_height: ${START_HEIGHT:-1}
+    end_height: -1
+    batch_size: 8
+    cache_size: 40
+    block_delay: 2s
+    retry_interval: 1s
+    health_stale_timeout: 60s
+    health_max_retry: 5
+  finality:
+    fallback_depth: 0
+
+data:
+  redis:
+    enabled: true
+    network: tcp
+    addr: redis:6379
+    database: 0
+    dial_timeout: 3s
+    read_timeout: 1s
+    write_timeout: 1s
+    key_prefix: chainstream-eth
+  output:
+    type: kafka
+    kafka:
+      brokers: [kafka:9092]
+      topic: chainstream-eth
+      client_id: chainstream-evm
+      write_timeout: 10s
+      max_message_bytes: 104857600
