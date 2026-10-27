@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -154,6 +155,55 @@ func TestFileRereadsAnUnterminatedLineThatWasReplaced(t *testing.T) {
 		t.Fatalf("Unmarshal() error = %v", err)
 	}
 	if record.GetBlock().GetBlockHeight() != 100 || record.GetBlock().GetSafeHeight() != 1000 {
+		t.Fatalf("record = %v, want block 100 with safe height 1000", &record)
+	}
+}
+
+func TestFileRereadsALineReplacedBetweenTwoReadsOfOneReadBytes(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "chainstream-eth.jsonl")
+	head := blockLine(t, 99)
+	stale := safeHeightLine(t, 100, 999)
+	partial := stale[:len(stale)-5]
+	appendFile(t, path, head+partial)
+	source, err := NewFile(FileOptions{Path: path, PollInterval: 10 * time.Millisecond}, 0)
+	if err != nil {
+		t.Fatalf("NewFile() error = %v", err)
+	}
+	defer source.Close()
+	// The first read takes block 99 and the start of block 100. Before the
+	// ReadBytes for block 100 reads again, chainstream-evm cuts the partial
+	// line and writes a longer block 100, so that read returns only the
+	// rewritten line's tail.
+	rewritten := false
+	source.afterRead = func() {
+		if rewritten {
+			return
+		}
+		rewritten = true
+		if truncateErr := os.Truncate(path, int64(len(head))); truncateErr != nil {
+			t.Errorf("Truncate() error = %v", truncateErr)
+		}
+		appendFile(t, path, safeHeightLine(t, 100, 1000)+blockLine(t, 101))
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	var messages []Message
+	for len(messages) < 3 {
+		batch, fetchErr := source.Fetch(ctx)
+		if fetchErr != nil {
+			t.Fatalf("Fetch() error = %v", fetchErr)
+		}
+		messages = append(messages, batch...)
+	}
+	if got := heights(t, messages); !slices.Equal(got, []int64{99, 100, 101}) {
+		t.Fatalf("heights = %v, want [99 100 101]", got)
+	}
+	var record streamv1.StreamRecord
+	if err := proto.Unmarshal(messages[1].Value, &record); err != nil {
+		t.Fatalf("Unmarshal() error = %v", err)
+	}
+	if record.GetBlock().GetSafeHeight() != 1000 {
 		t.Fatalf("record = %v, want block 100 with safe height 1000", &record)
 	}
 }
