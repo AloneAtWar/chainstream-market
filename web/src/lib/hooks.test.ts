@@ -8,21 +8,25 @@ import type { ChainMessage, ChannelMessage } from "./live";
 const fakeLive = vi.hoisted(() => {
   const channelListeners = new Map<string, Set<(message: unknown) => void>>();
   const chainListeners = new Set<(message: unknown) => void>();
+  const readyListeners = new Map<string, Set<() => void>>();
   return {
     status: "open",
     channelListeners,
     chainListeners,
-    subscribe(channel: string, listener: (message: unknown) => void) {
+    readyListeners,
+    subscribe(channel: string, listener: (message: unknown) => void, onReady?: () => void) {
       if (!channelListeners.has(channel)) channelListeners.set(channel, new Set());
+      if (!readyListeners.has(channel)) readyListeners.set(channel, new Set());
       channelListeners.get(channel)!.add(listener);
-      return () => channelListeners.get(channel)?.delete(listener);
+      if (onReady) readyListeners.get(channel)!.add(onReady);
+      return () => {
+        channelListeners.get(channel)?.delete(listener);
+        if (onReady) readyListeners.get(channel)?.delete(onReady);
+      };
     },
     onChain(listener: (message: unknown) => void) {
       chainListeners.add(listener);
       return () => chainListeners.delete(listener);
-    },
-    onOpen() {
-      return () => {};
     },
     onStatus() {
       return () => {};
@@ -78,11 +82,17 @@ function sendChannel(message: ChannelMessage) {
   for (const listener of fakeLive.channelListeners.get(message.channel) ?? []) listener(message);
 }
 
+// confirm plays the hub's "subscribed" reply for a channel.
+function confirm(channel: string) {
+  for (const listener of fakeLive.readyListeners.get(channel) ?? []) listener();
+}
+
 beforeEach(() => {
   fakeApi.candles.mockReset();
   fakeApi.trades.mockReset();
   fakeLive.channelListeners.clear();
   fakeLive.chainListeners.clear();
+  fakeLive.readyListeners.clear();
 });
 
 describe("useLiveCandles", () => {
@@ -117,7 +127,53 @@ describe("useLiveCandles", () => {
   });
 });
 
+describe("useLiveCandles after a reorg", () => {
+  it("drops an older page requested before a revert", async () => {
+    const olderPage = deferred<Candle[]>();
+    fakeApi.candles.mockImplementation((_chain, _subject, _key, _interval, _limit, to?: number) =>
+      to !== undefined ? olderPage.promise : Promise.resolve(Array.from({ length: 3 }, (_, index) => candle(600 + index * 60, "5"))),
+    );
+    const { result } = renderHook(() => useLiveCandles(1, "token", "0xaaa", "1m"));
+    await waitFor(() => expect(result.current.data).toHaveLength(3));
+
+    let paging!: Promise<void>;
+    act(() => {
+      paging = result.current.loadOlder();
+    });
+    // The blocks that built the series are reverted: it had no buckets then.
+    fakeApi.candles.mockImplementation((_chain, _subject, _key, _interval, _limit, to?: number) =>
+      to !== undefined ? olderPage.promise : Promise.resolve([]),
+    );
+    act(() => {
+      sendChain({ type: "revert", chain_id: 1, rollback_to: 99 });
+      sendChannel({ type: "candle_reset", channel: "candles:1:token:0xaaa:1m", candle: null });
+    });
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(result.current.data).toEqual([]);
+
+    await act(async () => {
+      olderPage.resolve([candle(0, "1")]);
+      await paging;
+    });
+    expect(result.current.data).toEqual([]);
+  });
+});
+
 describe("useLiveTrades", () => {
+  it("reloads once the hub confirms the subscription", async () => {
+    // The first snapshot is taken before the hub registered the channel;
+    // block 11 is stored in between and never pushed to this client.
+    fakeApi.trades.mockResolvedValueOnce([trade(10)]);
+    const { result } = renderHook(() => useLiveTrades(1, "token", "0xaaa"));
+    await waitFor(() => expect(result.current.data).toHaveLength(1));
+
+    fakeApi.trades.mockResolvedValueOnce([trade(11), trade(10)]);
+    act(() => confirm("trades:1:token:0xaaa"));
+    await waitFor(() => expect(result.current.data).toHaveLength(2));
+    act(() => sendChannel({ type: "trades", channel: "trades:1:token:0xaaa", height: 12, trades: [trade(12, 12)] }));
+    expect(result.current.data.map((t) => t.block_height)).toEqual([12, 11, 10]);
+  });
+
   it("reloads history after a revert", async () => {
     // Height 90 was written late, at 101, and REST does not say so.
     fakeApi.trades.mockResolvedValueOnce([trade(100), trade(90)]);

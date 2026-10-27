@@ -10,20 +10,24 @@ interface Stream<T> {
   loading: boolean;
   error: Error | null;
   update: (change: (state: T) => T) => void;
-  // epoch changes whenever the history is replaced: on a channel switch, a
-  // reconnect or a reload. A request made in an older epoch is stale.
+  // epoch changes whenever the data may no longer extend what an earlier
+  // request saw: on a channel switch, a reload, a revert or a candle reset.
+  // A request made in an older epoch is stale.
   epoch: () => number;
 }
 
-// useStream subscribes to a channel first and loads history second, then
-// applies the messages that arrived meanwhile, as market-api recommends.
-// It reloads after every reconnect, since the hub does not replay, and,
-// when reloadOnRevert is set, after every revert of the channel's chain.
+// useStream follows market-api's recipe for joining history and live data:
+// subscribe, wait for the hub to confirm the channel, load history, then
+// apply the messages that arrived meanwhile. It loads again on every
+// confirmation, since the hub does not replay what it pushed while the
+// socket was down, and after every revert of the channel's chain, since
+// market-engine rewinds the store before it publishes the revert and REST
+// rows do not say which block wrote them.
 function useStream<T>(
   channel: string | null,
   load: () => Promise<T>,
   apply: (state: T, message: ChannelMessage) => T,
-  revert: ((state: T, rollbackTo: number) => T) | null,
+  revert: (state: T, rollbackTo: number) => T,
   empty: T,
 ): Stream<T> {
   const [data, setData] = useState<T>(empty);
@@ -40,54 +44,57 @@ function useStream<T>(
   useEffect(() => {
     if (channel === null) return;
     const chain = chainOfChannel(channel);
+    let generation = 0;
     let pending: ((state: T) => T)[] | null = [];
     const push = (change: (state: T) => T) => {
       if (pending) pending.push(change);
       else setData(change);
     };
     const reload = () => {
-      const current = ++epochRef.current;
+      const current = ++generation;
+      epochRef.current++;
       pending = [];
       setLoading(true);
       loadRef
         .current()
         .then((history) => {
-          if (current !== epochRef.current) return;
+          if (current !== generation) return;
           const queued = pending ?? [];
           pending = null;
           setData(queued.reduce((state, change) => change(state), history));
           setError(null);
         })
         .catch((reason: unknown) => {
-          if (current !== epochRef.current) return;
+          if (current !== generation) return;
           pending = null;
           setError(reason instanceof Error ? reason : new Error(String(reason)));
         })
         .finally(() => {
-          if (current === epochRef.current) setLoading(false);
+          if (current === generation) setLoading(false);
         });
     };
     setData(empty);
-    const unsubscribe = live.subscribe(channel, (message) => push((state) => applyRef.current(state, message)));
+    const unsubscribe = live.subscribe(
+      channel,
+      (message) => {
+        if (message.type === "candle_reset") epochRef.current++;
+        push((state) => applyRef.current(state, message));
+      },
+      reload,
+    );
     const offChain = live.onChain((message) => {
       if (message.type !== "revert" || message.chain_id !== chain) return;
-      const revertState = revertRef.current;
-      if (!revertState) return;
-      push((state) => revertState(state, message.rollback_to));
-      // market-engine rewinds the store before it publishes the revert, so
-      // history loaded now is already corrected, including rows the
-      // stream cannot attribute to a block.
+      push((state) => revertRef.current(state, message.rollback_to));
       reload();
     });
-    // Load now so the page fills even without a live stream, and again
-    // whenever the socket (re)opens, after the subscription was sent.
-    const offOpen = live.onOpen(reload);
+    // Also load before the confirmation, so the page fills without a live
+    // stream; the confirmed load replaces it.
     reload();
     return () => {
+      generation++;
       epochRef.current++;
       unsubscribe();
       offChain();
-      offOpen();
     };
     // load, apply and revert are read through refs; empty is a constant.
   }, [channel]);
@@ -112,7 +119,9 @@ export function useLiveCandles(chain: number, subject: "token" | "pool", key: st
       if (message.type === "candle_reset") return resetCandles(candles, message.candle);
       return candles;
     },
-    null, // a candle_reset per series follows every revert
+    // A candle_reset per series follows every revert, and the reload
+    // brings back what it resets to.
+    (candles) => candles,
     NO_CANDLES,
   );
   // Both hold the epoch they apply to, so a channel switch or a reload
@@ -141,9 +150,9 @@ export function useLiveCandles(chain: number, subject: "token" | "pool", key: st
   return { ...stream, loadOlder };
 }
 
-// useLiveTrades drops reverted live trades at once and then reloads: REST
-// trades carry no revision_height, so a late trade loaded over REST cannot
-// be told apart from one of its own block.
+// useLiveTrades drops reverted live trades at once, before the reload
+// replaces the rest: REST trades carry no revision_height, so a late trade
+// loaded over REST cannot be told apart from one of its own block.
 export function useLiveTrades(chain: number, subject: "token" | "pool", key: string) {
   return useStream<Trade[]>(
     channels.trades(chain, subject, key),

@@ -71,19 +71,64 @@ describe("LiveClient", () => {
     expect(FakeSocket.sockets).toHaveLength(1);
   });
 
-  it("reconnects, resubscribes and tells views to reload", () => {
+  it("reports a channel ready only when the hub confirms it", () => {
     const client = new LiveClient(() => "ws://test/v1/stream");
-    let opens = 0;
-    client.onOpen(() => opens++);
-    client.subscribe("trades:56:pool:0xp", () => {});
+    let ready = 0;
+    client.subscribe("trades:56:pool:0xp", () => {}, () => ready++);
+    const socket = FakeSocket.sockets[0]!;
+    socket.open();
+    expect(ready).toBe(0);
+    socket.receive({ type: "subscribed", channels: ["trades:56:pool:0xp"] });
+    expect(ready).toBe(1);
+  });
+
+  it("reconnects, resubscribes and reports ready again after the new confirmation", () => {
+    const client = new LiveClient(() => "ws://test/v1/stream");
+    let ready = 0;
+    client.subscribe("trades:56:pool:0xp", () => {}, () => ready++);
     FakeSocket.sockets[0]!.open();
+    FakeSocket.sockets[0]!.receive({ type: "subscribed", channels: ["trades:56:pool:0xp"] });
     FakeSocket.sockets[0]!.close();
     expect(client.status).toBe("closed");
     vi.advanceTimersByTime(500);
     const second = FakeSocket.sockets[1]!;
     second.open();
     expect(second.sent).toEqual([{ op: "subscribe", channels: ["trades:56:pool:0xp"] }]);
-    expect(opens).toBe(2);
+    expect(ready).toBe(1);
+    second.receive({ type: "subscribed", channels: ["trades:56:pool:0xp"] });
+    expect(ready).toBe(2);
+  });
+
+  it("does not take the reply to an earlier subscribe as confirming a later one", () => {
+    const client = new LiveClient(() => "ws://test/v1/stream");
+    const socket = (() => {
+      const off = client.subscribe("trades:1:token:0xa", () => {});
+      const opened = FakeSocket.sockets[0]!;
+      opened.open();
+      off();
+      return opened;
+    })();
+    let ready = 0;
+    client.subscribe("trades:1:token:0xa", () => {}, () => ready++);
+    // Replies arrive in request order: subscribe, unsubscribe, subscribe.
+    socket.receive({ type: "subscribed", channels: ["trades:1:token:0xa"] });
+    socket.receive({ type: "unsubscribed", channels: ["trades:1:token:0xa"] });
+    expect(ready).toBe(0);
+    socket.receive({ type: "subscribed", channels: ["trades:1:token:0xa"] });
+    expect(ready).toBe(1);
+  });
+
+  it("reports a channel already confirmed to a later listener", async () => {
+    const client = new LiveClient(() => "ws://test/v1/stream");
+    client.subscribe("trades:1:token:0xa", () => {});
+    const socket = FakeSocket.sockets[0]!;
+    socket.open();
+    socket.receive({ type: "subscribed", channels: ["trades:1:token:0xa"] });
+    let ready = 0;
+    client.subscribe("trades:1:token:0xa", () => {}, () => ready++);
+    await Promise.resolve();
+    expect(ready).toBe(1);
+    expect(socket.sent).toHaveLength(1);
   });
 
   it("passes head and revert messages to chain listeners", () => {
