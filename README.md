@@ -27,6 +27,7 @@ Market data services built on the [chainstream-evm](https://github.com/AloneAtWa
 | `internal/pkg/live` | Realtime push: market-engine's live topic publisher and market-api's WebSocket hub, over a Kafka or Redis Pub/Sub transport. |
 | `internal/pkg/transport` | Kratos servers every command shares: HTTP, and a Runner for long-lived work. |
 | `internal/pkg/metrics` | Prometheus metrics every command serves at `/metrics`. |
+| `web/` | The frontend: token rankings, token and pool pages with live candles and trades, holders and transfers. See [Web frontend](#web-frontend). |
 | `deploy/` | docker-compose stack: infrastructure, chainstream-evm, every service, Prometheus and Grafana. |
 
 ## market-engine
@@ -345,7 +346,7 @@ go run ./cmd/market-engine -conf configs/market-engine.yaml
 
 ## Local stack
 
-`make up` builds both images and starts everything with docker compose: Kafka, ClickHouse, PostgreSQL and Redis, chainstream-evm scanning eth into `chainstream-eth`, the six services here, and Prometheus and Grafana. It needs Docker with Compose v2, an eth node, and a chainstream-evm checkout next to this one (`EVM_DIR=...` points elsewhere). Both images read the private oh-my-blockchain module through your SSH agent (`docker build --ssh default`); see chainstream-evm's README.
+`make up` builds the images and starts everything with docker compose: Kafka, ClickHouse, PostgreSQL and Redis, chainstream-evm scanning eth into `chainstream-eth`, the six services here, the web frontend, and Prometheus and Grafana. It needs Docker with Compose v2, an eth node, and a chainstream-evm checkout next to this one (`EVM_DIR=...` points elsewhere). Both images read the private oh-my-blockchain module through your SSH agent (`docker build --ssh default`); see chainstream-evm's README.
 
 ```sh
 cp deploy/.env.example deploy/.env   # set ETH_RPC_URL
@@ -355,6 +356,7 @@ make down    # stop, keeping data; make clean also drops the volumes
 
 | Port | What |
 | --- | --- |
+| 8088 | The web frontend, proxying `/v1` to market-api |
 | 8080 | market-api, with WebSocket push at `/v1/stream` |
 | 3000 | Grafana, signed in anonymously, opening on the Chainstream dashboard |
 | 9090 | Prometheus |
@@ -366,6 +368,33 @@ make down    # stop, keeping data; make clean also drops the volumes
 The node must answer `eth_call` by block hash (EIP-1898) near the head, for holder-indexer, and serve the Chainlink proxies market-engine resolves at startup. chainstream-evm starts at the chain tip unless `ETH_START_HEIGHT` is set, and keeps its cursor in Redis afterwards. Public endpoints limit request size: `ETH_CALL_BATCH_SIZE` (default 10) is how many `eth_call`s chainstream-evm sends per JSON-RPC batch, which publicnode accepts; drpc's free tier needs 3. Its config is `deploy/evm/config.yaml`; each service reads its own `deploy/configs/<service>.yaml`. A service that cannot start, such as market-engine without a reachable node, restarts until it can.
 
 The topics are created by `kafka-init` with one partition and no retention limit, since every consumer resumes from its own committed offset. To add a chain, add a chainstream-evm service with its own config and topic, the topics to `kafka-init`, and the chain to each file in `deploy/configs`.
+
+## Web frontend
+
+`web/` is a React + TypeScript single-page app, built with Vite, that reads everything from market-api:
+
+| Page | Shows |
+| --- | --- |
+| `/{chain}` | The token list from market-rankings, sorted by 24h volume, price change, liquidity, holders or creation, with a liquidity filter and symbol or address search. Refreshed every 15s. |
+| `/{chain}/token/{address}` | Price, 24h stats, the token's aggregated candles and live trades, and tabs for holders, pools and transfers, beside the registry metadata and how the price was derived. |
+| `/{chain}/pool/{pool}` | The pool's own candles and live trades, its tokens and metadata. |
+| `/{chain}/holder/{address}` | The address's ERC-20 transfers across tokens. |
+
+Candles are drawn with TradingView's lightweight-charts. Live data follows [Live push](#live-push): the page subscribes first, loads history over REST once the hub's `subscribed` reply confirms the channel, then applies what arrived meanwhile; it replaces candle buckets by `open_time` and keys trades by `(block_height, transaction_hash, log_index, operation_index)`. History is loaded again on every confirmation, which follows each reconnect, and after every revert, since REST trades do not carry `revision_height`; older candle pages requested before a reload, revert or reset are dropped. Scrolling the chart left pages back through older candles. Empty buckets are drawn flat at the previous close.
+
+The page calls `/v1` on its own origin. In development Vite proxies it, WebSocket included, to `MARKET_API` (default `http://localhost:8080`); in the image, nginx proxies it to `MARKET_API` (default `http://market-api:8080`). Either way market-api sees the page's own host as the origin, so `live.allowed_origins` needs no entry for it.
+
+```sh
+cd web
+npm ci
+npm run mock     # optional: a fake market-api with generated data and live pushes on :8080
+npm run dev      # http://localhost:5173
+npm test         # unit tests: formatting, candle and trade merging, the WebSocket client
+npm run build    # type-check and build into dist/
+make docker-web  # from the repository root: the chainstream-web image
+```
+
+`mock/server.mjs` serves the same routes and stream protocol as market-api, mints a block per second on each chain, and pushes its trades, candles and head, so the UI can be worked on without the stack. It does not simulate reorgs. The chains and candle intervals the UI offers are in `web/src/lib/chains.ts` and must match market-api's `chains` and `api.intervals`.
 
 ## Metrics
 

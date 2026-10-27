@@ -1,6 +1,6 @@
 # One-command local stack: Kafka, ClickHouse, PostgreSQL and Redis, the
-# chainstream-evm scanner for eth, every chainstream-market service, and
-# Prometheus and Grafana scraping them. From the repository root:
+# chainstream-evm scanner for eth, every chainstream-market service, the web
+# frontend, and Prometheus and Grafana scraping them. From the repository root:
 #   make up        # build images and start everything
 #   make down      # stop; make clean also drops the data volumes
 # See the "Local stack" section of README.md.
@@ -142,6 +142,15 @@ services:
     <<: *market
     command: ["/usr/local/bin/market-api", "-conf", "/etc/chainstream-market/market-api.yaml"]
     ports: ["8080:8080"]
+
+  # The frontend (web/), with /v1 proxied to market-api.
+  web:
+    image: chainstream-web:latest
+    restart: unless-stopped
+    environment:
+      MARKET_API: http://market-api:8080
+    ports: ["8088:80"]
+    depends_on: [market-api]
 
   prometheus:
     image: prom/prometheus:v3.7.3
