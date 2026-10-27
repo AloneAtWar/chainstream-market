@@ -488,13 +488,13 @@ func (processor *Processor) reprice(height int64, output model.BlockOutput, touc
 	return prices
 }
 
-// bestQuote prices token through the pool whose priced counterpart reserve
-// is worth the most in USD.
+// bestQuote prices token through its best pool, see quoteCandidate.beats.
+// A rate reported for the token itself wins over every pool.
 func (processor *Processor) bestQuote(height int64, token string) (tokenPrice, bool) {
 	if derived, ok := processor.derivedQuote(height, token); ok {
 		return derived, true
 	}
-	var best tokenPrice
+	var best quoteCandidate
 	found := false
 	for _, id := range processor.tokenPools[token] {
 		state, ok := processor.pools.get(id)
@@ -521,16 +521,19 @@ func (processor *Processor) bestQuote(height int64, token string) (tokenPrice, b
 		if !ok {
 			continue
 		}
-		if found && (liquidity.LessThan(best.LiquidityUSD) || (liquidity.Equal(best.LiquidityUSD) && id > best.Pool)) {
-			continue
-		}
-		best = tokenPrice{
+		candidate := quoteCandidate{price: tokenPrice{
 			USD: relative.Mul(counterpart.USD).Round(precision), Hops: counterpart.Hops + 1,
 			Via: other, Pool: id, LiquidityUSD: liquidity, Height: height,
+		}}
+		if depth, ok := processor.pairDepth(id, state, 1-position); ok {
+			candidate.depthUSD, candidate.hasDepth = depth.Mul(counterpart.USD).Round(precision), true
 		}
-		found = true
+		if !found || candidate.beats(best) {
+			best, found = candidate, true
+		}
 	}
-	return processor.balanceQuote(height, token, best, found)
+	best, found = processor.balanceQuote(height, token, best, found)
+	return best.price, found
 }
 
 // chooseQuote picks the quote side of a pair. fixed is false when neither

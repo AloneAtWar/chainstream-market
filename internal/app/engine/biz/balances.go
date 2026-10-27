@@ -332,9 +332,9 @@ func (processor *Processor) derivedQuote(height int64, token string) (tokenPrice
 	return best, found
 }
 
-// balanceQuote prices token through the balance pool whose priced
-// counterpart balance is worth the most in USD, competing with best.
-func (processor *Processor) balanceQuote(height int64, token string, best tokenPrice, found bool) (tokenPrice, bool) {
+// balanceQuote lets every token pair of the balance pools holding token
+// compete with best.
+func (processor *Processor) balanceQuote(height int64, token string, best quoteCandidate, found bool) (quoteCandidate, bool) {
 	for _, id := range processor.tokenBalancePools[token] {
 		record, ok := processor.balances.get(id)
 		if !ok {
@@ -365,14 +365,16 @@ func (processor *Processor) balanceQuote(height int64, token string, best tokenP
 				if !ok {
 					continue
 				}
-				if found && (liquidity.LessThan(best.LiquidityUSD) || (liquidity.Equal(best.LiquidityUSD) && id > best.Pool)) {
-					continue
-				}
-				best = tokenPrice{
+				candidate := quoteCandidate{price: tokenPrice{
 					USD: relative.Mul(counterpart.USD).Round(precision), Hops: counterpart.Hops + 1,
 					Via: counterToken, Pool: id, LiquidityUSD: liquidity, Height: height,
+				}}
+				if edge := processor.edge(id, record, position, other); edge.hasDepth {
+					candidate.depthUSD, candidate.hasDepth = edge.depth.Mul(counterpart.USD).Round(precision), true
 				}
-				found = true
+				if !found || candidate.beats(best) {
+					best, found = candidate, true
+				}
 			}
 		}
 	}
