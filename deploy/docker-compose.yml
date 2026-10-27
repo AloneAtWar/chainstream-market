@@ -108,6 +108,7 @@ services:
     environment:
       CHAINSTREAM_RPC_URL: ${ETH_RPC_URL:-http://host.docker.internal:8545}
       CHAINSTREAM_START_HEIGHT: ${ETH_START_HEIGHT:--1}
+      CHAINSTREAM_CALL_BATCH_SIZE: ${ETH_CALL_BATCH_SIZE:-10}
     extra_hosts: ["host.docker.internal:host-gateway"]
     command: ["-conf", "/etc/chainstream-evm"]
     volumes:

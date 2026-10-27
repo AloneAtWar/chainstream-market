@@ -232,6 +232,56 @@ func TestRegistryNewerMetadataWins(t *testing.T) {
 	}
 }
 
+// notRecognized is the fact chainstream-evm publishes for a standard whose
+// probes the address did not answer.
+func notRecognized(address, standard string, sourceHeight int64) *streamv1.AssetFact {
+	return &streamv1.AssetFact{
+		Address: address, Standard: standard, Recognition: "not_recognized",
+		Type: streamv1.AssetFactType_ASSET_FACT_TYPE_OBSERVED, SourceHeight: sourceHeight,
+		MetadataJson: []byte(fmt.Sprintf(`{"Address":%q,"Status":1}`, address)),
+	}
+}
+
+func TestRegistryKeepsTheRecognizedStandard(t *testing.T) {
+	f := newFixture(t)
+	// chainstream-evm reports WETH once per probed standard in one block.
+	f.apply(1, []*streamv1.AssetFact{
+		erc20(weth, "Wrapped Ether", "WETH", 18, 1), notRecognized(weth, "erc721", 1), notRecognized(weth, "erc1155", 1),
+	})
+	if got, _ := f.token(weth); got.Standard != "erc20" || got.Recognition != "recognized" || *got.Symbol != "WETH" {
+		t.Fatalf("weth = %+v", got)
+	}
+	// A later block's facts for other standards do not replace it either.
+	f.apply(2, []*streamv1.AssetFact{notRecognized(weth, "erc1155", 2)})
+	if got, _ := f.token(weth); got.Standard != "erc20" || *got.Symbol != "WETH" || got.UpdatedHeight != 1 {
+		t.Fatalf("weth after erc1155 = %+v", got)
+	}
+	// The recognized standard itself can still change the row, and an
+	// address nothing recognized takes the latest fact.
+	f.apply(3, []*streamv1.AssetFact{erc20(weth, "Wrapped Ether", "WETH9", 18, 3)})
+	f.apply(4, []*streamv1.AssetFact{notRecognized(usdc, "erc721", 4), notRecognized(usdc, "erc20", 4)})
+	if got, _ := f.token(weth); *got.Symbol != "WETH9" {
+		t.Fatalf("weth after update = %+v", got)
+	}
+	if got, ok := f.token(usdc); !ok || got.Standard != "erc20" || got.Recognition != "not_recognized" {
+		t.Fatalf("usdc = %+v", got)
+	}
+	f.apply(5, []*streamv1.AssetFact{erc20(usdc, "USD Coin", "USDC", 6, 5)})
+	if got, _ := f.token(usdc); got.Recognition != "recognized" || *got.Symbol != "USDC" {
+		t.Fatalf("usdc after recognition = %+v", got)
+	}
+	// A later probe that no standard answers, for example after a proxy
+	// upgrade, withdraws the recognition through the stored standard's own
+	// negative result, wherever it sits in the block.
+	f.apply(6, []*streamv1.AssetFact{
+		notRecognized(usdc, "erc20", 6), notRecognized(usdc, "erc721", 6), notRecognized(usdc, "erc1155", 6),
+	})
+	if got, _ := f.token(usdc); got.Standard != "erc20" || got.Recognition != "not_recognized" || got.Symbol != nil ||
+		got.UpdatedHeight != 6 {
+		t.Fatalf("usdc after withdrawal = %+v", got)
+	}
+}
+
 func TestRegistryRevertsAndResumes(t *testing.T) {
 	f := newFixture(t)
 	f.apply(1, []*streamv1.AssetFact{erc20(usdc, "USD Coin", "A", 6, 1)})

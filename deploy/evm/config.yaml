@@ -28,6 +28,10 @@ chain:
     health_max_retry: 5
   finality:
     fallback_depth: 0
+  # eth_call requests per JSON-RPC batch. The default of 40 can exceed the
+  # ~1 MB request body that publicnode accepts; use 3 for drpc's free tier.
+  call_batch:
+    size: ${CALL_BATCH_SIZE:10}
 
 data:
   redis:

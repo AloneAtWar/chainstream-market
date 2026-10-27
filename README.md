@@ -363,7 +363,7 @@ make down    # stop, keeping data; make clean also drops the volumes
 | 8123, 9000 | ClickHouse HTTP and native, user `default` without password, database `market` |
 | 5432 | PostgreSQL, `market:market@localhost:5432/market` |
 
-The node must answer `eth_call` by block hash (EIP-1898) near the head, for holder-indexer, and serve the Chainlink proxies market-engine resolves at startup. chainstream-evm starts at the chain tip unless `ETH_START_HEIGHT` is set, and keeps its cursor in Redis afterwards. Its config is `deploy/evm/config.yaml`; each service reads its own `deploy/configs/<service>.yaml`. A service that cannot start, such as market-engine without a reachable node, restarts until it can.
+The node must answer `eth_call` by block hash (EIP-1898) near the head, for holder-indexer, and serve the Chainlink proxies market-engine resolves at startup. chainstream-evm starts at the chain tip unless `ETH_START_HEIGHT` is set, and keeps its cursor in Redis afterwards. Public endpoints limit request size: `ETH_CALL_BATCH_SIZE` (default 10) is how many `eth_call`s chainstream-evm sends per JSON-RPC batch, which publicnode accepts; drpc's free tier needs 3. Its config is `deploy/evm/config.yaml`; each service reads its own `deploy/configs/<service>.yaml`. A service that cannot start, such as market-engine without a reachable node, restarts until it can.
 
 The topics are created by `kafka-init` with one partition and no retention limit, since every consumer resumes from its own committed offset. To add a chain, add a chainstream-evm service with its own config and topic, the topics to `kafka-init`, and the chain to each file in `deploy/configs`.
 

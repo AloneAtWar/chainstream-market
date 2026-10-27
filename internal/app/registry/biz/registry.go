@@ -85,11 +85,12 @@ func (registry *Registry) Apply(_ context.Context, block *streamv1.BlockEvent) e
 		if !ok {
 			continue
 		}
-		if index, seen := tokens[token.Address]; seen {
+		key := token.Address + "/" + token.Standard
+		if index, seen := tokens[key]; seen {
 			change.Tokens[index] = mergeTokens(change.Tokens[index], token)
 			continue
 		}
-		tokens[token.Address] = len(change.Tokens)
+		tokens[key] = len(change.Tokens)
 		change.Tokens = append(change.Tokens, token)
 	}
 	pools := make(map[string]int)
@@ -216,9 +217,11 @@ func stripNUL(value any) any {
 	return value
 }
 
-// mergeTokens combines two facts about one address in a block: the later
-// metadata wins unless it was read at a lower height, and a deployment from
-// either is kept.
+// mergeTokens combines two facts about one address and standard in a block:
+// the later metadata wins unless it was read at a lower height, and a
+// deployment from either is kept. chainstream-evm reports an address once for
+// every standard it probed; the store chooses among the standards, since the
+// choice depends on the standard it already holds.
 func mergeTokens(earlier, later model.Token) model.Token {
 	merged := later
 	if earlier.SourceHeight > later.SourceHeight {

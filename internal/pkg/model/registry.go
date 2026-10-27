@@ -9,6 +9,10 @@ type Deployment struct {
 	TraceID          string `json:"trace_id"`
 }
 
+// RecognitionRecognized is the AssetFact recognition of a standard whose
+// probes the address answered.
+const RecognitionRecognized = "recognized"
+
 // Token is the latest metadata known for one asset address. Name, Symbol
 // and Decimals are nil until the asset's metadata reports them.
 type Token struct {
@@ -25,7 +29,9 @@ type Token struct {
 	Created    bool
 	Deployment *Deployment
 	// SourceHeight is the height the metadata was read at; a fact replaces
-	// the stored metadata only when its SourceHeight is not lower.
+	// the stored metadata only when its SourceHeight is not lower, and a
+	// fact that does not recognize the address never replaces a row that
+	// another standard recognized.
 	SourceHeight int64
 	// FirstHeight and UpdatedHeight are the blocks that first stored the
 	// token and last replaced its metadata. The store sets both.
@@ -56,7 +62,7 @@ type RegistryChange struct {
 	Reverted bool
 	RevertTo int64
 	// Height is the block that Tokens and Pools belong to. Each address
-	// and pool appears at most once.
+	// appears at most once per standard, and each pool at most once.
 	Height int64
 	Tokens []Token
 	Pools  []Pool
