@@ -55,8 +55,8 @@ type HolderRepo interface {
 	// Holdings returns the stored holdings among keys.
 	Holdings(ctx context.Context, chainID uint64, keys []model.HolderKey) ([]model.Holding, error)
 	// StaleHoldings returns up to limit holdings, least recently verified
-	// first.
-	StaleHoldings(ctx context.Context, chainID uint64, limit int) ([]model.Holding, error)
+	// first, leaving out those of skipToken unless it is empty.
+	StaleHoldings(ctx context.Context, chainID uint64, limit int, skipToken string) ([]model.Holding, error)
 	CommitHolders(ctx context.Context, checkpoint chainsync.Checkpoint, change model.HolderChange) error
 }
 
@@ -202,14 +202,21 @@ func (indexer *Indexer) Apply(ctx context.Context, block *streamv1.BlockEvent) e
 // reconcile checks the least recently verified holdings that this block did
 // not touch and returns the corrections that make them match balanceOf.
 func (indexer *Indexer) reconcile(ctx context.Context, hash string, touched map[model.HolderKey]struct{}) ([]model.HolderDelta, error) {
-	stale, err := indexer.options.Repo.StaleHoldings(ctx, indexer.options.ChainID, indexer.options.ReconcileBatch+len(touched))
+	// Native holdings are only reconciled while native balances are on.
+	// They are left out by the query, since holdings kept from before
+	// native balances were turned off are never verified again and would
+	// otherwise fill every batch.
+	skip := ""
+	if !indexer.options.NativeBalances {
+		skip = rpc.NativeToken
+	}
+	stale, err := indexer.options.Repo.StaleHoldings(ctx, indexer.options.ChainID, indexer.options.ReconcileBatch+len(touched), skip)
 	if err != nil {
 		return nil, err
 	}
 	stale = slices.DeleteFunc(stale, func(holding model.Holding) bool {
 		_, ok := touched[holding.HolderKey]
-		// Native holdings are only reconciled while native balances are on.
-		return ok || (holding.Token == rpc.NativeToken && !indexer.options.NativeBalances)
+		return ok
 	})
 	stale = stale[:min(len(stale), indexer.options.ReconcileBatch)]
 	keys := make([]model.HolderKey, len(stale))

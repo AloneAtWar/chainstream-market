@@ -49,11 +49,13 @@ func openRepo(t *testing.T) *holderRepo {
 }
 
 type fixture struct {
-	t       *testing.T
-	repo    *holderRepo
-	node    *rpctest.Node
-	indexer *biz.Indexer
-	offset  int64
+	t *testing.T
+	// skipNative turns native balances off on the next restart.
+	skipNative bool
+	repo       *holderRepo
+	node       *rpctest.Node
+	indexer    *biz.Indexer
+	offset     int64
 }
 
 func newFixture(t *testing.T, reconcileEvery int64) *fixture {
@@ -73,7 +75,7 @@ func (f *fixture) restart(reconcileEvery int64) {
 	}
 	f.indexer, err = biz.New(biz.Options{
 		ChainID: 1, Repo: f.repo, Balances: client, HistoryDepth: 8,
-		ReconcileEvery: reconcileEvery, ReconcileBatch: 10, NativeBalances: true,
+		ReconcileEvery: reconcileEvery, ReconcileBatch: 10, NativeBalances: !f.skipNative,
 	})
 	if err != nil {
 		f.t.Fatalf("New() error = %v", err)
@@ -293,4 +295,27 @@ func TestIndexerReconcilesNativeBalances(t *testing.T) {
 	f.node.SetBalance(hashOf(104, ""), multicall, alice, 1032)
 	f.mustApply(104, "")
 	assertBalances(t, f.balances(native), map[string]int64{alice: 1032})
+}
+
+func TestIndexerReconcilesTokensWhenNativeBalancesAreOff(t *testing.T) {
+	f := newFixture(t, 0)
+	// More native holdings than one reconciliation batch, all older than
+	// the token holding.
+	for index := range 12 {
+		holder := fmt.Sprintf("0x%040x", index+1)
+		f.node.SetBalance(hashOf(100+int64(index), ""), multicall, holder, 1)
+		f.applyNative(100+int64(index), "", holder)
+	}
+	f.node.SetBalance(hashOf(112, ""), token, alice, 1000)
+	f.mustApply(112, "", transfer(token, zeroAddress, alice, 1000))
+
+	f.skipNative = true
+	f.restart(4)
+	// A rebase grew Alice's balance without a Transfer; the stale native
+	// holdings must not crowd her out of the batch.
+	f.node.SetBalance(hashOf(116, ""), token, alice, 1010)
+	for height := int64(113); height <= 116; height++ {
+		f.mustApply(height, "")
+	}
+	assertBalances(t, f.balances(token), map[string]int64{alice: 1010})
 }
