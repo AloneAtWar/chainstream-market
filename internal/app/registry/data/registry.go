@@ -110,7 +110,9 @@ func queueTokens(run *pgdb.Runner, chainID, height int64, tokens []model.Token) 
 	}
 	queueUndo(run, chainID, height, undoToken, "registry_tokens", "address", addresses)
 	// Older metadata never replaces newer; a reported deployment is kept
-	// whatever its height.
+	// whatever its height. chainstream-evm reports an address once for each
+	// standard it probed, so a fact that does not recognize the address never
+	// replaces a row that another standard recognized.
 	run.Exec(`INSERT INTO registry_tokens AS t (chain_id, address, standard, recognition, metadata_complete,
 			name, symbol, decimals, metadata, created, deployment, source_height, first_height, updated_height)
 		SELECT @chain, address, standard, recognition, complete, name, symbol, decimals, metadata::jsonb,
@@ -125,8 +127,10 @@ func queueTokens(run *pgdb.Runner, chainID, height int64, tokens []model.Token) 
 			metadata = EXCLUDED.metadata, created = t.created OR EXCLUDED.created,
 			deployment = COALESCE(t.deployment, EXCLUDED.deployment),
 			source_height = EXCLUDED.source_height, updated_height = EXCLUDED.updated_height
-		WHERE EXCLUDED.source_height >= t.source_height`, map[string]any{
+		WHERE EXCLUDED.source_height >= t.source_height
+		  AND (EXCLUDED.recognition = @recognized OR t.recognition <> @recognized OR EXCLUDED.standard = t.standard)`, map[string]any{
 		"chain": chainID, "height": height, "addresses": pgdb.Array(addresses), "standards": pgdb.Array(standards),
+		"recognized":   model.RecognitionRecognized,
 		"recognitions": pgdb.Array(recognitions), "complete": pgdb.Array(complete), "names": pgdb.Array(names),
 		"symbols": pgdb.Array(symbols), "decimals": pgdb.Array(decimals), "metadata": pgdb.Array(metadata),
 		"created": pgdb.Array(created), "deployments": pgdb.Array(deployments), "source_heights": pgdb.Array(sourceHeights),
