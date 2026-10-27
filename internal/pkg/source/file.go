@@ -39,11 +39,18 @@ type File struct {
 
 	file   *os.File
 	reader *bufio.Reader
-	// partial holds a line whose newline has not been written yet.
-	partial       []byte
+	// consumed is the length of the complete lines read so far. A line whose
+	// newline has not been written yet is read again from there next time,
+	// because chainstream-evm may cut such a line after a failed write and
+	// write a different record in its place.
+	consumed      int64
 	next          int64
 	line          int
 	highWatermark int64
+	// scratch holds the bytes of a line read again by stableLine.
+	scratch []byte
+	// afterRead, when a test sets it, runs after each read from the file.
+	afterRead func()
 }
 
 // NewFile reads options.Path from offset start. The file may not exist yet.
@@ -86,21 +93,28 @@ func (source *File) read() ([]Message, error) {
 		if err != nil {
 			return nil, fmt.Errorf("file source: %w", err)
 		}
-		source.file, source.reader = file, bufio.NewReaderSize(file, 1<<20)
+		source.file = file
+		source.reader = bufio.NewReaderSize(source.input(), 1<<20)
 	}
 	var messages []Message
 	for len(messages) < maxFileBatch {
 		chunk, err := source.reader.ReadBytes('\n')
-		source.partial = append(source.partial, chunk...)
 		if errors.Is(err, io.EOF) {
+			if rewindErr := source.rewindPartial(len(chunk)); rewindErr != nil {
+				return nil, rewindErr
+			}
 			source.highWatermark = source.next
 			return messages, nil
 		}
 		if err != nil {
 			return nil, fmt.Errorf("file source: read %s: %w", source.options.Path, err)
 		}
-		line := bytes.TrimSpace(source.partial)
-		source.partial = source.partial[:0]
+		chunk, err = source.stableLine(chunk)
+		if err != nil {
+			return nil, err
+		}
+		source.consumed += int64(len(chunk))
+		line := bytes.TrimSpace(chunk)
 		source.line++
 		if len(line) == 0 {
 			continue
@@ -117,6 +131,77 @@ func (source *File) read() ([]Message, error) {
 		messages = append(messages, Message{Offset: offset, Value: value})
 	}
 	return messages, nil
+}
+
+// rewindPartial runs at the end of the file. It drops the partial bytes of an
+// unterminated line so the next read starts again at the line's beginning, and
+// fails if the file no longer holds the lines already read.
+func (source *File) rewindPartial(partial int) error {
+	info, err := source.file.Stat()
+	if err != nil {
+		return fmt.Errorf("file source: stat %s: %w", source.options.Path, err)
+	}
+	if info.Size() < source.consumed {
+		return fmt.Errorf("file source: %s shrank to %d bytes, below the %d already read",
+			source.options.Path, info.Size(), source.consumed)
+	}
+	if partial == 0 {
+		return nil
+	}
+	if _, err := source.file.Seek(source.consumed, io.SeekStart); err != nil {
+		return fmt.Errorf("file source: seek %s: %w", source.options.Path, err)
+	}
+	source.reader.Reset(source.input())
+	return nil
+}
+
+// stableLine reads the line that ends chunk again from the file and returns
+// what the file holds there. One ReadBytes can span several reads of the file,
+// so chunk may join the start of an unterminated line with the end of the
+// record chainstream-evm wrote in its place after cutting that line. A newline
+// in the file is never removed once written, and neither are the bytes before
+// it, so the bytes read after chunk's newline was seen are final. If they
+// differ from chunk, the read goes on from the end of the line they hold.
+func (source *File) stableLine(chunk []byte) ([]byte, error) {
+	if cap(source.scratch) < len(chunk) {
+		source.scratch = make([]byte, len(chunk))
+	}
+	stable := source.scratch[:len(chunk)]
+	if _, err := source.file.ReadAt(stable, source.consumed); err != nil {
+		return nil, fmt.Errorf("file source: read %s again at byte %d: %w", source.options.Path, source.consumed, err)
+	}
+	if bytes.Equal(stable, chunk) {
+		return chunk, nil
+	}
+	end := bytes.IndexByte(stable, '\n')
+	if end < 0 {
+		return nil, fmt.Errorf("file source: %s no longer holds the line read at byte %d",
+			source.options.Path, source.consumed)
+	}
+	stable = bytes.Clone(stable[:end+1])
+	if _, err := source.file.Seek(source.consumed+int64(len(stable)), io.SeekStart); err != nil {
+		return nil, fmt.Errorf("file source: seek %s: %w", source.options.Path, err)
+	}
+	source.reader.Reset(source.input())
+	return stable, nil
+}
+
+// input is what the buffered reader reads the file through.
+func (source *File) input() io.Reader {
+	if source.afterRead == nil {
+		return source.file
+	}
+	return readerFunc(func(buf []byte) (int, error) {
+		n, err := source.file.Read(buf)
+		source.afterRead()
+		return n, err
+	})
+}
+
+type readerFunc func([]byte) (int, error)
+
+func (read readerFunc) Read(buf []byte) (int, error) {
+	return read(buf)
 }
 
 // encodeRecord turns a StreamRecord in protobuf JSON into binary protobuf.

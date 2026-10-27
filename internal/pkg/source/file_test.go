@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -108,4 +109,131 @@ func TestFileRejectsBadRecord(t *testing.T) {
 	if _, err := source.Fetch(context.Background()); err == nil || !strings.Contains(err.Error(), "line 2") {
 		t.Fatalf("Fetch() error = %v, want one naming line 2", err)
 	}
+}
+
+func TestFileRereadsAnUnterminatedLineThatWasReplaced(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "chainstream-eth.jsonl")
+	appendFile(t, path, blockLine(t, 99))
+	source, err := NewFile(FileOptions{Path: path, PollInterval: 10 * time.Millisecond}, 0)
+	if err != nil {
+		t.Fatalf("NewFile() error = %v", err)
+	}
+	defer source.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if _, fetchErr := source.Fetch(ctx); fetchErr != nil {
+		t.Fatalf("Fetch() error = %v", fetchErr)
+	}
+
+	// chainstream-evm stops part-way through block 100 ...
+	stale := safeHeightLine(t, 100, 999)
+	appendFile(t, path, stale[:len(stale)-5])
+	short, cancelShort := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancelShort()
+	if _, fetchErr := source.Fetch(short); !errors.Is(fetchErr, context.DeadlineExceeded) {
+		t.Fatalf("Fetch() of a partial line error = %v", fetchErr)
+	}
+	// ... and on restart cuts that line and writes a longer block 100.
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("Stat() error = %v", err)
+	}
+	if truncateErr := os.Truncate(path, info.Size()-int64(len(stale)-5)); truncateErr != nil {
+		t.Fatalf("Truncate() error = %v", truncateErr)
+	}
+	appendFile(t, path, safeHeightLine(t, 100, 1000))
+
+	messages, err := source.Fetch(ctx)
+	if err != nil {
+		t.Fatalf("Fetch() after the rewrite error = %v", err)
+	}
+	if len(messages) != 1 || messages[0].Offset != 1 {
+		t.Fatalf("messages = %v, want the rewritten block at offset 1", messages)
+	}
+	var record streamv1.StreamRecord
+	if err := proto.Unmarshal(messages[0].Value, &record); err != nil {
+		t.Fatalf("Unmarshal() error = %v", err)
+	}
+	if record.GetBlock().GetBlockHeight() != 100 || record.GetBlock().GetSafeHeight() != 1000 {
+		t.Fatalf("record = %v, want block 100 with safe height 1000", &record)
+	}
+}
+
+func TestFileRereadsALineReplacedBetweenTwoReadsOfOneReadBytes(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "chainstream-eth.jsonl")
+	head := blockLine(t, 99)
+	stale := safeHeightLine(t, 100, 999)
+	partial := stale[:len(stale)-5]
+	appendFile(t, path, head+partial)
+	source, err := NewFile(FileOptions{Path: path, PollInterval: 10 * time.Millisecond}, 0)
+	if err != nil {
+		t.Fatalf("NewFile() error = %v", err)
+	}
+	defer source.Close()
+	// The first read takes block 99 and the start of block 100. Before the
+	// ReadBytes for block 100 reads again, chainstream-evm cuts the partial
+	// line and writes a longer block 100, so that read returns only the
+	// rewritten line's tail.
+	rewritten := false
+	source.afterRead = func() {
+		if rewritten {
+			return
+		}
+		rewritten = true
+		if truncateErr := os.Truncate(path, int64(len(head))); truncateErr != nil {
+			t.Errorf("Truncate() error = %v", truncateErr)
+		}
+		appendFile(t, path, safeHeightLine(t, 100, 1000)+blockLine(t, 101))
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	var messages []Message
+	for len(messages) < 3 {
+		batch, fetchErr := source.Fetch(ctx)
+		if fetchErr != nil {
+			t.Fatalf("Fetch() error = %v", fetchErr)
+		}
+		messages = append(messages, batch...)
+	}
+	if got := heights(t, messages); !slices.Equal(got, []int64{99, 100, 101}) {
+		t.Fatalf("heights = %v, want [99 100 101]", got)
+	}
+	var record streamv1.StreamRecord
+	if err := proto.Unmarshal(messages[1].Value, &record); err != nil {
+		t.Fatalf("Unmarshal() error = %v", err)
+	}
+	if record.GetBlock().GetSafeHeight() != 1000 {
+		t.Fatalf("record = %v, want block 100 with safe height 1000", &record)
+	}
+}
+
+func TestFileFailsWhenReadLinesAreRemoved(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "chainstream-eth.jsonl")
+	appendFile(t, path, blockLine(t, 99)+blockLine(t, 100))
+	source, err := NewFile(FileOptions{Path: path, PollInterval: 10 * time.Millisecond}, 0)
+	if err != nil {
+		t.Fatalf("NewFile() error = %v", err)
+	}
+	defer source.Close()
+	if _, err := source.Fetch(context.Background()); err != nil {
+		t.Fatalf("Fetch() error = %v", err)
+	}
+	if err := os.Truncate(path, int64(len(blockLine(t, 99)))); err != nil {
+		t.Fatalf("Truncate() error = %v", err)
+	}
+	if _, err := source.Fetch(context.Background()); err == nil || !strings.Contains(err.Error(), "shrank") {
+		t.Fatalf("Fetch() error = %v, want one saying the file shrank", err)
+	}
+}
+
+func safeHeightLine(t *testing.T, height, safeHeight int64) string {
+	t.Helper()
+	line, err := protojson.Marshal(&streamv1.StreamRecord{Payload: &streamv1.StreamRecord_Block{
+		Block: &streamv1.BlockEvent{ChainId: 1, BlockHeight: height, SafeHeight: safeHeight},
+	}})
+	if err != nil {
+		t.Fatalf("Marshal() error = %v", err)
+	}
+	return string(line) + "\n"
 }
