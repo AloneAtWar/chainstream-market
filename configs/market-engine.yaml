@@ -103,6 +103,16 @@ market:
   # How long a backfill waits for ch-loader to reach the heights it reads
   # before it falls back to the held trades.
   backfill_wait: 30s
+  # A concentrated-liquidity pool's depth is what it trades within a price
+  # band sized by its fee tier (fees in hundredths of a basis point, bands in
+  # basis points either side of the price). A fee above every band uses the
+  # last; a V4 pool whose hook sets its fee uses dynamic_fee_depth_bps.
+  depth_bands:
+    - {max_fee: 100, bps: 50}
+    - {max_fee: 500, bps: 100}
+    - {max_fee: 3000, bps: 200}
+    - {max_fee: 1000000, bps: 500}
+  dynamic_fee_depth_bps: 200
 
 # Realtime push. market-engine publishes each block's trades and candles, and
 # reorg corrections, to every chain's live_topic (default "<topic>-live");

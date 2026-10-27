@@ -17,18 +17,29 @@ var q96 = decimal.NewFromBigInt(new(big.Int).Lsh(big.NewInt(1), 96), 0)
 // pool is a two-token pool's latest observed state in human units.
 type pool struct {
 	Tokens [2]string // pool token order, normalized
-	// reserves are actual reserves for constant-product pools and virtual
-	// reserves at the current price for concentrated-liquidity pools.
+	// reserves are the tokens the pool holds: its reserves for
+	// constant-product pools, and for concentrated-liquidity pools what its
+	// tick table holds at the current price. A concentrated pool without a
+	// usable table has none.
 	Reserves    [2]decimal.Decimal
 	HasReserves bool
+	// Depth is what a concentrated pool trades within its fee tier's price
+	// band: tokens[0] sold while the price rises to the band's top and
+	// tokens[1] while it falls to the bottom.
+	Depth    [2]decimal.Decimal
+	HasDepth bool
 	// price is tokens[1] per tokens[0].
 	Price    decimal.Decimal
 	HasPrice bool
 }
 
+// tableAmounts returns the raw token amounts a concentrated pool's tick table
+// holds at a sqrt price, or false when the pool has no usable table.
+type tableAmounts func(poolID string, sqrtPriceX96 *big.Int) ([2]*big.Int, bool)
+
 // observePool returns the pool state after trade. decimals reports known
 // token decimals. ok is false when the trade carries nothing new.
-func observePool(prev pool, trade *streamv1.Trade, decimals func(string) (uint32, bool)) (pool, bool) {
+func observePool(prev pool, trade *streamv1.Trade, decimals func(string) (uint32, bool), amountsAt tableAmounts) (pool, bool) {
 	amounts := trade.GetAmounts()
 	if len(amounts) != 2 {
 		return prev, false
@@ -57,13 +68,17 @@ func observePool(prev pool, trade *streamv1.Trade, decimals func(string) (uint32
 		if next.HasPrice {
 			next.Price = next.Reserves[1].DivRound(next.Reserves[0], precision)
 		}
-	case state.GetSqrtPriceX96() != "" && state.GetLiquidity() != "":
-		reserves, price, ok := concentratedState(state.GetSqrtPriceX96(), state.GetLiquidity(), d0, d1)
+	case state.GetSqrtPriceX96() != "":
+		sqrtPrice, price, ok := concentratedPrice(state.GetSqrtPriceX96(), d0, d1)
 		if !ok {
 			return prev, false
 		}
-		next.Reserves, next.Price = reserves, price
-		next.HasReserves, next.HasPrice = true, true
+		next.Price, next.HasPrice = price, true
+		next.Reserves, next.HasReserves = [2]decimal.Decimal{}, false
+		if raw, ok := amountsAt(normalize(trade.GetPoolId()), sqrtPrice); ok {
+			next.Reserves = [2]decimal.Decimal{decimal.NewFromBigInt(raw[0], -int32(d0)), decimal.NewFromBigInt(raw[1], -int32(d1))}
+			next.HasReserves = true
+		}
 	case trade.GetAction() == streamv1.TradeAction_TRADE_ACTION_SWAP:
 		a0, okA := rawValue(amounts[0].GetRaw(), d0)
 		a1, okB := rawValue(amounts[1].GetRaw(), d1)
@@ -78,23 +93,19 @@ func observePool(prev pool, trade *streamv1.Trade, decimals func(string) (uint32
 	return next, true
 }
 
-// concentratedState converts a Uniswap v3 style sqrtPriceX96 and in-range
-// liquidity to virtual reserves and a human price of token1 per token0.
-func concentratedState(sqrtPriceX96, liquidity string, d0, d1 uint32) ([2]decimal.Decimal, decimal.Decimal, bool) {
-	sqrtRaw, err0 := decimal.NewFromString(sqrtPriceX96)
-	active, err1 := decimal.NewFromString(liquidity)
-	if err0 != nil || err1 != nil || !sqrtRaw.IsPositive() || active.IsNegative() {
-		return [2]decimal.Decimal{}, decimal.Decimal{}, false
+// concentratedPrice parses a Uniswap v3 style sqrtPriceX96 and converts it to
+// a human price of token1 per token0.
+func concentratedPrice(sqrtPriceX96 string, d0, d1 uint32) (*big.Int, decimal.Decimal, bool) {
+	sqrtRaw, ok := new(big.Int).SetString(sqrtPriceX96, 10)
+	if !ok || sqrtRaw.Sign() <= 0 {
+		return nil, decimal.Decimal{}, false
 	}
-	sqrtPrice := sqrtRaw.DivRound(q96, precision)
+	sqrtPrice := decimal.NewFromBigInt(sqrtRaw, 0).DivRound(q96, precision)
 	if !sqrtPrice.IsPositive() {
-		return [2]decimal.Decimal{}, decimal.Decimal{}, false
+		return nil, decimal.Decimal{}, false
 	}
-	raw0 := active.DivRound(sqrtPrice, precision)
-	raw1 := active.Mul(sqrtPrice)
-	reserves := [2]decimal.Decimal{raw0.Shift(-int32(d0)), raw1.Shift(-int32(d1)).Round(precision)}
 	price := sqrtPrice.Mul(sqrtPrice).Shift(int32(d0) - int32(d1)).Round(precision)
-	return reserves, price, price.IsPositive()
+	return sqrtRaw, price, price.IsPositive()
 }
 
 // index returns token's position in the pool after canonicalization.

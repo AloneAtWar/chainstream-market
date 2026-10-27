@@ -29,6 +29,7 @@ type Server struct {
 	transfers TransferReader
 	registry  RegistryReader
 	rankings  RankingReader
+	liquidity LiquidityReader
 	live      http.Handler
 	intervals map[string]time.Duration
 	logger    *slog.Logger
@@ -78,6 +79,9 @@ func (server *Server) Handler() http.Handler {
 	}
 	if server.rankings != nil {
 		mux.HandleFunc("GET /v1/chains/{chain}/tokens", server.tokenList)
+	}
+	if server.liquidity != nil {
+		mux.HandleFunc("GET /v1/chains/{chain}/pools/{pool}/liquidity", server.poolLiquidity)
 	}
 	if server.live != nil {
 		mux.Handle("GET /v1/stream", server.live)

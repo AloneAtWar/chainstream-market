@@ -18,6 +18,9 @@ var engineSchema = []string{
 		value    JSONB NOT NULL,
 		PRIMARY KEY (chain_id, kind, key)
 	)`,
+	// market-api reads one pool's tick table by the pool part of its keys.
+	`CREATE INDEX IF NOT EXISTS engine_state_pool_ticks
+		ON engine_state (chain_id, (split_part(key, '|', 1))) WHERE kind = 'ticks'`,
 	`CREATE TABLE IF NOT EXISTS engine_state_undo (
 		chain_id     BIGINT NOT NULL,
 		block_height BIGINT NOT NULL,

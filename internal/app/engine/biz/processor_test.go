@@ -282,18 +282,15 @@ func TestNativeAliasSharesWrappedPrice(t *testing.T) {
 	}
 }
 
-func TestConcentratedState(t *testing.T) {
-	// sqrtPrice = 2 means price 4 and, with L = 1e18 and 18 decimals,
-	// virtual reserves of 0.5 and 2.
+func TestConcentratedPrice(t *testing.T) {
+	// sqrtPrice = 2 means price 4.
 	sqrt := q96.Mul(decimal.NewFromInt(2)).String()
-	reserves, price, ok := concentratedState(sqrt, "1000000000000000000", 18, 18)
-	if !ok {
-		t.Fatal("concentratedState() ok = false")
+	raw, price, ok := concentratedPrice(sqrt, 18, 18)
+	if !ok || raw.String() != sqrt {
+		t.Fatalf("concentratedPrice() = %v, %t", raw, ok)
 	}
 	assertDecimal(t, "price", price, "4")
-	assertDecimal(t, "reserve0", reserves[0], "0.5")
-	assertDecimal(t, "reserve1", reserves[1], "2")
-	if _, _, ok := concentratedState("0", "1", 18, 18); ok {
+	if _, _, ok := concentratedPrice("0", 18, 18); ok {
 		t.Fatal("zero sqrt price accepted")
 	}
 }
@@ -305,6 +302,9 @@ func TestNewProcessorValidatesOptions(t *testing.T) {
 		{MaxHops: 3, HistoryDepth: 1},
 		{MaxHops: 3, Intervals: []time.Duration{1500 * time.Millisecond}, HistoryDepth: 1},
 		{MaxHops: 3, Intervals: valid.Intervals},
+		{MaxHops: 3, Intervals: valid.Intervals, HistoryDepth: 1, DepthBands: []model.DepthBand{{MaxFee: 500, BPS: 100}, {MaxFee: 100, BPS: 50}}},
+		{MaxHops: 3, Intervals: valid.Intervals, HistoryDepth: 1, DepthBands: []model.DepthBand{{MaxFee: 500, BPS: 10_000}}},
+		{MaxHops: 3, Intervals: valid.Intervals, HistoryDepth: 1, DynamicFeeDepthBPS: -1},
 	}
 	for index, options := range invalid {
 		if _, err := NewProcessor(options); err == nil {

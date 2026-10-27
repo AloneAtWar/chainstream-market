@@ -23,11 +23,13 @@ func NewHandler(
 	holders HolderReader,
 	registry RegistryReader,
 	rankings RankingReader,
+	liquidity LiquidityReader,
 	hub *live.Hub,
 	logger *slog.Logger,
 ) http.Handler {
 	server := New(reader, api.IntervalDurations(), logger).
-		WithTransfers(transfers).WithHolders(holders).WithRegistry(registry).WithRankings(rankings)
+		WithTransfers(transfers).WithHolders(holders).WithRegistry(registry).WithRankings(rankings).
+		WithLiquidity(liquidity)
 	if hub != nil {
 		server.WithLive(hub)
 	}

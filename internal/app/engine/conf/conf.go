@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/AloneAtWar/chainstream-market/internal/pkg/config"
+	"github.com/AloneAtWar/chainstream-market/internal/pkg/model"
 	"github.com/google/wire"
 	"google.golang.org/protobuf/types/known/durationpb"
 )
@@ -243,6 +244,15 @@ func (market *Market) IntervalDurations() []time.Duration {
 		intervals[index] = interval.AsDuration()
 	}
 	return intervals
+}
+
+// DepthBandList returns market.depth_bands, or nil to use the defaults.
+func (market *Market) DepthBandList() []model.DepthBand {
+	var bands []model.DepthBand
+	for _, band := range market.GetDepthBands() {
+		bands = append(bands, model.DepthBand{MaxFee: band.GetMaxFee(), BPS: int(band.GetBps())})
+	}
+	return bands
 }
 
 // LiveTopics maps chain IDs to their live topics, or returns nil when live

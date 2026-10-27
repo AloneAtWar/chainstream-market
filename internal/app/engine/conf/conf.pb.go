@@ -273,9 +273,18 @@ type Market struct {
 	BackfillBlocks int64 `protobuf:"varint,10,opt,name=backfill_blocks,json=backfillBlocks,proto3" json:"backfill_blocks,omitempty"`
 	// backfill_wait is how long a backfill waits for ch-loader to store the
 	// heights it reads before it replays only held trades.
-	BackfillWait  *durationpb.Duration `protobuf:"bytes,11,opt,name=backfill_wait,json=backfillWait,proto3" json:"backfill_wait,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	BackfillWait *durationpb.Duration `protobuf:"bytes,11,opt,name=backfill_wait,json=backfillWait,proto3" json:"backfill_wait,omitempty"`
+	// depth_bands size the price band, in basis points either side of the
+	// price, that a concentrated-liquidity pool's depth is measured over by its
+	// fee tier (hundredths of a basis point), ascending by max_fee; a fee above
+	// every band uses the last. Empty means ≤0.01%: ±0.5%, ≤0.05%: ±1%,
+	// ≤0.3%: ±2%, higher: ±5%.
+	DepthBands []*DepthBand `protobuf:"bytes,12,rep,name=depth_bands,json=depthBands,proto3" json:"depth_bands,omitempty"`
+	// dynamic_fee_depth_bps is the band of a V4 pool whose hook sets its fee;
+	// 0 means 200 (±2%).
+	DynamicFeeDepthBps uint32 `protobuf:"varint,13,opt,name=dynamic_fee_depth_bps,json=dynamicFeeDepthBps,proto3" json:"dynamic_fee_depth_bps,omitempty"`
+	unknownFields      protoimpl.UnknownFields
+	sizeCache          protoimpl.SizeCache
 }
 
 func (x *Market) Reset() {
@@ -385,6 +394,72 @@ func (x *Market) GetBackfillWait() *durationpb.Duration {
 	return nil
 }
 
+func (x *Market) GetDepthBands() []*DepthBand {
+	if x != nil {
+		return x.DepthBands
+	}
+	return nil
+}
+
+func (x *Market) GetDynamicFeeDepthBps() uint32 {
+	if x != nil {
+		return x.DynamicFeeDepthBps
+	}
+	return 0
+}
+
+type DepthBand struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	MaxFee        uint32                 `protobuf:"varint,1,opt,name=max_fee,json=maxFee,proto3" json:"max_fee,omitempty"`
+	Bps           uint32                 `protobuf:"varint,2,opt,name=bps,proto3" json:"bps,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *DepthBand) Reset() {
+	*x = DepthBand{}
+	mi := &file_app_engine_conf_conf_proto_msgTypes[4]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DepthBand) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DepthBand) ProtoMessage() {}
+
+func (x *DepthBand) ProtoReflect() protoreflect.Message {
+	mi := &file_app_engine_conf_conf_proto_msgTypes[4]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DepthBand.ProtoReflect.Descriptor instead.
+func (*DepthBand) Descriptor() ([]byte, []int) {
+	return file_app_engine_conf_conf_proto_rawDescGZIP(), []int{4}
+}
+
+func (x *DepthBand) GetMaxFee() uint32 {
+	if x != nil {
+		return x.MaxFee
+	}
+	return 0
+}
+
+func (x *DepthBand) GetBps() uint32 {
+	if x != nil {
+		return x.Bps
+	}
+	return 0
+}
+
 var File_app_engine_conf_conf_proto protoreflect.FileDescriptor
 
 const file_app_engine_conf_conf_proto_rawDesc = "" +
@@ -406,7 +481,7 @@ const file_app_engine_conf_conf_proto_rawDesc = "" +
 	"clickhouse\"Q\n" +
 	"\x05State\x12\x16\n" +
 	"\x06driver\x18\x01 \x01(\tR\x06driver\x120\n" +
-	"\bpostgres\x18\x02 \x01(\v2\x14.pkg.config.PostgresR\bpostgres\"\x86\x04\n" +
+	"\bpostgres\x18\x02 \x01(\v2\x14.pkg.config.PostgresR\bpostgres\"\xf6\x04\n" +
 	"\x06Market\x12*\n" +
 	"\x11min_liquidity_usd\x18\x01 \x01(\x01R\x0fminLiquidityUsd\x127\n" +
 	"\x18candle_min_liquidity_usd\x18\x02 \x01(\x01R\x15candleMinLiquidityUsd\x12\x19\n" +
@@ -419,7 +494,13 @@ const file_app_engine_conf_conf_proto_rawDesc = "" +
 	"\x15late_trades_per_token\x18\t \x01(\x05R\x12lateTradesPerToken\x12'\n" +
 	"\x0fbackfill_blocks\x18\n" +
 	" \x01(\x03R\x0ebackfillBlocks\x12>\n" +
-	"\rbackfill_wait\x18\v \x01(\v2\x19.google.protobuf.DurationR\fbackfillWaitBHZFgithub.com/AloneAtWar/chainstream-market/internal/app/engine/conf;confb\x06proto3"
+	"\rbackfill_wait\x18\v \x01(\v2\x19.google.protobuf.DurationR\fbackfillWait\x12;\n" +
+	"\vdepth_bands\x18\f \x03(\v2\x1a.app.engine.conf.DepthBandR\n" +
+	"depthBands\x121\n" +
+	"\x15dynamic_fee_depth_bps\x18\r \x01(\rR\x12dynamicFeeDepthBps\"6\n" +
+	"\tDepthBand\x12\x17\n" +
+	"\amax_fee\x18\x01 \x01(\rR\x06maxFee\x12\x10\n" +
+	"\x03bps\x18\x02 \x01(\rR\x03bpsBHZFgithub.com/AloneAtWar/chainstream-market/internal/app/engine/conf;confb\x06proto3"
 
 var (
 	file_app_engine_conf_conf_proto_rawDescOnce sync.Once
@@ -433,39 +514,41 @@ func file_app_engine_conf_conf_proto_rawDescGZIP() []byte {
 	return file_app_engine_conf_conf_proto_rawDescData
 }
 
-var file_app_engine_conf_conf_proto_msgTypes = make([]protoimpl.MessageInfo, 4)
+var file_app_engine_conf_conf_proto_msgTypes = make([]protoimpl.MessageInfo, 5)
 var file_app_engine_conf_conf_proto_goTypes = []any{
 	(*Bootstrap)(nil),           // 0: app.engine.conf.Bootstrap
 	(*Storage)(nil),             // 1: app.engine.conf.Storage
 	(*State)(nil),               // 2: app.engine.conf.State
 	(*Market)(nil),              // 3: app.engine.conf.Market
-	(*config.Source)(nil),       // 4: pkg.config.Source
-	(*config.Kafka)(nil),        // 5: pkg.config.Kafka
-	(*config.Live)(nil),         // 6: pkg.config.Live
-	(*config.Metrics)(nil),      // 7: pkg.config.Metrics
-	(*config.Chain)(nil),        // 8: pkg.config.Chain
-	(*config.ClickHouse)(nil),   // 9: pkg.config.ClickHouse
-	(*config.Postgres)(nil),     // 10: pkg.config.Postgres
-	(*durationpb.Duration)(nil), // 11: google.protobuf.Duration
+	(*DepthBand)(nil),           // 4: app.engine.conf.DepthBand
+	(*config.Source)(nil),       // 5: pkg.config.Source
+	(*config.Kafka)(nil),        // 6: pkg.config.Kafka
+	(*config.Live)(nil),         // 7: pkg.config.Live
+	(*config.Metrics)(nil),      // 8: pkg.config.Metrics
+	(*config.Chain)(nil),        // 9: pkg.config.Chain
+	(*config.ClickHouse)(nil),   // 10: pkg.config.ClickHouse
+	(*config.Postgres)(nil),     // 11: pkg.config.Postgres
+	(*durationpb.Duration)(nil), // 12: google.protobuf.Duration
 }
 var file_app_engine_conf_conf_proto_depIdxs = []int32{
-	4,  // 0: app.engine.conf.Bootstrap.source:type_name -> pkg.config.Source
-	5,  // 1: app.engine.conf.Bootstrap.kafka:type_name -> pkg.config.Kafka
+	5,  // 0: app.engine.conf.Bootstrap.source:type_name -> pkg.config.Source
+	6,  // 1: app.engine.conf.Bootstrap.kafka:type_name -> pkg.config.Kafka
 	1,  // 2: app.engine.conf.Bootstrap.storage:type_name -> app.engine.conf.Storage
 	2,  // 3: app.engine.conf.Bootstrap.state:type_name -> app.engine.conf.State
 	3,  // 4: app.engine.conf.Bootstrap.market:type_name -> app.engine.conf.Market
-	6,  // 5: app.engine.conf.Bootstrap.live:type_name -> pkg.config.Live
-	7,  // 6: app.engine.conf.Bootstrap.metrics:type_name -> pkg.config.Metrics
-	8,  // 7: app.engine.conf.Bootstrap.chains:type_name -> pkg.config.Chain
-	9,  // 8: app.engine.conf.Storage.clickhouse:type_name -> pkg.config.ClickHouse
-	10, // 9: app.engine.conf.State.postgres:type_name -> pkg.config.Postgres
-	11, // 10: app.engine.conf.Market.intervals:type_name -> google.protobuf.Duration
-	11, // 11: app.engine.conf.Market.backfill_wait:type_name -> google.protobuf.Duration
-	12, // [12:12] is the sub-list for method output_type
-	12, // [12:12] is the sub-list for method input_type
-	12, // [12:12] is the sub-list for extension type_name
-	12, // [12:12] is the sub-list for extension extendee
-	0,  // [0:12] is the sub-list for field type_name
+	7,  // 5: app.engine.conf.Bootstrap.live:type_name -> pkg.config.Live
+	8,  // 6: app.engine.conf.Bootstrap.metrics:type_name -> pkg.config.Metrics
+	9,  // 7: app.engine.conf.Bootstrap.chains:type_name -> pkg.config.Chain
+	10, // 8: app.engine.conf.Storage.clickhouse:type_name -> pkg.config.ClickHouse
+	11, // 9: app.engine.conf.State.postgres:type_name -> pkg.config.Postgres
+	12, // 10: app.engine.conf.Market.intervals:type_name -> google.protobuf.Duration
+	12, // 11: app.engine.conf.Market.backfill_wait:type_name -> google.protobuf.Duration
+	4,  // 12: app.engine.conf.Market.depth_bands:type_name -> app.engine.conf.DepthBand
+	13, // [13:13] is the sub-list for method output_type
+	13, // [13:13] is the sub-list for method input_type
+	13, // [13:13] is the sub-list for extension type_name
+	13, // [13:13] is the sub-list for extension extendee
+	0,  // [0:13] is the sub-list for field type_name
 }
 
 func init() { file_app_engine_conf_conf_proto_init() }
@@ -479,7 +562,7 @@ func file_app_engine_conf_conf_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_app_engine_conf_conf_proto_rawDesc), len(file_app_engine_conf_conf_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   4,
+			NumMessages:   5,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

@@ -32,6 +32,12 @@ chain:
   # ~1 MB request body that publicnode accepts; use 3 for drpc's free tier.
   call_batch:
     size: ${CALL_BATCH_SIZE:10}
+  # Seed concentrated-liquidity pools with their tick tables, so market-engine
+  # values them by what they hold rather than by virtual reserves.
+  tick_seeding:
+    enabled: true
+    max_pools_per_block: 20
+    reseed_interval_blocks: 7200
 
 data:
   redis:

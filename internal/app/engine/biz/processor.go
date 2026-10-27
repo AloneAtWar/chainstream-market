@@ -59,6 +59,13 @@ type Options struct {
 	// held trades are replayed.
 	History        History
 	BackfillBlocks int64
+	// DepthBands size the price band a concentrated pool's depth is measured
+	// over by its fee tier, ascending by fee; a fee above every band uses the
+	// last. DynamicFeeDepthBPS is the band of a pool whose hook sets its fee.
+	// Empty or zero use model.DefaultDepthBands and
+	// model.DefaultDynamicFeeDepthBPS.
+	DepthBands         []model.DepthBand
+	DynamicFeeDepthBPS int
 	// Logger reports backfills; nil discards.
 	Logger *slog.Logger
 }
@@ -118,6 +125,13 @@ type Processor struct {
 	// missed records, per token, the first and last heights that had a
 	// trade waiting on its decimals, so a backfill knows what to read.
 	missed *journal[string, missedToken]
+	// ticks and clamm are the tick tables of seeded concentrated-liquidity
+	// pools. poolTicks indexes ticks by pool, and books caches each pool's
+	// prepared table until its ticks change; neither is persisted.
+	ticks     *journal[tickKey, string]
+	clamm     *journal[string, model.CLAMMPool]
+	poolTicks map[string]map[int32]struct{}
+	books     map[string]*tickBook
 	// prunedThrough is the highest height whose undo history was discarded.
 	prunedThrough int64
 	// reverted and revertTo record a revert since the last TakeDelta.
@@ -152,6 +166,9 @@ func NewProcessor(options Options) (*Processor, error) {
 	if options.Logger == nil {
 		options.Logger = slog.New(slog.DiscardHandler)
 	}
+	if err := validateDepthBands(&options); err != nil {
+		return nil, err
+	}
 	feeds := make(map[string][]Feed, len(options.Feeds))
 	for _, feed := range options.Feeds {
 		address := normalize(feed.Address)
@@ -176,6 +193,10 @@ func NewProcessor(options Options) (*Processor, error) {
 		oracle:       newJournal[string, decimal.Decimal](stringKeys(kindOracle)),
 		late:         newJournal[string, lateTrade](stringKeys(kindLate)),
 		missed:       newJournal[string, missedToken](stringKeys(kindMissed)),
+		ticks:        newJournal[tickKey, string](tickKeys),
+		clamm:        newJournal[string, model.CLAMMPool](stringKeys(model.StateKindCLAMMPools)),
+		poolTicks:    make(map[string]map[int32]struct{}),
+		books:        make(map[string]*tickBook),
 		feeds:        feeds,
 		tokenPools:   make(map[string][]string),
 		lateByToken:  make(map[string]map[string]struct{}),
@@ -210,10 +231,15 @@ func (processor *Processor) Apply(ctx context.Context, block *streamv1.BlockEven
 		return model.BlockOutput{}, err
 	}
 	past := processor.pastPrices(output.ChainID, ready, series, learned)
+	tables := make(map[string]struct{})
+	processor.applySnapshots(height, block, tables)
 	processor.seedPools(height, ready, touched)
 	for _, trade := range block.GetTrades() {
+		processor.applyRange(height, trade, tables)
+		processor.checkSwap(height, trade, tables)
 		processor.observe(height, trade, touched)
 	}
+	processor.settleTables(height, tables, touched)
 	output.Prices = past.prices
 	output.Prices = append(output.Prices, processor.reprice(height, output, touched)...)
 
@@ -257,7 +283,10 @@ func (processor *Processor) Revert(_ context.Context, rollbackTo int64) error {
 	processor.oracle.revert(rollbackTo)
 	processor.late.revert(rollbackTo)
 	processor.missed.revert(rollbackTo)
+	processor.ticks.revert(rollbackTo)
+	processor.clamm.revert(rollbackTo)
 	processor.rebuildLate()
+	processor.rebuildTicks()
 	if !processor.reverted || rollbackTo < processor.revertTo {
 		processor.reverted, processor.revertTo = true, rollbackTo
 	}
@@ -300,6 +329,8 @@ func (processor *Processor) prune(block *streamv1.BlockEvent) {
 	processor.oracle.prune(through)
 	processor.late.prune(through)
 	processor.missed.prune(through)
+	processor.ticks.prune(through)
+	processor.clamm.prune(through)
 	processor.prunedThrough = through
 }
 
@@ -314,7 +345,7 @@ func (processor *Processor) learnDecimals(height int64, trade *streamv1.Trade, l
 func (processor *Processor) observe(height int64, trade *streamv1.Trade, touched map[string]struct{}) {
 	id := normalize(trade.GetPoolId())
 	prev, existed := processor.pools.get(id)
-	next, ok := observePool(prev, trade, processor.decimals.get)
+	next, ok := observePool(prev, trade, processor.decimals.get, processor.tableAmounts)
 	if !ok {
 		return
 	}

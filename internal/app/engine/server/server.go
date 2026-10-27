@@ -59,6 +59,8 @@ func NewServers(
 			LateTradesPerToken:    int(market.GetLateTradesPerToken()),
 			History:               history,
 			BackfillBlocks:        max(market.GetBackfillBlocks(), 0),
+			DepthBands:            market.DepthBandList(),
+			DynamicFeeDepthBPS:    int(market.GetDynamicFeeDepthBps()),
 			Logger:                logger.With("chain", chain.GetName()),
 		})
 		if err != nil {

@@ -74,4 +74,18 @@ message Market {
   // backfill_wait is how long a backfill waits for ch-loader to store the
   // heights it reads before it replays only held trades.
   google.protobuf.Duration backfill_wait = 11;
+  // depth_bands size the price band, in basis points either side of the
+  // price, that a concentrated-liquidity pool's depth is measured over by its
+  // fee tier (hundredths of a basis point), ascending by max_fee; a fee above
+  // every band uses the last. Empty means ≤0.01%: ±0.5%, ≤0.05%: ±1%,
+  // ≤0.3%: ±2%, higher: ±5%.
+  repeated DepthBand depth_bands = 12;
+  // dynamic_fee_depth_bps is the band of a V4 pool whose hook sets its fee;
+  // 0 means 200 (±2%).
+  uint32 dynamic_fee_depth_bps = 13;
+}
+
+message DepthBand {
+  uint32 max_fee = 1;
+  uint32 bps = 2;
 }
