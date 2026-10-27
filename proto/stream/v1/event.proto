@@ -61,6 +61,67 @@ message BlockEvent {
   // the parent block, before this block's trades. Consumers load a snapshot
   // and then apply this block's liquidity_range trades on top of it.
   repeated PoolTickSnapshot tick_snapshots = 18;
+  // pool_balances are the real balances and curve parameters of the
+  // multi-token pools (Curve, Balancer) with any event in this block, read at
+  // this block's hash, after all of its events. Consumers replace whatever
+  // they kept for each pool.
+  repeated PoolBalanceSnapshot pool_balances = 19;
+}
+
+// PoolBalanceSnapshot is a multi-token pool's real balances and curve
+// parameters at snapshot_height. Integers are decimal strings; every repeated
+// field that is set is aligned with tokens.
+message PoolBalanceSnapshot {
+  string pool_id = 1;
+  string protocol = 2;
+  string pool_address = 3;
+  int64 snapshot_height = 4;
+  // tokens exclude a composable pool's own pre-minted BPT.
+  repeated string tokens = 5;
+  // balances are raw token units, without unclaimed admin or protocol fees.
+  repeated string balances = 6;
+  // curve is weighted, stable, crypto or unknown. Unknown pools carry
+  // balances only, and reason says why.
+  string curve = 7;
+  string reason = 8;
+  // fee is the swap fee scaled by 1e18; dynamic_fee marks fees that move
+  // with pool state or a hook.
+  string fee = 9;
+  bool dynamic_fee = 10;
+  // weights are a weighted pool's normalized weights scaled by 1e18.
+  repeated string weights = 11;
+  // amp is a stable pool's amplification times amp_precision (Curve
+  // A_precise 100, legacy A() 1, Balancer 1000).
+  string amp = 12;
+  string amp_precision = 13;
+  // rates scale balances to the invariant's precision:
+  // xp = balance × rate / 1e18.
+  repeated string rates = 14;
+  // ladders are on-chain quotes for pools whose depth is not computed
+  // locally (Curve crypto pools). They are refreshed at most every few
+  // blocks, so a snapshot without them keeps the previous ladders.
+  repeated QuoteLadder ladders = 15;
+  // derived values pool tokens that wrap other tokens, such as a Curve base
+  // pool LP or a Balancer V3 ERC4626 token.
+  repeated DerivedToken derived = 16;
+}
+
+// QuoteLadder is the pool's quoted output of tokens[token_out] for each
+// amount of tokens[token_in], with amounts strictly increasing.
+message QuoteLadder {
+  uint32 token_in = 1;
+  uint32 token_out = 2;
+  repeated string amounts = 3;
+  repeated string quotes = 4;
+}
+
+// DerivedToken values one whole token (10^decimals raw units) as rate / 1e18
+// whole units of an underlying. A token with several underlyings, such as a
+// Curve LP, is worth rate / 1e18 of the cheapest of them.
+message DerivedToken {
+  string token = 1;
+  repeated string underlyings = 2;
+  string rate = 3;
 }
 
 // PoolTickSnapshot is a concentrated-liquidity pool's initialized ticks and
