@@ -18,8 +18,10 @@ import (
 	"github.com/AloneAtWar/oh-my-blockchain/chain/evm"
 	evmsdk "github.com/AloneAtWar/oh-my-blockchain/chain/evm/sdk"
 	evmsdkimpl "github.com/AloneAtWar/oh-my-blockchain/chain/evm/sdk/impl"
+	"github.com/AloneAtWar/oh-my-blockchain/chain/evm/sdk/multicall"
 	"github.com/ethereum/go-ethereum/common"
 
+	"github.com/AloneAtWar/chainstream-market/internal/pkg/asset"
 	"github.com/AloneAtWar/chainstream-market/internal/pkg/contract/erc20"
 	"github.com/AloneAtWar/chainstream-market/internal/pkg/metrics"
 )
@@ -38,11 +40,17 @@ type Options struct {
 	Timeout time.Duration
 	// Logger receives the SDK's logs; nil uses slog.Default.
 	Logger *slog.Logger
+	// NativeBalanceContract answers getEthBalance(address) for native
+	// balances. Empty uses the chain's Multicall3, or failing that its
+	// Uniswap interface multicall; a chain with neither has no native
+	// balances.
+	NativeBalanceContract string
 }
 
 type Client struct {
-	chain string
-	sdk   evmsdk.ContractCaller
+	chain  string
+	sdk    evmsdk.ContractCaller
+	native string
 }
 
 var tokenABI = erc20.NewToken()
@@ -68,21 +76,34 @@ func New(options Options) (*Client, error) {
 	if err != nil {
 		return nil, fmt.Errorf("rpc: %w", err)
 	}
-	return &Client{chain: options.Chain, sdk: sdk}, nil
+	native := strings.ToLower(strings.TrimSpace(options.NativeBalanceContract))
+	if native == "" {
+		native = strings.ToLower(multicall.NativeBalanceAddress(evm.ChainType(options.ChainID)))
+	}
+	return &Client{chain: options.Chain, sdk: sdk, native: native}, nil
 }
 
-// BalanceQuery asks for holder's balance of token.
+// NativeBalances reports whether BalancesAt can read native balances.
+func (client *Client) NativeBalances() bool { return client.native != "" }
+
+// BalanceQuery asks for holder's balance of token. Token NativeToken asks
+// for the native coin balance.
 type BalanceQuery struct {
 	Token  string
 	Holder string
 }
 
+// NativeToken is the pseudo-address of the chain's native coin.
+const NativeToken = asset.NativeAddress
+
 // BalancesAt returns balanceOf for each query in the state after the block
 // with blockHash. Pinning the block by hash makes the answer fail rather than
-// silently come from another fork after a reorg. A nil balance means the
-// call itself failed on-chain: the token reverted, has no code, or returned
-// something that is not a uint256. Any other failure, such as a node without
-// the block's state, is returned as an error.
+// silently come from another fork after a reorg. Native balances are read
+// with the multicall contract's getEthBalance, so they batch with balanceOf.
+// A nil balance means the call itself failed on-chain: the token reverted,
+// has no code, or returned something that is not a uint256. Any other
+// failure, such as a node without the block's state, is returned as an
+// error, and so is a native query on a chain without native balances.
 func (client *Client) BalancesAt(ctx context.Context, blockHash string, queries []BalanceQuery) ([]*big.Int, error) {
 	requests := make([]evmsdk.RPCCallReq, len(queries))
 	for index, query := range queries {
@@ -93,6 +114,16 @@ func (client *Client) BalancesAt(ctx context.Context, blockHash string, queries 
 			Address:   query.Token,
 			Calldata:  common.Bytes2Hex(tokenABI.PackBalanceOf(common.HexToAddress(query.Holder))),
 			BlockHash: blockHash,
+		}
+		if query.Token == NativeToken {
+			if client.native == "" {
+				return nil, errors.New("rpc: chain has no multicall contract to read native balances")
+			}
+			calldata, err := multicall.UniswapInterfaceABI.Pack(multicall.MethodGetEthBalance, common.HexToAddress(query.Holder))
+			if err != nil {
+				return nil, fmt.Errorf("rpc: pack getEthBalance: %w", err)
+			}
+			requests[index].Address, requests[index].Calldata = client.native, common.Bytes2Hex(calldata)
 		}
 	}
 	results, err := client.call(ctx, requests)

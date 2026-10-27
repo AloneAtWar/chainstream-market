@@ -47,7 +47,9 @@ func TestTokenHolders(t *testing.T) {
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("status = %d: %s", recorder.Code, recorder.Body.String())
 	}
-	want := `{"chain_id":1,"token":"0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee","holder_count":3,"holders":[{"holder":"0xaa","balance_raw":"1200"}]}` + "\n"
+	// The native coin always has 18 decimals.
+	want := `{"chain_id":1,"token":"0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee","decimals":18,"holder_count":3,` +
+		`"holders":[{"holder":"0xaa","balance_raw":"1200","balance":"0.0000000000000012"}]}` + "\n"
 	if recorder.Body.String() != want {
 		t.Fatalf("body = %s", recorder.Body.String())
 	}

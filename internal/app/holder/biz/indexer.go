@@ -9,6 +9,12 @@
 // the least recently verified holdings are checked against balanceOf again
 // and corrected.
 //
+// Native coin balances (ETH, BNB) are kept the same way under the token
+// rpc.NativeToken when NativeBalances is set. Gas, rewards and L2 fees move
+// them without a transfer, so instead of summing transfers every address in
+// the block's native_touched is read again at the block's hash, and the
+// difference from the stored balance is applied as a verified delta.
+//
 // Balances live only in the store, never in memory, and every change is
 // stored as an undoable delta, so a reorg subtracts what the reverted blocks
 // added.
@@ -49,8 +55,8 @@ type HolderRepo interface {
 	// Holdings returns the stored holdings among keys.
 	Holdings(ctx context.Context, chainID uint64, keys []model.HolderKey) ([]model.Holding, error)
 	// StaleHoldings returns up to limit holdings, least recently verified
-	// first.
-	StaleHoldings(ctx context.Context, chainID uint64, limit int) ([]model.Holding, error)
+	// first, leaving out those of skipToken unless it is empty.
+	StaleHoldings(ctx context.Context, chainID uint64, limit int, skipToken string) ([]model.Holding, error)
 	CommitHolders(ctx context.Context, checkpoint chainsync.Checkpoint, change model.HolderChange) error
 }
 
@@ -66,6 +72,10 @@ type Options struct {
 	ReconcileEvery int64
 	// ReconcileBatch is how many holdings each reconciliation checks.
 	ReconcileBatch int
+	// NativeBalances keeps native coin balances of the addresses each
+	// block's native_touched lists. Balances must then answer queries for
+	// rpc.NativeToken.
+	NativeBalances bool
 	Logger         *slog.Logger
 }
 
@@ -107,46 +117,73 @@ func (indexer *Indexer) Restore(ctx context.Context, chainID uint64) (chainsync.
 func (indexer *Indexer) Apply(ctx context.Context, block *streamv1.BlockEvent) error {
 	height, hash := block.GetBlockHeight(), block.GetBlockHash()
 	deltas := netTransfers(block.GetTransfers())
-	keys := make([]model.HolderKey, 0, len(deltas))
+	var native []model.HolderKey
+	if indexer.options.NativeBalances {
+		native = nativeTouched(block.GetNativeTouched())
+	}
+	keys := make([]model.HolderKey, 0, len(deltas)+len(native))
 	for key := range deltas {
 		keys = append(keys, key)
 	}
+	keys = append(keys, native...)
 	slices.SortFunc(keys, compareKeys)
 
 	known, err := indexer.options.Repo.Holdings(ctx, indexer.options.ChainID, keys)
 	if err != nil {
 		return fmt.Errorf("load holdings: %w", err)
 	}
-	existing := make(map[model.HolderKey]struct{}, len(known))
+	stored := make(map[model.HolderKey]*big.Int, len(known))
 	for _, holding := range known {
-		existing[holding.HolderKey] = struct{}{}
+		stored[holding.HolderKey] = holding.Balance
 	}
 	change := model.HolderChange{Height: height}
-	var fresh []model.HolderKey
+	// read holds every key whose balance is read at this block: new
+	// holdings, and every native holding the block touched.
+	var read []model.HolderKey
 	for _, key := range keys {
-		if _, ok := existing[key]; ok {
+		if _, ok := stored[key]; ok && key.Token != rpc.NativeToken {
 			if deltas[key].Sign() != 0 {
 				change.Deltas = append(change.Deltas, model.HolderDelta{HolderKey: key, Delta: deltas[key]})
 			}
 			continue
 		}
-		fresh = append(fresh, key)
+		read = append(read, key)
 	}
-	seeds, err := indexer.balances(ctx, hash, fresh)
+	balances, err := indexer.balances(ctx, hash, read)
 	if err != nil {
 		return fmt.Errorf("seed holdings: %w", err)
 	}
-	for index, key := range fresh {
-		seed := model.HolderSeed{Holding: model.Holding{HolderKey: key, Balance: seeds[index]}, Verified: true}
-		if seed.Balance == nil {
-			// balanceOf failed; the block's net transfers are the best guess.
-			seed.Balance, seed.Verified = deltas[key], false
+	for index, key := range read {
+		balance, existing := balances[index], stored[key]
+		switch {
+		case key.Token == rpc.NativeToken && existing != nil:
+			if balance != nil && balance.Cmp(existing) != 0 {
+				change.Deltas = append(change.Deltas, model.HolderDelta{
+					HolderKey: key, Delta: new(big.Int).Sub(balance, existing), Verified: true,
+				})
+			}
+		case key.Token == rpc.NativeToken:
+			// Senders and fee recipients are touched by every block; only
+			// addresses that hold something are kept.
+			if balance != nil && balance.Sign() > 0 {
+				change.Created = append(change.Created, model.HolderSeed{Holding: model.Holding{HolderKey: key, Balance: balance}, Verified: true})
+			}
+		default:
+			seed := model.HolderSeed{Holding: model.Holding{HolderKey: key, Balance: balance}, Verified: true}
+			if seed.Balance == nil {
+				// balanceOf failed; the block's net transfers are the best guess.
+				seed.Balance, seed.Verified = deltas[key], false
+			}
+			change.Created = append(change.Created, seed)
 		}
-		change.Created = append(change.Created, seed)
 	}
 
 	if every := indexer.options.ReconcileEvery; every > 0 && height%every == 0 {
-		corrections, reconcileErr := indexer.reconcile(ctx, hash, deltas)
+		touched := make(map[model.HolderKey]struct{}, len(keys))
+		for _, key := range keys {
+			touched[key] = struct{}{}
+		}
+		corrections, reconcileErr := indexer.reconcile(ctx, hash, touched)
 		if reconcileErr != nil {
 			return fmt.Errorf("reconcile: %w", reconcileErr)
 		}
@@ -164,8 +201,16 @@ func (indexer *Indexer) Apply(ctx context.Context, block *streamv1.BlockEvent) e
 
 // reconcile checks the least recently verified holdings that this block did
 // not touch and returns the corrections that make them match balanceOf.
-func (indexer *Indexer) reconcile(ctx context.Context, hash string, touched map[model.HolderKey]*big.Int) ([]model.HolderDelta, error) {
-	stale, err := indexer.options.Repo.StaleHoldings(ctx, indexer.options.ChainID, indexer.options.ReconcileBatch+len(touched))
+func (indexer *Indexer) reconcile(ctx context.Context, hash string, touched map[model.HolderKey]struct{}) ([]model.HolderDelta, error) {
+	// Native holdings are only reconciled while native balances are on.
+	// They are left out by the query, since holdings kept from before
+	// native balances were turned off are never verified again and would
+	// otherwise fill every batch.
+	skip := ""
+	if !indexer.options.NativeBalances {
+		skip = rpc.NativeToken
+	}
+	stale, err := indexer.options.Repo.StaleHoldings(ctx, indexer.options.ChainID, indexer.options.ReconcileBatch+len(touched), skip)
 	if err != nil {
 		return nil, err
 	}
@@ -255,6 +300,22 @@ func netTransfers(transfers []*streamv1.TokenTransfer) map[model.HolderKey]*big.
 		add(token, normalize(transfer.GetTo()), amount)
 	}
 	return deltas
+}
+
+// nativeTouched returns the native holding keys of a block's touched
+// addresses, without the zero address and duplicates.
+func nativeTouched(addresses []string) []model.HolderKey {
+	keys := make([]model.HolderKey, 0, len(addresses))
+	seen := make(map[string]struct{}, len(addresses))
+	for _, address := range addresses {
+		holder := normalize(address)
+		if _, ok := seen[holder]; ok || holder == "" || holder == zeroAddress {
+			continue
+		}
+		seen[holder] = struct{}{}
+		keys = append(keys, model.HolderKey{Token: rpc.NativeToken, Holder: holder})
+	}
+	return keys
 }
 
 func normalize(address string) string { return strings.ToLower(strings.TrimSpace(address)) }

@@ -55,11 +55,15 @@ func (repo *holderRepo) Holdings(ctx context.Context, chainID uint64, keys []mod
 }
 
 // StaleHoldings returns up to limit holdings, least recently verified
-// first.
-func (repo *holderRepo) StaleHoldings(ctx context.Context, chainID uint64, limit int) ([]model.Holding, error) {
+// first, leaving out those of skipToken unless it is empty.
+func (repo *holderRepo) StaleHoldings(ctx context.Context, chainID uint64, limit int, skipToken string) ([]model.Holding, error) {
 	var rows []pgdb.HoldingRow
-	err := repo.db.WithContext(ctx).Table("holder_balances").Select("token, holder, balance::text AS balance").
-		Where("chain_id = ?", int64(chainID)).Order("verified_height NULLS FIRST").Limit(limit).Find(&rows).Error
+	query := repo.db.WithContext(ctx).Table("holder_balances").Select("token, holder, balance::text AS balance").
+		Where("chain_id = ?", int64(chainID))
+	if skipToken != "" {
+		query = query.Where("token <> ?", skipToken)
+	}
+	err := query.Order("verified_height NULLS FIRST").Limit(limit).Find(&rows).Error
 	if err != nil {
 		return nil, fmt.Errorf("postgres store: stale holdings: %w", err)
 	}

@@ -21,7 +21,8 @@ message Bootstrap {
   Holders holders = 6;
 }
 
-// Holders tunes how holder-indexer keeps ERC-20 balances per holder.
+// Holders tunes how holder-indexer keeps ERC-20 and native balances per
+// holder.
 message Holders {
   // history_depth is how many recent blocks stay revertible in addition to
   // everything above the finalized height.
@@ -33,4 +34,8 @@ message Holders {
   // rpc_batch_size caps the balanceOf calls in one JSON-RPC batch.
   int32 rpc_batch_size = 4;
   google.protobuf.Duration rpc_timeout = 5;
+  // native_balances also keeps native coin (ETH, BNB) balances under the
+  // token 0xeeee...eeee, read with Multicall3's getEthBalance for every
+  // address a block's native_touched lists.
+  bool native_balances = 6;
 }

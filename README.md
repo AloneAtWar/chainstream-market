@@ -9,7 +9,7 @@ Market data services built on the [chainstream-evm](https://github.com/AloneAtWa
 | `proto/` | Separate Go module `github.com/AloneAtWar/chainstream-market/proto` holding the `stream.v1` wire format. It depends only on protobuf so producers can import it cheaply. |
 | `cmd/market-engine` | Consumes one chainstream-evm topic per chain and writes derived market data. |
 | `cmd/market-api` | HTTP API over the ClickHouse store, plus holders from PostgreSQL. |
-| `cmd/holder-indexer` | Consumes the same chain topics and keeps ERC-20 balances per holder in PostgreSQL. |
+| `cmd/holder-indexer` | Consumes the same chain topics and keeps ERC-20 and native coin balances per holder in PostgreSQL. |
 | `cmd/ch-loader` | Consumes the same chain topics and copies their raw facts, every ERC-20 transfer among them, into ClickHouse. |
 | `cmd/market-registry` | Consumes the same chain topics and keeps the latest token and pool metadata in PostgreSQL. |
 | `cmd/market-rankings` | Periodically rolls prices, 24h activity, holder counts and metadata into the PostgreSQL token rankings. |
@@ -112,7 +112,7 @@ go run ./cmd/market-api -conf configs/market-api.yaml   # needs clickhouse.addr 
 | `GET /v1/chains/{chain}/pools/{pool}/candles?interval=1m` | Pool candles. |
 | `GET /v1/chains/{chain}/tokens/{token}/trades` | Recent trades with the token as base, newest first. |
 | `GET /v1/chains/{chain}/pools/{pool}/trades` | Recent trades in the pool. |
-| `GET /v1/chains/{chain}/tokens/{token}/holders` | Holder count and the largest holders. `balance_raw` is in raw token units; when market-registry knows the token's decimals, `decimals` and a converted `balance` are added. |
+| `GET /v1/chains/{chain}/tokens/{token}/holders` | Holder count and the largest holders. `balance_raw` is in raw token units; when market-registry knows the token's decimals, `decimals` and a converted `balance` are added. The native pseudo-address lists native coin holders, always with 18 decimals. |
 | `GET /v1/chains/{chain}/tokens/{token}` | Token metadata from market-registry: standard, recognition, name, symbol, decimals, deployment and the raw metadata JSON. |
 | `GET /v1/chains/{chain}/tokens/{token}/pools` | Pools that trade the token, most recently observed first. Accepts `limit`. |
 | `GET /v1/chains/{chain}/pools/{pool}` | Pool metadata: protocol, DEX, tokens and the raw metadata JSON. |
@@ -180,11 +180,12 @@ Browsers on another origin must be listed in `live.allowed_origins`, for example
 go run ./cmd/holder-indexer -conf configs/holder-indexer.yaml   # needs postgres.dsn and chains[].rpc_url
 ```
 
-holder-indexer reads each chain topic on its own checkpoint and keeps every ERC-20 holding it has seen.
+holder-indexer reads each chain topic on its own checkpoint and keeps every ERC-20 holding it has seen, and optionally native coin balances.
 
 - **Seeding.** The first time a `(token, holder)` appears, its balance is `balanceOf` read at the hash of that block, so the seed already includes the block's transfers and history before the indexer started. The node must serve state for that block, which any full node does near the head. A node without the state stops the indexer rather than guessing. When `balanceOf` itself reverts, the block's net transfers seed the holding and it is marked unverified.
 - **Accumulating.** After that, each block adds its net transfers per holding. Mints and burns use the zero address, which is not a holder. Zero-value transfers are ignored.
 - **Reconciling.** Every `holders.reconcile_every` blocks, the `reconcile_batch` least recently verified holdings are checked against `balanceOf` and corrected. This catches rebasing and fee-on-transfer tokens, whose balances move without a matching `Transfer`.
+- **Native coin.** With `holders.native_balances`, ETH or BNB balances are kept in the same tables under the token `0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee`. Gas, block rewards and L2 fees move them without a transfer, so they are never summed: every address in the block's `native_touched` (from chainstream-evm: senders, both sides of every native transfer, the fee recipient) is read with Multicall3's `getEthBalance` at the block's hash, batched with `balanceOf`, and the difference from the stored balance is applied as a verified delta. Addresses without a balance are not kept. Recipients of internal transfers when chainstream-evm runs without `need_internal`, and beacon-chain withdrawals, are not touched; reconciling corrects them. A chain without a known multicall contract, such as a local dev chain, logs a warning and skips native balances.
 - **Reorgs.** Every change is stored as an undoable delta, so a revert subtracts what the reverted blocks added and deletes holdings they created.
 
 | Table | Contents |

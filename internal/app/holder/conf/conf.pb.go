@@ -112,7 +112,8 @@ func (x *Bootstrap) GetHolders() *Holders {
 	return nil
 }
 
-// Holders tunes how holder-indexer keeps ERC-20 balances per holder.
+// Holders tunes how holder-indexer keeps ERC-20 and native balances per
+// holder.
 type Holders struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// history_depth is how many recent blocks stay revertible in addition to
@@ -123,10 +124,14 @@ type Holders struct {
 	ReconcileEvery int64 `protobuf:"varint,2,opt,name=reconcile_every,json=reconcileEvery,proto3" json:"reconcile_every,omitempty"`
 	ReconcileBatch int32 `protobuf:"varint,3,opt,name=reconcile_batch,json=reconcileBatch,proto3" json:"reconcile_batch,omitempty"`
 	// rpc_batch_size caps the balanceOf calls in one JSON-RPC batch.
-	RpcBatchSize  int32                `protobuf:"varint,4,opt,name=rpc_batch_size,json=rpcBatchSize,proto3" json:"rpc_batch_size,omitempty"`
-	RpcTimeout    *durationpb.Duration `protobuf:"bytes,5,opt,name=rpc_timeout,json=rpcTimeout,proto3" json:"rpc_timeout,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	RpcBatchSize int32                `protobuf:"varint,4,opt,name=rpc_batch_size,json=rpcBatchSize,proto3" json:"rpc_batch_size,omitempty"`
+	RpcTimeout   *durationpb.Duration `protobuf:"bytes,5,opt,name=rpc_timeout,json=rpcTimeout,proto3" json:"rpc_timeout,omitempty"`
+	// native_balances also keeps native coin (ETH, BNB) balances under the
+	// token 0xeeee...eeee, read with Multicall3's getEthBalance for every
+	// address a block's native_touched lists.
+	NativeBalances bool `protobuf:"varint,6,opt,name=native_balances,json=nativeBalances,proto3" json:"native_balances,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
 }
 
 func (x *Holders) Reset() {
@@ -194,6 +199,13 @@ func (x *Holders) GetRpcTimeout() *durationpb.Duration {
 	return nil
 }
 
+func (x *Holders) GetNativeBalances() bool {
+	if x != nil {
+		return x.NativeBalances
+	}
+	return false
+}
+
 var File_app_holder_conf_conf_proto protoreflect.FileDescriptor
 
 const file_app_holder_conf_conf_proto_rawDesc = "" +
@@ -205,14 +217,15 @@ const file_app_holder_conf_conf_proto_rawDesc = "" +
 	"\bpostgres\x18\x03 \x01(\v2\x14.pkg.config.PostgresR\bpostgres\x12-\n" +
 	"\ametrics\x18\x04 \x01(\v2\x13.pkg.config.MetricsR\ametrics\x12)\n" +
 	"\x06chains\x18\x05 \x03(\v2\x11.pkg.config.ChainR\x06chains\x122\n" +
-	"\aholders\x18\x06 \x01(\v2\x18.app.holder.conf.HoldersR\aholders\"\xe2\x01\n" +
+	"\aholders\x18\x06 \x01(\v2\x18.app.holder.conf.HoldersR\aholders\"\x8b\x02\n" +
 	"\aHolders\x12#\n" +
 	"\rhistory_depth\x18\x01 \x01(\x03R\fhistoryDepth\x12'\n" +
 	"\x0freconcile_every\x18\x02 \x01(\x03R\x0ereconcileEvery\x12'\n" +
 	"\x0freconcile_batch\x18\x03 \x01(\x05R\x0ereconcileBatch\x12$\n" +
 	"\x0erpc_batch_size\x18\x04 \x01(\x05R\frpcBatchSize\x12:\n" +
 	"\vrpc_timeout\x18\x05 \x01(\v2\x19.google.protobuf.DurationR\n" +
-	"rpcTimeoutBHZFgithub.com/AloneAtWar/chainstream-market/internal/app/holder/conf;confb\x06proto3"
+	"rpcTimeout\x12'\n" +
+	"\x0fnative_balances\x18\x06 \x01(\bR\x0enativeBalancesBHZFgithub.com/AloneAtWar/chainstream-market/internal/app/holder/conf;confb\x06proto3"
 
 var (
 	file_app_holder_conf_conf_proto_rawDescOnce sync.Once
