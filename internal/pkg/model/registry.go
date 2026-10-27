@@ -62,7 +62,7 @@ type RegistryChange struct {
 	Reverted bool
 	RevertTo int64
 	// Height is the block that Tokens and Pools belong to. Each address
-	// and pool appears at most once.
+	// appears at most once per standard, and each pool at most once.
 	Height int64
 	Tokens []Token
 	Pools  []Pool

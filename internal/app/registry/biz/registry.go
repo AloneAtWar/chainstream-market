@@ -85,11 +85,12 @@ func (registry *Registry) Apply(_ context.Context, block *streamv1.BlockEvent) e
 		if !ok {
 			continue
 		}
-		if index, seen := tokens[token.Address]; seen {
+		key := token.Address + "/" + token.Standard
+		if index, seen := tokens[key]; seen {
 			change.Tokens[index] = mergeTokens(change.Tokens[index], token)
 			continue
 		}
-		tokens[token.Address] = len(change.Tokens)
+		tokens[key] = len(change.Tokens)
 		change.Tokens = append(change.Tokens, token)
 	}
 	pools := make(map[string]int)
@@ -216,20 +217,14 @@ func stripNUL(value any) any {
 	return value
 }
 
-// mergeTokens combines two facts about one address in a block: the later
-// metadata wins unless it was read at a lower height, and a deployment from
-// either is kept.
-// mergeTokens keeps one fact per address from a block. chainstream-evm
-// reports the address once for every standard it probed, so a recognized
-// fact wins over a fact for another standard that did not recognize the
-// address; otherwise the fact read at the higher height wins.
+// mergeTokens combines two facts about one address and standard in a block:
+// the later metadata wins unless it was read at a lower height, and a
+// deployment from either is kept. chainstream-evm reports an address once for
+// every standard it probed; the store chooses among the standards, since the
+// choice depends on the standard it already holds.
 func mergeTokens(earlier, later model.Token) model.Token {
 	merged := later
-	switch {
-	case outranks(earlier, later):
-	case outranks(later, earlier):
-		merged = earlier
-	case earlier.SourceHeight > later.SourceHeight:
+	if earlier.SourceHeight > later.SourceHeight {
 		merged = earlier
 	}
 	merged.Created = earlier.Created || later.Created
@@ -240,13 +235,6 @@ func mergeTokens(earlier, later model.Token) model.Token {
 		}
 	}
 	return merged
-}
-
-// outranks reports whether a would lose to b whatever their heights: b
-// recognizes the address under a standard that a does not.
-func outranks(a, b model.Token) bool {
-	return b.Recognition == model.RecognitionRecognized && a.Recognition != model.RecognitionRecognized &&
-		a.Standard != b.Standard
 }
 
 func mergePools(earlier, later model.Pool) model.Pool {

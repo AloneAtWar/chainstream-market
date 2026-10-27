@@ -270,6 +270,16 @@ func TestRegistryKeepsTheRecognizedStandard(t *testing.T) {
 	if got, _ := f.token(usdc); got.Recognition != "recognized" || *got.Symbol != "USDC" {
 		t.Fatalf("usdc after recognition = %+v", got)
 	}
+	// A later probe that no standard answers, for example after a proxy
+	// upgrade, withdraws the recognition through the stored standard's own
+	// negative result, wherever it sits in the block.
+	f.apply(6, []*streamv1.AssetFact{
+		notRecognized(usdc, "erc20", 6), notRecognized(usdc, "erc721", 6), notRecognized(usdc, "erc1155", 6),
+	})
+	if got, _ := f.token(usdc); got.Standard != "erc20" || got.Recognition != "not_recognized" || got.Symbol != nil ||
+		got.UpdatedHeight != 6 {
+		t.Fatalf("usdc after withdrawal = %+v", got)
+	}
 }
 
 func TestRegistryRevertsAndResumes(t *testing.T) {
