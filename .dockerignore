@@ -2,3 +2,4 @@
 bin
 deploy
 *.log
+web

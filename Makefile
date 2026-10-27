@@ -3,7 +3,7 @@ VERSION := $(shell git describe --tags --always --dirty)
 GOLANGCI_LINT_VERSION := v2.12.2
 WIRE_VERSION := v0.7.0
 
-.PHONY: abi build clean config docker down generate logs up lint lint-install proto-check test test-race fmt fmt-check verify wire
+.PHONY: abi build clean config docker docker-web down generate logs up lint lint-install proto-check test test-race fmt fmt-check verify wire
 
 build:
 	go build -trimpath -ldflags "-X main.Version=$(VERSION)" -o bin/$(APP) ./cmd/market-engine
@@ -23,7 +23,10 @@ COMPOSE := docker compose -f deploy/docker-compose.yml
 docker:
 	docker build $(if $(SSH_AUTH_SOCK),--ssh default) --build-arg VERSION=$(VERSION) -t chainstream-market:latest .
 
-up: docker
+docker-web:
+	docker build -t chainstream-web:latest web
+
+up: docker docker-web
 	$(MAKE) -C $(EVM_DIR) docker
 	$(COMPOSE) up -d
 
