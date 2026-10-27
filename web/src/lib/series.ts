@@ -93,7 +93,9 @@ export function mergeTrades(trades: readonly Trade[], incoming: readonly Trade[]
   return [...byKey.values()].sort(compareTrades).slice(0, limit);
 }
 
-// revertTrades drops every trade a block above rollbackTo emitted.
+// revertTrades drops every trade a block above rollbackTo emitted. REST
+// trades have no revision_height, so their block height stands in until
+// the history reloads.
 export function revertTrades(trades: readonly Trade[], rollbackTo: number): Trade[] {
   return trades.filter((trade) => (trade.revision_height ?? trade.block_height) <= rollbackTo);
 }
