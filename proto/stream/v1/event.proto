@@ -44,6 +44,30 @@ message BlockEvent {
   // oracle_updates are every Chainlink-style AnswerUpdated log in the block,
   // from any contract; consumers choose which feeds to trust.
   repeated OracleUpdate oracle_updates = 15;
+  // native_transfers are the block's successful movements of the chain's
+  // native coin (ETH, BNB): each transaction's own value, and value carried by
+  // internal calls when the scanner traces them (need_internal).
+  repeated NativeTransfer native_transfers = 16;
+  // native_touched lists, sorted and once each, every address whose native
+  // balance may have changed in this block: transaction senders (who pay gas
+  // even when the transaction fails), both sides of every native transfer, and
+  // the block's fee recipient. Consumers read these balances at block_hash
+  // instead of summing transfers, since gas, rewards and L2 fees move native
+  // balances without a transfer. Without need_internal, recipients of internal
+  // transfers are missing, and beacon-chain withdrawals are never included.
+  repeated string native_touched = 17;
+}
+
+// NativeTransfer moves raw_amount wei of the native coin. trace_id is empty
+// for the transaction's own value, and otherwise names the internal call
+// ("0", "0_1", ...) that carried it.
+message NativeTransfer {
+  string from = 1;
+  string to = 2;
+  string raw_amount = 3;
+  int64 transaction_index = 4;
+  string transaction_hash = 5;
+  string trace_id = 6;
 }
 
 // OracleUpdate is one AnswerUpdated(int256 current, uint256 roundId,

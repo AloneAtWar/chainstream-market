@@ -20,7 +20,7 @@ func TestParseAppliesDefaults(t *testing.T) {
 	holders := bootstrap.Holders
 	if holders.HistoryDepth != defaultHistoryDepth || holders.ReconcileEvery != defaultReconcileEvery ||
 		holders.ReconcileBatch != defaultReconcileBatch || holders.RpcBatchSize != defaultRPCBatchSize ||
-		holders.RpcTimeout.AsDuration() != defaultRPCTimeout {
+		holders.RpcTimeout.AsDuration() != defaultRPCTimeout || holders.NativeBalances {
 		t.Fatalf("holders = %+v", holders)
 	}
 }
@@ -59,7 +59,7 @@ func TestLoadShippedConfigs(t *testing.T) {
 		if err := closeConfig(); err != nil {
 			t.Fatal(err)
 		}
-		if bootstrap.Postgres.Dsn == "" || len(bootstrap.Chains) == 0 {
+		if bootstrap.Postgres.Dsn == "" || len(bootstrap.Chains) == 0 || !bootstrap.Holders.NativeBalances {
 			t.Fatalf("%s = %+v", path, bootstrap)
 		}
 	}

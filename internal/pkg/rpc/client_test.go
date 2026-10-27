@@ -107,3 +107,39 @@ func TestCallLatestDecodesRevertsAndEmptyCode(t *testing.T) {
 		t.Fatalf("results = %x", results)
 	}
 }
+
+func TestBalancesAtReadsNativeBalancesWithGetEthBalance(t *testing.T) {
+	const multicall = "0xca11bde05977b3631167028862be2a173976ca11"
+	node := rpctest.NewNode()
+	defer node.Close()
+	node.SetBalance(blockA, token, alice, 42)
+	node.SetBalance(blockA, multicall, alice, 7)
+	client, err := New(Options{URL: node.URL, NativeBalanceContract: multicall})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	balances, err := client.BalancesAt(context.Background(), blockA, []BalanceQuery{
+		{Token: token, Holder: alice}, {Token: NativeToken, Holder: alice}, {Token: NativeToken, Holder: bob},
+	})
+	if err != nil {
+		t.Fatalf("BalancesAt() error = %v", err)
+	}
+	if balances[0].Int64() != 42 || balances[1].Int64() != 7 || balances[2].Sign() != 0 {
+		t.Fatalf("balances = %v", balances)
+	}
+}
+
+func TestNativeBalancesNeedAMulticallContract(t *testing.T) {
+	plain, _ := New(Options{URL: "http://127.0.0.1:1"})
+	if plain.NativeBalances() {
+		t.Fatal("plain node NativeBalances() = true")
+	}
+	if _, err := plain.BalancesAt(context.Background(), blockA, []BalanceQuery{{Token: NativeToken, Holder: alice}}); err == nil {
+		t.Fatal("BalancesAt() native without multicall error = nil")
+	}
+	for _, chainID := range []uint64{1, 56, 8453} {
+		if client, _ := New(Options{URL: "http://127.0.0.1:1", ChainID: chainID}); !client.NativeBalances() {
+			t.Fatalf("chain %d NativeBalances() = false", chainID)
+		}
+	}
+}

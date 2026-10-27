@@ -41,11 +41,16 @@ func NewServers(
 		if err != nil {
 			return nil, fmt.Errorf("chain %s: %w", chain.GetName(), err)
 		}
+		native := holders.GetNativeBalances()
+		if native && !client.NativeBalances() {
+			logger.Warn("chain has no multicall contract, native balances are off", "chain", chain.GetName())
+			native = false
+		}
 		indexer, err := biz.New(biz.Options{
 			ChainID: chain.GetChainId(), Repo: repo, Balances: client,
 			HistoryDepth: holders.GetHistoryDepth(), ReconcileEvery: max(holders.GetReconcileEvery(), 0),
-			ReconcileBatch: int(holders.GetReconcileBatch()),
-			Logger:         logger.With("chain", chain.GetName()),
+			ReconcileBatch: int(holders.GetReconcileBatch()), NativeBalances: native,
+			Logger: logger.With("chain", chain.GetName()),
 		})
 		if err != nil {
 			return nil, fmt.Errorf("chain %s: %w", chain.GetName(), err)

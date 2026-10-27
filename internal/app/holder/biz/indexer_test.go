@@ -1,8 +1,12 @@
 package biz
 
 import (
+	"slices"
+
 	"math/big"
 	"testing"
+
+	"github.com/AloneAtWar/chainstream-market/internal/pkg/rpc"
 
 	"github.com/AloneAtWar/chainstream-market/internal/pkg/model"
 	streamv1 "github.com/AloneAtWar/chainstream-market/proto/stream/v1"
@@ -39,5 +43,13 @@ func TestNetTransfers(t *testing.T) {
 func TestNewValidatesOptions(t *testing.T) {
 	if _, err := New(Options{}); err == nil {
 		t.Fatal("New() without dependencies error = nil")
+	}
+}
+
+func TestNativeTouched(t *testing.T) {
+	keys := nativeTouched([]string{alice, " 0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "", zeroAddress, bob})
+	want := []model.HolderKey{{Token: rpc.NativeToken, Holder: alice}, {Token: rpc.NativeToken, Holder: bob}}
+	if !slices.Equal(keys, want) {
+		t.Fatalf("keys = %v", keys)
 	}
 }

@@ -5,7 +5,12 @@ import (
 	"strings"
 
 	"github.com/shopspring/decimal"
+
+	"github.com/AloneAtWar/chainstream-market/internal/pkg/asset"
 )
+
+// nativeDecimals is the decimals of ETH and BNB.
+const nativeDecimals = 18
 
 // WithHolders serves holder queries from reader.
 func (server *Server) WithHolders(reader HolderReader) *Server {
@@ -30,8 +35,8 @@ type holdersResponse struct {
 
 // tokenHolders returns a token's holder count and largest holders. Balances
 // are raw token units, and also whole tokens when the registry knows the
-// token's decimals. Only ERC-20 balances are tracked, so the native
-// pseudo-address is not mapped to its wrapped token here.
+// token's decimals. The native pseudo-address is the native coin itself, not
+// its wrapped token, and has 18 decimals on every supported chain.
 func (server *Server) tokenHolders(writer http.ResponseWriter, request *http.Request) {
 	chain, err := chainID(request)
 	if err != nil {
@@ -59,7 +64,10 @@ func (server *Server) tokenHolders(writer http.ResponseWriter, request *http.Req
 		return
 	}
 	response := holdersResponse{ChainID: chain, Token: token, HolderCount: total, Holders: make([]holderResponse, len(top))}
-	if server.registry != nil {
+	if token == asset.NativeAddress {
+		decimals := uint8(nativeDecimals)
+		response.Decimals = &decimals
+	} else if server.registry != nil {
 		metadata, ok, registryErr := server.registry.Token(request.Context(), chain, token)
 		if registryErr != nil {
 			server.fail(writer, request, registryErr)

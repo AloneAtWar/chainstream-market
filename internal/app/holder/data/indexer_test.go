@@ -25,6 +25,10 @@ const (
 	carol  = "0xcccccccccccccccccccccccccccccccccccccccc"
 
 	zeroAddress = "0x0000000000000000000000000000000000000000"
+	// multicall answers getEthBalance; the fake node keys its native
+	// balances by this address.
+	multicall = "0xca11bde05977b3631167028862be2a173976ca11"
+	native    = rpc.NativeToken
 )
 
 // openRepo opens the repository on a fresh schema.
@@ -63,13 +67,13 @@ func newFixture(t *testing.T, reconcileEvery int64) *fixture {
 
 func (f *fixture) restart(reconcileEvery int64) {
 	f.t.Helper()
-	client, err := rpc.New(rpc.Options{URL: f.node.URL})
+	client, err := rpc.New(rpc.Options{URL: f.node.URL, NativeBalanceContract: multicall})
 	if err != nil {
 		f.t.Fatalf("rpc.New() error = %v", err)
 	}
 	f.indexer, err = biz.New(biz.Options{
 		ChainID: 1, Repo: f.repo, Balances: client, HistoryDepth: 8,
-		ReconcileEvery: reconcileEvery, ReconcileBatch: 10,
+		ReconcileEvery: reconcileEvery, ReconcileBatch: 10, NativeBalances: true,
 	})
 	if err != nil {
 		f.t.Fatalf("New() error = %v", err)
@@ -99,6 +103,19 @@ func (f *fixture) apply(height int64, fork string, transfers ...*streamv1.TokenT
 	}
 	f.commit(height, block.GetBlockHash())
 	return nil
+}
+
+// applyNative applies a block that touched the native balances of holders.
+func (f *fixture) applyNative(height int64, fork string, holders ...string) {
+	f.t.Helper()
+	block := &streamv1.BlockEvent{
+		ChainId: 1, BlockHeight: height, BlockHash: hashOf(height, fork), NativeTouched: holders,
+		FinalizedHeight: height - 20,
+	}
+	if err := f.indexer.Apply(context.Background(), block); err != nil {
+		f.t.Fatalf("Apply(%d) error = %v", height, err)
+	}
+	f.commit(height, block.GetBlockHash())
 }
 
 func (f *fixture) mustApply(height int64, fork string, transfers ...*streamv1.TokenTransfer) {
@@ -232,4 +249,48 @@ func TestIndexerResumesAndLimitsReorgs(t *testing.T) {
 	if err := f.indexer.Revert(context.Background(), 105); !errors.Is(err, biz.ErrReorgTooDeep) {
 		t.Fatalf("Revert() below history error = %v", err)
 	}
+}
+
+func TestIndexerTracksNativeBalancesOfTouchedAddresses(t *testing.T) {
+	f := newFixture(t, 0)
+	// Bob holds nothing, so he is not kept; the zero address never is.
+	f.node.SetBalance(hashOf(100, ""), multicall, alice, 1000)
+	f.applyNative(100, "", alice, bob, zeroAddress)
+	assertBalances(t, f.balances(native), map[string]int64{alice: 1000})
+
+	// Gas and a payment move balances; each is read again at the block.
+	f.node.SetBalance(hashOf(101, ""), multicall, alice, 690)
+	f.node.SetBalance(hashOf(101, ""), multicall, bob, 300)
+	f.applyNative(101, "", alice, bob)
+	assertBalances(t, f.balances(native), map[string]int64{alice: 690, bob: 300})
+
+	// An untouched address keeps its balance.
+	f.node.SetBalance(hashOf(102, "a"), multicall, alice, 0)
+	f.node.SetBalance(hashOf(102, "a"), multicall, carol, 680)
+	f.applyNative(102, "a", "0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", carol)
+	assertBalances(t, f.balances(native), map[string]int64{alice: 0, bob: 300, carol: 680})
+
+	f.revert(101)
+	assertBalances(t, f.balances(native), map[string]int64{alice: 690, bob: 300})
+
+	f.node.SetBalance(hashOf(102, "b"), multicall, alice, 680)
+	f.applyNative(102, "b", alice)
+	assertBalances(t, f.balances(native), map[string]int64{alice: 680, bob: 300})
+
+	var count pgdb.HolderCountRow
+	if err := f.repo.db.Where("chain_id = 1 AND token = ?", native).Take(&count).Error; err != nil || count.Holders != 2 {
+		t.Fatalf("holder_counts = %+v, %v", count, err)
+	}
+}
+
+func TestIndexerReconcilesNativeBalances(t *testing.T) {
+	f := newFixture(t, 4)
+	f.node.SetBalance(hashOf(101, ""), multicall, alice, 1000)
+	f.applyNative(101, "", alice)
+	f.mustApply(102, "")
+	f.mustApply(103, "")
+	// A beacon-chain withdrawal credited Alice without touching her.
+	f.node.SetBalance(hashOf(104, ""), multicall, alice, 1032)
+	f.mustApply(104, "")
+	assertBalances(t, f.balances(native), map[string]int64{alice: 1032})
 }

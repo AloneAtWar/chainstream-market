@@ -15,3 +15,6 @@ chains:
     chain_id: 1
     topic: chainstream-eth
     rpc_url: ${ETH_RPC_URL:http://host.docker.internal:8545}
+
+holders:
+  native_balances: true
