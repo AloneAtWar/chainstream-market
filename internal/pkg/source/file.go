@@ -39,8 +39,11 @@ type File struct {
 
 	file   *os.File
 	reader *bufio.Reader
-	// partial holds a line whose newline has not been written yet.
-	partial       []byte
+	// consumed is the length of the complete lines read so far. A line whose
+	// newline has not been written yet is read again from there next time,
+	// because chainstream-evm may cut such a line after a failed write and
+	// write a different record in its place.
+	consumed      int64
 	next          int64
 	line          int
 	highWatermark int64
@@ -91,16 +94,18 @@ func (source *File) read() ([]Message, error) {
 	var messages []Message
 	for len(messages) < maxFileBatch {
 		chunk, err := source.reader.ReadBytes('\n')
-		source.partial = append(source.partial, chunk...)
 		if errors.Is(err, io.EOF) {
+			if rewindErr := source.rewindPartial(len(chunk)); rewindErr != nil {
+				return nil, rewindErr
+			}
 			source.highWatermark = source.next
 			return messages, nil
 		}
 		if err != nil {
 			return nil, fmt.Errorf("file source: read %s: %w", source.options.Path, err)
 		}
-		line := bytes.TrimSpace(source.partial)
-		source.partial = source.partial[:0]
+		source.consumed += int64(len(chunk))
+		line := bytes.TrimSpace(chunk)
 		source.line++
 		if len(line) == 0 {
 			continue
@@ -117,6 +122,28 @@ func (source *File) read() ([]Message, error) {
 		messages = append(messages, Message{Offset: offset, Value: value})
 	}
 	return messages, nil
+}
+
+// rewindPartial runs at the end of the file. It drops the partial bytes of an
+// unterminated line so the next read starts again at the line's beginning, and
+// fails if the file no longer holds the lines already read.
+func (source *File) rewindPartial(partial int) error {
+	info, err := source.file.Stat()
+	if err != nil {
+		return fmt.Errorf("file source: stat %s: %w", source.options.Path, err)
+	}
+	if info.Size() < source.consumed {
+		return fmt.Errorf("file source: %s shrank to %d bytes, below the %d already read",
+			source.options.Path, info.Size(), source.consumed)
+	}
+	if partial == 0 {
+		return nil
+	}
+	if _, err := source.file.Seek(source.consumed, io.SeekStart); err != nil {
+		return fmt.Errorf("file source: seek %s: %w", source.options.Path, err)
+	}
+	source.reader.Reset(source.file)
+	return nil
 }
 
 // encodeRecord turns a StreamRecord in protobuf JSON into binary protobuf.
