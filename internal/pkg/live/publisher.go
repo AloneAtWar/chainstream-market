@@ -33,6 +33,10 @@ type PublisherOptions struct {
 
 // Publisher writes market-engine's per-block output and reorg corrections to
 // the live topics through a Sink.
+//
+// Publisher 在区块输出写入存储之后、检查点提交之前，把交易和变化的 K 线桶写入 live topic；
+// 重组时写入回滚高度和每个受影响序列的 reset。超过 max_lag 的旧区块（追块时）不推送，
+// revert 总是推送。
 type Publisher struct {
 	sink   Sink
 	topics map[uint64]string

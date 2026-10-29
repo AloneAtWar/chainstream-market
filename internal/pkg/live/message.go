@@ -3,6 +3,10 @@
 // market-engine publishes what each block derived, and every reorg
 // correction, to one live topic per chain (Publisher). market-api consumes
 // those topics and fans them out to WebSocket clients by channel (Hub).
+//
+// live 包负责实时推送：market-engine 把每个区块的派生结果和重组修正写入每条链一个
+// 的 live topic（Publisher，经 Kafka 或 Redis Pub/Sub）；market-api 消费这些 topic，
+// 按频道扇出给 WebSocket 客户端（Hub）。
 package live
 
 import (

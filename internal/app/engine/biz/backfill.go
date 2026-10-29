@@ -21,6 +21,8 @@ const missedSweep = 256
 
 // missedToken spans the heights that had a trade waiting on a token's
 // decimals.
+//
+// missedToken 记录某代币“有交易等待其小数位”的最早和最晚高度，供回填确定读取范围。
 type missedToken struct {
 	First int64
 	Last  int64
@@ -75,6 +77,9 @@ func (processor *Processor) expireMissed(height int64) {
 //
 // When the raw store has not caught up with the heights to read, only the
 // held trades are replayed.
+//
+// backfill 在代币小数位到达时，从 ClickHouse 的 raw_trades（ch-loader 写入）读回挂起
+// 范围之外的历史交易一起回放；ch-loader 还没追上时只回放挂起的交易并记录告警。
 func (processor *Processor) backfill(ctx context.Context, height int64, chainID uint64, learned map[string]struct{}, ready []readyTrade) ([]readyTrade, map[string][]model.PricePoint, error) {
 	if !processor.backfilling() {
 		return ready, nil, nil

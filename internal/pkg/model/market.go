@@ -2,6 +2,9 @@
 // market-engine derives from each block, holder balances, token and pool
 // metadata, raw chain facts and token rankings. Each type is written by one
 // component and read by others, so it lives outside all of them.
+//
+// model 包是各组件之间交换的数据：区块输出（定方向的交易、代币价格、K 线）、持有人余额、
+// 代币与池子元数据、原始事实和排行榜。
 package model
 
 import (

@@ -1,4 +1,7 @@
 // Package source reads a chainstream-evm chain topic.
+//
+// source 包读取 chainstream-evm 的链 topic，有两种实现：Kafka（消费分区 0，不使用
+// 消费组，offset 由各组件自己的检查点管理）和 File（跟读 protojson 行文件）。
 package source
 
 import (
@@ -18,6 +21,8 @@ type Message struct {
 }
 
 // Source yields a chain topic's records in offset order.
+//
+// Source 按 offset 顺序产出链 topic 的记录；Fetch 阻塞到至少有一条记录或 ctx 结束。
 type Source interface {
 	// Fetch blocks until at least one record is available or ctx is done.
 	Fetch(ctx context.Context) ([]Message, error)
@@ -41,10 +46,14 @@ type Lagger interface {
 
 // Partition is the only partition chainstream-evm writes to; total order
 // across reverts and blocks depends on it.
+//
+// Partition：chainstream-evm 只写分区 0，revert 与区块之间的全序依赖于此。
 const Partition int32 = 0
 
 // Kafka consumes partition zero of one topic without a consumer group. The
 // engine owns the offset through its checkpoint store.
+//
+// Kafka 不使用消费组直接消费单个 topic 的分区 0，起始 offset 来自组件的检查点。
 type Kafka struct {
 	client        *kgo.Client
 	topic         string

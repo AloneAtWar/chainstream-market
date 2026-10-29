@@ -11,6 +11,10 @@ import (
 // Apply or Revert for each record that changes anything, then Commit for
 // every record, so Commit must persist the checkpoint together with
 // everything applied since the previous Commit.
+//
+// Handler 是引擎驱动的业务接口：对改变状态的记录调用 Apply 或 Revert，对每条记录都
+// 调用 Commit。Commit 必须把检查点与上次 Commit 以来的全部变更一起持久化（同一事务，
+// 或先写数据后写检查点并保证重放幂等）。
 type Handler interface {
 	// Restore returns the last committed checkpoint and loads any state
 	// that belongs to it.
@@ -22,6 +26,8 @@ type Handler interface {
 }
 
 // Checkpoint is the last chain-topic record the engine fully applied.
+//
+// Checkpoint 是最后一条被完整应用的记录：topic offset、区块高度和哈希。
 type Checkpoint struct {
 	ChainID uint64
 	// Offset is the Kafka offset of the last applied record; consumption

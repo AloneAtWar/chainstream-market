@@ -14,6 +14,8 @@ import (
 
 // Sink carries market-engine's live records to market-api. Send writes
 // values to topic, in order, and returns once the transport accepted them.
+//
+// Sink 是 market-engine 侧的发送端（Kafka 或 Redis Pub/Sub），按顺序写入并在被接受后返回。
 type Sink interface {
 	Send(ctx context.Context, topic string, values [][]byte) error
 	Close()
@@ -21,6 +23,8 @@ type Sink interface {
 
 // Feed delivers what is sent to topics from the moment Run starts, in order
 // per topic, until ctx ends. Run returns nil when ctx ends.
+//
+// Feed 是 market-api 侧的接收端，只投递 Run 开始之后发布的内容（从 topic 末尾读，不用消费组）。
 type Feed interface {
 	Run(ctx context.Context, topics []string, deliver func(topic string, value []byte)) error
 }

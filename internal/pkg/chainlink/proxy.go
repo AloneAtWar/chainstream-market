@@ -1,5 +1,9 @@
 // Package chainlink reads Chainlink price feed proxies, to find the
 // aggregators whose AnswerUpdated logs carry a feed's answers.
+//
+// chainlink 包读取 Chainlink 价格 feed 的 proxy：通过 decimals()、description() 校验配置，
+// 并用 phaseAggregators(1..phaseId()) 与 aggregator() 列出每个 phase 的聚合器地址，全部
+// 视为可信，这样回放旧区块时也能识别当时的聚合器发出的报价。
 package chainlink
 
 import (

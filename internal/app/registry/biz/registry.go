@@ -6,6 +6,11 @@
 // undo a newer one. Whether a contract was created, and its deployment, are
 // kept whatever the height. Every block records the rows it touched as they
 // were before it, so a reorg restores them.
+//
+// market-registry 业务层：根据链 topic 中的 AssetFact / PoolFact 维护每个代币和池子的
+// 最新元数据。只有当新事实的 source_height 不低于已存数据时才覆盖（迟到的旧观测不会
+// 覆盖新数据）；是否为新建合约及部署信息无论高度都保留。每个区块在首次修改某行前
+// 保存其旧值，重组时据此恢复。
 package biz
 
 import (

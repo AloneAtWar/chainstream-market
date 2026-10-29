@@ -1,6 +1,9 @@
 // Package metrics holds the Prometheus metrics the services export and
 // serves them at /metrics. Each service runs as its own process, so the
 // scrape job tells them apart; the chain label tells chains apart.
+//
+// metrics 包定义各服务在 /metrics 暴露的 Prometheus 指标（前缀 chainstream_market_，
+// 按 chain 打标签）。
 package metrics
 
 import (

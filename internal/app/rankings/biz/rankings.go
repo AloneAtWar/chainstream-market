@@ -8,6 +8,11 @@
 // reorg window, are read again, so a reorg that moved or removed a recent
 // price is picked up while older prices, which no reorg reaches, stay as
 // stored.
+//
+// market-rankings 业务层：定期重建 market-api 代币列表使用的 token_rankings 表。
+// 24h 成交量、笔数、涨跌幅取自截至链头（ClickHouse 中最新区块，而非墙钟）的代币聚合
+// K 线；最新价格增量读取，只重读上次刷新以来（减去 reorg 窗口）有新价格的代币；
+// 持有人数来自 holder-indexer 的 holder_counts，部署信息来自 market-registry。
 package biz
 
 import (

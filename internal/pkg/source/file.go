@@ -33,6 +33,12 @@ type FileOptions struct {
 // grows, as chainstream-evm's file output appends to it. A record's offset is
 // its index among the file's non-blank lines, so checkpoints work as they do
 // with Kafka. Values are re-encoded as binary protobuf, as Kafka carries them.
+//
+// File 从文件读取链 topic 并随文件增长持续跟读（配合 chainstream-evm 的
+// file 输出，format=protojson）。记录的 offset 是它在非空行中的序号，因此检查点用法
+// 与 Kafka 相同；值被重新编码为二进制 protobuf，与 Kafka 中的格式一致。
+// 只有写完换行符的行才会被读取：未结束的行下次从行首重读，因为 chainstream-evm 在写入
+// 失败后会截掉这半行并在原位置写入另一条记录。
 type File struct {
 	options FileOptions
 	start   int64
@@ -136,6 +142,9 @@ func (source *File) read() ([]Message, error) {
 // rewindPartial runs at the end of the file. It drops the partial bytes of an
 // unterminated line so the next read starts again at the line's beginning, and
 // fails if the file no longer holds the lines already read.
+//
+// rewindPartial 在读到文件末尾时丢弃未结束行的部分字节，下次从该行开头重读；
+// 若文件比已读部分还短（被截断），返回错误停止。
 func (source *File) rewindPartial(partial int) error {
 	info, err := source.file.Stat()
 	if err != nil {
@@ -162,6 +171,10 @@ func (source *File) rewindPartial(partial int) error {
 // in the file is never removed once written, and neither are the bytes before
 // it, so the bytes read after chunk's newline was seen are final. If they
 // differ from chunk, the read goes on from the end of the line they hold.
+//
+// stableLine 在看到换行后从文件中按原位置再读一遍这一行：一次 ReadBytes 可能跨越多次
+// 文件读取，拼接了“被截掉的半行开头”和“替换记录的结尾”。换行一旦写入就不会再变，
+// 所以重读得到的内容才是最终结果；与原读取不同时以重读结果为准。
 func (source *File) stableLine(chunk []byte) ([]byte, error) {
 	if cap(source.scratch) < len(chunk) {
 		source.scratch = make([]byte, len(chunk))
