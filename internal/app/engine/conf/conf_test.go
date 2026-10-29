@@ -3,11 +3,13 @@ package conf
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
 	config "github.com/AloneAtWar/chainstream-market/internal/pkg/config"
+	"github.com/AloneAtWar/chainstream-market/internal/pkg/model"
 )
 
 func TestParseAppliesDefaults(t *testing.T) {
@@ -204,6 +206,10 @@ func TestLoadRepositoryConfig(t *testing.T) {
 	}
 	if days := bootstrap.Storage.Clickhouse.Retention.CandleDayDurations(); days[time.Minute] != 30 || days[5*time.Minute] != 180 {
 		t.Fatalf("candle_days = %v", days)
+	}
+	if bands := bootstrap.Market.DepthBandList(); !slices.Equal(bands, model.DefaultDepthBands()) ||
+		bootstrap.Market.GetDynamicFeeDepthBps() != model.DefaultDynamicFeeDepthBPS {
+		t.Fatalf("depth bands = %v, dynamic %d", bands, bootstrap.Market.GetDynamicFeeDepthBps())
 	}
 }
 

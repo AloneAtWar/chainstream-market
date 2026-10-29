@@ -116,6 +116,7 @@ go run ./cmd/market-api -conf configs/market-api.yaml   # needs clickhouse.addr 
 | `GET /v1/chains/{chain}/tokens/{token}` | Token metadata from market-registry: standard, recognition, name, symbol, decimals, deployment and the raw metadata JSON. |
 | `GET /v1/chains/{chain}/tokens/{token}/pools` | Pools that trade the token, most recently observed first. Accepts `limit`. |
 | `GET /v1/chains/{chain}/pools/{pool}` | Pool metadata: protocol, DEX, tokens and the raw metadata JSON. |
+| `GET /v1/chains/{chain}/pools/{pool}/liquidity` | A concentrated pool's tokens per price range at its current price, their totals and its depth within `band_bps` (default: the fee tier's band), from market-engine's tick table. Amounts are raw, with `value` added when market-registry knows the token's decimals. `usable` is false when the table is stale or the pool's hook may settle swaps outside it. 404 when the engine keeps no table for the pool. |
 | `GET /v1/chains/{chain}/tokens?sort=volume_24h` | The token list from market-rankings, see [market-rankings](#market-rankings). |
 | `GET /v1/chains/{chain}/tokens/{token}/transfers` | The token's ERC-20 transfers from ch-loader, newest first. `holder` narrows them to one party. |
 | `GET /v1/chains/{chain}/holders/{holder}/transfers` | Transfers to or from the holder across tokens, newest first. `token` narrows them to one token. |
@@ -277,7 +278,7 @@ Each block goes through market-engine's processor (`internal/app/engine/biz`) in
 
 1. **Pool state.** Every two-token trade updates its pool:
    - Constant-product pools use `reserves_after`.
-   - Concentrated-liquidity pools use virtual reserves derived from `sqrt_price_x96` and `liquidity`.
+   - Concentrated-liquidity pools (Uniswap/PancakeSwap V3, Uniswap V4, PancakeSwap Infinity) take their price from `sqrt_price_x96` and their reserves from the pool's tick table, see [Concentrated liquidity](#concentrated-liquidity). A pool without a usable table has a price but no reserves, so it prices nothing.
    - Other pools use the swap's execution price and have no reserves, so they cannot propagate prices. Liquidity-book pools fall in this group for now.
 2. **Price graph.** Anchors are the catalog's USD stablecoins. Each one takes its latest trusted oracle answer when a feed covers it, and $1 otherwise. Every token touched in the block is priced through the pool whose priced counterpart reserve is worth the most in USD. That reserve must reach `min_liquidity_usd`, and the price can spread at most `max_hops` from an anchor. A token is never priced through a counterpart that was itself priced through that token. The wrapped native coin is priced through the graph like any other token, and the native pseudo-address shares its price.
 3. **Trades and candles.**
@@ -285,6 +286,18 @@ Each block goes through market-engine's processor (`internal/app/engine/biz`) in
    - Trades are valued at the block's closing quote price.
    - Swaps feed pool candles. They also feed the base token's aggregated candles when the pool's quote reserve reaches `candle_min_liquidity_usd` and the swap is not an outlier (see [Outlier swaps](#outlier-swaps)).
    - A new candle opens at the previous candle's close.
+
+### Concentrated liquidity
+
+Virtual reserves at the active liquidity overstate a concentrated pool, and a V4 singleton holds every pool's tokens in one contract, so neither the active liquidity nor the contract's balances tell what one pool holds. market-engine instead keeps each pool's tick table:
+
+- chainstream-evm (with `chain.tick_seeding.enabled`) attaches a pool's complete table, read at the parent block, to the block in which the pool first trades, and again every `reseed_interval_blocks`. The engine replaces the pool's table with it.
+- Every mint and burn carries its `liquidity_range`, which adds the liquidity delta at the lower tick and subtracts it at the upper one.
+- Every swap moves the pool's price and reports the active liquidity, which must equal the table's sum of `liquidityNet` up to the swap's tick. A mismatch, or a table that does not net to zero, marks the table stale until the next snapshot.
+
+At the price, the ranges above it hold only token0, those below only token1, and the one containing it is split, each rounded down as the pool pays out. Their sum is the pool's principal, uncollected fees excluded, and becomes its reserves, so `liquidity_usd` is the real balance of the counterpart token in the pricing pool. Pools whose V4 hook may return swap deltas settle swaps outside the table and get no reserves.
+
+Each such pool also gets its depth: the token0 the pool sells while the price rises across its fee tier's band and the token1 while it falls. `market.depth_bands` sizes the band by fee tier: up to 0.01% ±0.5%, up to 0.05% ±1%, up to 0.3% ±2%, higher ±5%, and a dynamic V4 fee ±2% (`dynamic_fee_depth_bps`). The tables, kept in the engine state (`state.driver: postgres`), are served by `GET /v1/chains/{chain}/pools/{pool}/liquidity`.
 
 ### Chainlink feeds
 

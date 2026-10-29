@@ -47,3 +47,11 @@ type RegistryReader interface {
 type RankingReader interface {
 	TokenList(ctx context.Context, query model.TokenListQuery) ([]model.RankedToken, error)
 }
+
+// LiquidityReader reads the tick tables market-engine keeps for
+// concentrated-liquidity pools.
+type LiquidityReader interface {
+	// PoolTickTable returns a pool's latest committed table; ok is false
+	// when market-engine keeps none for it.
+	PoolTickTable(ctx context.Context, chainID uint64, poolID string) (model.PoolTickTable, bool, error)
+}

@@ -19,7 +19,8 @@ import (
 
 // ProviderSet is the data-layer provider set.
 var ProviderSet = wire.NewSet(
-	NewData, NewMarketReader, NewTransferReader, NewHolderReader, NewRegistryReader, NewRankingReader, NewHub,
+	NewData, NewMarketReader, NewTransferReader, NewHolderReader, NewRegistryReader, NewRankingReader, NewLiquidityReader,
+	NewHub,
 )
 
 // Data holds market-api's two databases.

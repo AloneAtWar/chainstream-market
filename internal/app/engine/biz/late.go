@@ -188,7 +188,7 @@ func (processor *Processor) seedPools(height int64, ready []readyTrade, touched 
 		if _, exists := processor.pools.get(id); exists {
 			continue
 		}
-		if next, ok := observePool(pool{}, latest[id], processor.decimals.get); ok {
+		if next, ok := observePool(pool{}, latest[id], processor.decimals.get, processor.tableAmounts); ok {
 			processor.setPool(height, id, next, false, touched)
 		}
 	}
@@ -229,7 +229,7 @@ func (processor *Processor) replay(height int64, output *model.BlockOutput, read
 		if !priced {
 			continue
 		}
-		state, _ := observePool(pool{}, item.source, processor.decimals.get)
+		state, _ := observePool(pool{}, item.source, processor.decimals.get, processor.tableAmounts)
 		liquidity := reserveUSD(processor.options.Catalog, state, trade.QuoteToken, quoteUSD)
 		for _, subject := range processor.candleSubjects(trade, liquidity) {
 			for _, interval := range processor.options.Intervals {

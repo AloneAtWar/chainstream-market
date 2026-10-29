@@ -57,7 +57,7 @@ func (processor *Processor) TakeDelta() (StateDelta, error) {
 	for _, take := range []func(*StateDelta) error{
 		processor.decimals.take, processor.pools.take, processor.prices.take,
 		processor.orientations.take, processor.candles.take, processor.oracle.take, processor.late.take,
-		processor.missed.take,
+		processor.missed.take, processor.ticks.take, processor.clamm.take,
 	} {
 		if err := take(&delta); err != nil {
 			return StateDelta{}, err
@@ -77,14 +77,16 @@ func (processor *Processor) Restore(state State) error {
 		load func(StateEntry) error
 		undo func(StateUndo) error
 	}{
-		kindDecimals:     {processor.decimals.load, processor.decimals.loadUndo},
-		kindPools:        {processor.pools.load, processor.pools.loadUndo},
-		kindPrices:       {processor.prices.load, processor.prices.loadUndo},
-		kindOrientations: {processor.orientations.load, processor.orientations.loadUndo},
-		kindCandles:      {processor.candles.load, processor.candles.loadUndo},
-		kindOracle:       {processor.oracle.load, processor.oracle.loadUndo},
-		kindLate:         {processor.late.load, processor.late.loadUndo},
-		kindMissed:       {processor.missed.load, processor.missed.loadUndo},
+		kindDecimals:              {processor.decimals.load, processor.decimals.loadUndo},
+		kindPools:                 {processor.pools.load, processor.pools.loadUndo},
+		kindPrices:                {processor.prices.load, processor.prices.loadUndo},
+		kindOrientations:          {processor.orientations.load, processor.orientations.loadUndo},
+		kindCandles:               {processor.candles.load, processor.candles.loadUndo},
+		kindOracle:                {processor.oracle.load, processor.oracle.loadUndo},
+		kindLate:                  {processor.late.load, processor.late.loadUndo},
+		kindMissed:                {processor.missed.load, processor.missed.loadUndo},
+		model.StateKindTicks:      {processor.ticks.load, processor.ticks.loadUndo},
+		model.StateKindCLAMMPools: {processor.clamm.load, processor.clamm.loadUndo},
 	}
 	for _, entry := range state.Entries {
 		loader, ok := loaders[entry.Kind]
@@ -106,6 +108,7 @@ func (processor *Processor) Restore(state State) error {
 	}
 	processor.prunedThrough = state.PrunedThrough
 	processor.rebuildLate()
+	processor.rebuildTicks()
 
 	ids := make([]string, 0, len(processor.pools.values))
 	for id := range processor.pools.values {

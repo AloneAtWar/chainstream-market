@@ -6,7 +6,7 @@ replace github.com/AloneAtWar/chainstream-market/proto => ./proto
 
 require (
 	github.com/AloneAtWar/chainstream-market/proto v0.0.0-00010101000000-000000000000
-	github.com/AloneAtWar/oh-my-blockchain v0.6.0
+	github.com/AloneAtWar/oh-my-blockchain v0.6.1-0.20261027182132-dc1b474955b4
 	github.com/ClickHouse/clickhouse-go/v2 v2.49.0
 	github.com/alicebob/miniredis/v2 v2.37.0
 	github.com/coder/websocket v1.8.14
@@ -68,6 +68,7 @@ require (
 	github.com/prometheus/common v0.66.1 // indirect
 	github.com/prometheus/procfs v0.16.1 // indirect
 	github.com/rogpeppe/go-internal v1.16.0 // indirect
+	github.com/samber/lo v1.53.0 // indirect
 	github.com/segmentio/asm v1.2.1 // indirect
 	github.com/shirou/gopsutil v3.21.4-0.20210419000835-c7a38de76ee5+incompatible // indirect
 	github.com/supranational/blst v0.3.16 // indirect

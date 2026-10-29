@@ -51,7 +51,18 @@ func chainBlock(height, variant int64) *streamv1.BlockEvent {
 		leg{meme, "100000000000000000000", fmt.Sprintf("%d000000000000000000", 1_000_000-step*100), 18},
 		leg{weth, "-1000000000000000", "10000000000000000000", 18},
 	)
-	block := testBlock(height, (height-100)*12, wethTrade, memeTrade)
+	clTrades := []*streamv1.Trade{
+		clMint(clPool, -269460, -269340, fmt.Sprintf("%d000000000000000", step+1)),
+		clSwap(clPool, clSqrtAt(-269400+int(step%30)), "", ""),
+	}
+	block := testBlock(height, (height-100)*12, append([]*streamv1.Trade{wethTrade, memeTrade}, clTrades...)...)
+	// The pool is seeded at the first block and read again every fifth.
+	if height == 100 || height%5 == 0 {
+		block.TickSnapshots = []*streamv1.PoolTickSnapshot{clSnapshot(height-1, clSqrtAt(-269400), 3000, map[int32]string{
+			-270000: "1000000000000000000", -268800: "-1000000000000000000",
+			-269520: fmt.Sprintf("%d", 1_000_000+step), -269280: fmt.Sprintf("-%d", 1_000_000+step),
+		})}
+	}
 	block.BlockHash = fmt.Sprintf("0x%d-%d", height, variant)
 	block.FinalizedHeight = height - 4
 	return block
@@ -139,6 +150,12 @@ func (h *harness) values() map[string]string {
 	}
 	for key, value := range processor.missed.values {
 		add(kindMissed, key, value)
+	}
+	for key, value := range processor.ticks.values {
+		add(model.StateKindTicks, tickKeys.encode(key), value)
+	}
+	for key, value := range processor.clamm.values {
+		add(model.StateKindCLAMMPools, key, value)
 	}
 	return out
 }

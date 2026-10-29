@@ -276,7 +276,9 @@ func (processor *Processor) pastPrices(chainID uint64, ready []readyTrade, serie
 				quotes[catalog.Canonical(token)] = pastQuote{usd: usd, hops: hops}
 			}
 			id := normalize(item.source.GetPoolId())
-			next, ok := observePool(states[id], item.source, processor.decimals.get)
+			// A concentrated pool's past amounts are approximated by its
+			// current tick table at the trade's price.
+			next, ok := observePool(states[id], item.source, processor.decimals.get, processor.tableAmounts)
 			if !ok {
 				continue
 			}

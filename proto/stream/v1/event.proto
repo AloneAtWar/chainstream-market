@@ -56,6 +56,47 @@ message BlockEvent {
   // balances without a transfer. Without need_internal, recipients of internal
   // transfers are missing, and beacon-chain withdrawals are never included.
   repeated string native_touched = 17;
+  // tick_snapshots seed concentrated-liquidity pools first seen in this block
+  // (or due for a periodic re-read): each pool's complete tick table read at
+  // the parent block, before this block's trades. Consumers load a snapshot
+  // and then apply this block's liquidity_range trades on top of it.
+  repeated PoolTickSnapshot tick_snapshots = 18;
+}
+
+// PoolTickSnapshot is a concentrated-liquidity pool's initialized ticks and
+// price at snapshot_height. A consumer replaces any table it kept for the pool.
+message PoolTickSnapshot {
+  string pool_id = 1;
+  string protocol = 2;
+  int64 snapshot_height = 3;
+  string sqrt_price_x96 = 4;
+  // ticks are sorted by tick and carry every initialized tick.
+  repeated TickNet ticks = 5;
+  // swap_delta_hooks is set when the pool's hooks may return swap deltas
+  // (Uniswap V4, PancakeSwap Infinity), so the tick table does not bound what
+  // the pool can trade.
+  bool swap_delta_hooks = 6;
+  // fee is the pool key's fee in hundredths of a basis point (3000 is
+  // 0.3%). Uniswap V4 and PancakeSwap Infinity set the 0x800000 flag for a
+  // dynamic fee.
+  uint32 fee = 7;
+}
+
+// TickNet is the liquidity added when the price crosses tick upwards.
+message TickNet {
+  sint32 tick = 1;
+  // liquidity_net is a signed decimal integer.
+  string liquidity_net = 2;
+}
+
+// LiquidityRange is a concentrated-liquidity position change: liquidity_delta
+// is added to liquidityNet at tick_lower and subtracted at tick_upper.
+message LiquidityRange {
+  sint32 tick_lower = 1;
+  sint32 tick_upper = 2;
+  // liquidity_delta is a signed decimal integer, positive when liquidity is
+  // added and negative when it is removed.
+  string liquidity_delta = 3;
 }
 
 // NativeTransfer moves raw_amount wei of the native coin. trace_id is empty
@@ -113,6 +154,8 @@ message Trade {
   string recipient = 22;
   PoolState pool_state = 23;
   TradeAction action = 24;
+  // liquidity_range is set on concentrated-liquidity position changes.
+  LiquidityRange liquidity_range = 25;
 }
 
 // PoolState carries post-operation pool state when the protocol event exposes
