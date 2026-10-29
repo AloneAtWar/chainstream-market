@@ -132,6 +132,14 @@ type Processor struct {
 	clamm     *journal[string, model.CLAMMPool]
 	poolTicks map[string]map[int32]struct{}
 	books     map[string]*tickBook
+	// balances are the latest balance snapshots of Curve and Balancer pools.
+	// tokenBalancePools and derivedPools index them by canonical token, pool
+	// token and token priced by rate, and only grow; balanceEdges caches what
+	// each record implies per token pair. None of the three is persisted.
+	balances          *journal[string, model.BalancePool]
+	tokenBalancePools map[string][]string
+	derivedPools      map[string][]string
+	balanceEdges      map[string]*poolEdges
 	// prunedThrough is the highest height whose undo history was discarded.
 	prunedThrough int64
 	// reverted and revertTo record a revert since the last TakeDelta.
@@ -184,22 +192,26 @@ func NewProcessor(options Options) (*Processor, error) {
 		feeds[address] = append(feeds[address], feed)
 	}
 	return &Processor{
-		options:      options,
-		decimals:     newJournal[string, uint32](stringKeys(kindDecimals)),
-		pools:        newJournal[string, pool](stringKeys(kindPools)),
-		prices:       newJournal[string, tokenPrice](stringKeys(kindPrices)),
-		orientations: newJournal[string, orientation](stringKeys(kindOrientations)),
-		candles:      newJournal[candleKey, model.Candle](candleKeys),
-		oracle:       newJournal[string, decimal.Decimal](stringKeys(kindOracle)),
-		late:         newJournal[string, lateTrade](stringKeys(kindLate)),
-		missed:       newJournal[string, missedToken](stringKeys(kindMissed)),
-		ticks:        newJournal[tickKey, string](tickKeys),
-		clamm:        newJournal[string, model.CLAMMPool](stringKeys(model.StateKindCLAMMPools)),
-		poolTicks:    make(map[string]map[int32]struct{}),
-		books:        make(map[string]*tickBook),
-		feeds:        feeds,
-		tokenPools:   make(map[string][]string),
-		lateByToken:  make(map[string]map[string]struct{}),
+		options:           options,
+		decimals:          newJournal[string, uint32](stringKeys(kindDecimals)),
+		pools:             newJournal[string, pool](stringKeys(kindPools)),
+		prices:            newJournal[string, tokenPrice](stringKeys(kindPrices)),
+		orientations:      newJournal[string, orientation](stringKeys(kindOrientations)),
+		candles:           newJournal[candleKey, model.Candle](candleKeys),
+		oracle:            newJournal[string, decimal.Decimal](stringKeys(kindOracle)),
+		late:              newJournal[string, lateTrade](stringKeys(kindLate)),
+		missed:            newJournal[string, missedToken](stringKeys(kindMissed)),
+		ticks:             newJournal[tickKey, string](tickKeys),
+		clamm:             newJournal[string, model.CLAMMPool](stringKeys(model.StateKindCLAMMPools)),
+		poolTicks:         make(map[string]map[int32]struct{}),
+		books:             make(map[string]*tickBook),
+		balances:          newJournal[string, model.BalancePool](stringKeys(model.StateKindBalancePools)),
+		tokenBalancePools: make(map[string][]string),
+		derivedPools:      make(map[string][]string),
+		balanceEdges:      make(map[string]*poolEdges),
+		feeds:             feeds,
+		tokenPools:        make(map[string][]string),
+		lateByToken:       make(map[string]map[string]struct{}),
 	}, nil
 }
 
@@ -240,6 +252,7 @@ func (processor *Processor) Apply(ctx context.Context, block *streamv1.BlockEven
 		processor.observe(height, trade, touched)
 	}
 	processor.settleTables(height, tables, touched)
+	processor.applyBalances(height, block, touched)
 	output.Prices = past.prices
 	output.Prices = append(output.Prices, processor.reprice(height, output, touched)...)
 
@@ -285,8 +298,10 @@ func (processor *Processor) Revert(_ context.Context, rollbackTo int64) error {
 	processor.missed.revert(rollbackTo)
 	processor.ticks.revert(rollbackTo)
 	processor.clamm.revert(rollbackTo)
+	processor.balances.revert(rollbackTo)
 	processor.rebuildLate()
 	processor.rebuildTicks()
+	processor.rebuildBalances()
 	if !processor.reverted || rollbackTo < processor.revertTo {
 		processor.reverted, processor.revertTo = true, rollbackTo
 	}
@@ -331,6 +346,7 @@ func (processor *Processor) prune(block *streamv1.BlockEvent) {
 	processor.missed.prune(through)
 	processor.ticks.prune(through)
 	processor.clamm.prune(through)
+	processor.balances.prune(through)
 	processor.prunedThrough = through
 }
 
@@ -472,10 +488,13 @@ func (processor *Processor) reprice(height int64, output model.BlockOutput, touc
 	return prices
 }
 
-// bestQuote prices token through the pool whose priced counterpart reserve
-// is worth the most in USD.
+// bestQuote prices token through its best pool, see quoteCandidate.beats.
+// A rate reported for the token itself wins over every pool.
 func (processor *Processor) bestQuote(height int64, token string) (tokenPrice, bool) {
-	var best tokenPrice
+	if derived, ok := processor.derivedQuote(height, token); ok {
+		return derived, true
+	}
+	var best quoteCandidate
 	found := false
 	for _, id := range processor.tokenPools[token] {
 		state, ok := processor.pools.get(id)
@@ -502,16 +521,19 @@ func (processor *Processor) bestQuote(height int64, token string) (tokenPrice, b
 		if !ok {
 			continue
 		}
-		if found && (liquidity.LessThan(best.LiquidityUSD) || (liquidity.Equal(best.LiquidityUSD) && id > best.Pool)) {
-			continue
-		}
-		best = tokenPrice{
+		candidate := quoteCandidate{price: tokenPrice{
 			USD: relative.Mul(counterpart.USD).Round(precision), Hops: counterpart.Hops + 1,
 			Via: other, Pool: id, LiquidityUSD: liquidity, Height: height,
+		}}
+		if depth, ok := processor.pairDepth(id, state, 1-position); ok {
+			candidate.depthUSD, candidate.hasDepth = depth.Mul(counterpart.USD).Round(precision), true
 		}
-		found = true
+		if !found || candidate.beats(best) {
+			best, found = candidate, true
+		}
 	}
-	return best, found
+	best, found = processor.balanceQuote(height, token, best, found)
+	return best.price, found
 }
 
 // chooseQuote picks the quote side of a pair. fixed is false when neither
@@ -666,11 +688,23 @@ func (processor *Processor) strays(trade model.Trade, reference tokenPrice, ok b
 // quoteLiquidityUSD is the USD value of the quote-side reserve of a trade's
 // pool, or zero when unknown.
 func (processor *Processor) quoteLiquidityUSD(trade model.Trade) decimal.Decimal {
-	state, ok := processor.pools.get(trade.PoolID)
+	price, ok := processor.priceOf(trade.QuoteToken)
 	if !ok {
 		return decimal.Zero
 	}
-	price, ok := processor.priceOf(trade.QuoteToken)
+	if record, isBalancePool := processor.balances.get(trade.PoolID); isBalancePool {
+		quote := processor.options.Catalog.Canonical(trade.QuoteToken)
+		for position, member := range record.Tokens {
+			if processor.options.Catalog.Canonical(member) != quote {
+				continue
+			}
+			if balance, known := processor.balanceOf(record, position); known {
+				return balance.Mul(price.USD)
+			}
+		}
+		return decimal.Zero
+	}
+	state, ok := processor.pools.get(trade.PoolID)
 	if !ok {
 		return decimal.Zero
 	}

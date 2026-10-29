@@ -280,7 +280,8 @@ Each block goes through market-engine's processor (`internal/app/engine/biz`) in
    - Constant-product pools use `reserves_after`.
    - Concentrated-liquidity pools (Uniswap/PancakeSwap V3, Uniswap V4, PancakeSwap Infinity) take their price from `sqrt_price_x96` and their reserves from the pool's tick table, see [Concentrated liquidity](#concentrated-liquidity). A pool without a usable table has a price but no reserves, so it prices nothing.
    - Other pools use the swap's execution price and have no reserves, so they cannot propagate prices. Liquidity-book pools fall in this group for now.
-2. **Price graph.** Anchors are the catalog's USD stablecoins. Each one takes its latest trusted oracle answer when a feed covers it, and $1 otherwise. Every token touched in the block is priced through the pool whose priced counterpart reserve is worth the most in USD. That reserve must reach `min_liquidity_usd`, and the price can spread at most `max_hops` from an anchor. A token is never priced through a counterpart that was itself priced through that token. The wrapped native coin is priced through the graph like any other token, and the native pseudo-address shares its price.
+   - Curve and Balancer pools are priced from the balance snapshots their blocks carry instead, see [Curve and Balancer pools](#curve-and-balancer-pools).
+2. **Price graph.** Anchors are the catalog's USD stablecoins. Each one takes its latest trusted oracle answer when a feed covers it, and $1 otherwise. A Curve base-pool LP token or a Balancer V3 ERC4626 token is priced by its rate against the cheapest of its priced underlyings, ahead of any pool. Every other token touched in the block is priced through the deepest pool, or pair of tokens in a Curve or Balancer pool: the one paying out the most USD of a priced counterpart while that counterpart's price moves across the pool's fee-tier band (see [Concentrated liquidity](#concentrated-liquidity) and [Curve and Balancer pools](#curve-and-balancer-pools); a pool known only by its reserves counts as constant product, `B·(1 − 1/√(1 + band))` at the 0.3% tier). Pools whose depth is unknown rank after every pool with a known depth, by their counterpart reserve's USD value. That reserve, the counterpart's real balance, is the price's `liquidity_usd` and must reach `min_liquidity_usd`, and the price can spread at most `max_hops` from an anchor. A token is never priced through a counterpart that was itself priced through that token. The wrapped native coin is priced through the graph like any other token, and the native pseudo-address shares its price.
 3. **Trades and candles.**
    - Each pool's quote token comes from catalog rank first, then from the priced token with fewer hops. Once a pair has a known quote, its orientation stays fixed. Pairs with no known quote stay provisional.
    - Trades are valued at the block's closing quote price.
@@ -298,6 +299,21 @@ Virtual reserves at the active liquidity overstate a concentrated pool, and a V4
 At the price, the ranges above it hold only token0, those below only token1, and the one containing it is split, each rounded down as the pool pays out. Their sum is the pool's principal, uncollected fees excluded, and becomes its reserves, so `liquidity_usd` is the real balance of the counterpart token in the pricing pool. Pools whose V4 hook may return swap deltas settle swaps outside the table and get no reserves.
 
 Each such pool also gets its depth: the token0 the pool sells while the price rises across its fee tier's band and the token1 while it falls. `market.depth_bands` sizes the band by fee tier: up to 0.01% ±0.5%, up to 0.05% ±1%, up to 0.3% ±2%, higher ±5%, and a dynamic V4 fee ±2% (`dynamic_fee_depth_bps`). The tables, kept in the engine state (`state.driver: postgres`), are served by `GET /v1/chains/{chain}/pools/{pool}/liquidity`.
+
+### Curve and Balancer pools
+
+Curve and Balancer pools hold up to eight tokens, and keep admin fees, Balancer V3 aggregate and yield fees, and token rates that their events never show, so their balances cannot be followed from trades. chainstream-evm (with `chain.pool_balances.enabled`) instead reads every such pool with an event in a block at that block's hash and attaches its `pool_balances`: real balances, curve family, fee, weights, amplification, rates, and for Curve crypto pools `get_dy` quote ladders every few blocks. The engine replaces the pool's record with each snapshot, keeping the last ladders when a snapshot has none, and journals it like any other state.
+
+Every pair of a pool's tokens is then an edge of the price graph, its counterpart balance being the edge's reserve:
+
+| Curve | Price | Depth within the fee tier's band |
+|---|---|---|
+| `stable` (Curve StableSwap, Balancer Stable) | StableSwap marginal price from the balances scaled by their rates | Bisection on the invariant |
+| `weighted` (Balancer Weighted) | `(B_out / w_out) / (B_in / w_in)` | `B_out · (1 − (1 + band)^(−w_in / (w_in + w_out)))` |
+| `crypto` (Curve CryptoSwap) | The ladder's first quote, net of the fee | Interpolated from the ladder; a band past its last rung is capped there |
+| `unknown` | The pool's latest swap of that pair | None |
+
+A Curve meta pool reports its base pool's LP token at the base pool's virtual price, and a Balancer V3 pool each ERC4626 token at its rate, which price those tokens directly. Depths are computed per edge, kept in memory, and choose the pricing pool as above.
 
 ### Chainlink feeds
 
