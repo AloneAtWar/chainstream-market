@@ -2,6 +2,8 @@
 
 Market data services built on the [chainstream-evm](https://github.com/AloneAtWar/chainstream-evm) block stream: trade orientation, USD pricing, candles, holders and raw transfers for ETH, BSC and Base.
 
+中文文档：[docs/zh](docs/zh/README.md)
+
 ## Layout
 
 | Path | What it is |

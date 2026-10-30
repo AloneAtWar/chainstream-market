@@ -1,5 +1,9 @@
 // Package service is market-api's HTTP handler over the readers the data
 // layer provides.
+//
+// service 包是 market-api 的 HTTP 处理层：价格、K 线、交易、持有人、元数据、池子流动性、
+// 代币列表、转账等 REST 接口，以及 /v1/stream WebSocket 实时推送。数据全部来自 data 层
+// 提供的只读接口（ClickHouse 与 PostgreSQL）。
 package service
 
 import (

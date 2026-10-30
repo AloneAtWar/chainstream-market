@@ -20,6 +20,9 @@ const recognized = "recognized"
 
 // lateTrade is a trade held back because the decimals of one of its tokens
 // were unknown when its block was applied. It is replayed once they arrive.
+//
+// lateTrade 是因为某个代币小数位未知而被挂起的交易，保存它所在区块的收盘价，等小数位
+// 到达后按自身区块的价格回放。
 type lateTrade struct {
 	Height int64
 	Time   int64
@@ -93,6 +96,8 @@ func (processor *Processor) amountOf(amount *streamv1.Amount) (decimal.Decimal, 
 
 // hold keeps a trade whose decimals are unknown for replay, unless holding
 // is off or a token it waits on already has LateTradesPerToken held trades.
+//
+// hold 挂起交易；挂起关闭或某个等待中的代币已达到 LateTradesPerToken 上限时直接丢弃。
 func (processor *Processor) hold(height, blockTime int64, source *streamv1.Trade) {
 	if processor.options.LateTradeBlocks <= 0 {
 		return
@@ -202,6 +207,9 @@ func (processor *Processor) seedPools(height int64, ready []readyTrade, touched 
 // A trade quoted in a token whose decimals just arrived is valued at that
 // token's recomputed price, and a swap of such a token is checked for
 // outliers against it.
+//
+// replay 在带来小数位的区块中按链上顺序回放就绪的挂起 / 回填交易：每笔保留自己的
+// 区块高度和时间、按自己区块的价格估值，并补建（包括更早的）K 线桶。
 func (processor *Processor) replay(height int64, output *model.BlockOutput, ready []readyTrade, past pastPrices, touched map[candleKey]struct{}) map[candleKey][]model.Candle {
 	built := make(map[candleKey][]model.Candle)
 	for _, item := range ready {

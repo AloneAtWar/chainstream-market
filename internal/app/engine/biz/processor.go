@@ -1,5 +1,9 @@
 // Package market orients trades, prices tokens through a liquidity-weighted
 // graph anchored on USD assets, and aggregates candles.
+//
+// 本包是 market-engine 的核心业务：给交易定方向（base/quote）、通过以 USD 锚定
+// 资产为起点、按流动性加权的价格图给代币定价，并聚合 K 线。所有状态都按区块高度
+// 记日志（journal），因此任意深度在保留范围内的重组都能被精确撤销。
 package biz
 
 import (
@@ -19,8 +23,11 @@ import (
 )
 
 // ErrReorgTooDeep means a revert reaches below the retained undo history.
+// ErrReorgTooDeep：回滚高度低于保留的撤销历史（finalized 高度与 history_depth），
+// 无法精确撤销，引擎会停止。
 var ErrReorgTooDeep = errors.New("market: reorg deeper than retained history")
 
+// Options 是 Processor 的定价参数，对应配置 market.* 与 chains[].feeds。
 type Options struct {
 	Catalog asset.Catalog
 	// MinLiquidityUSD is the counterpart reserve value a pool needs before a
@@ -72,6 +79,9 @@ type Options struct {
 
 // Feed is a trusted Chainlink-style aggregator answering in USD. One
 // aggregator may price several tokens, each in its own Feed.
+//
+// Feed 是一个可信的 Chainlink 风格 USD 聚合器（启动时由 proxy 解析出每个 phase
+// 的 aggregator 地址）；来自其它地址的 AnswerUpdated 一律忽略。
 type Feed struct {
 	Address  string
 	Token    string
@@ -79,6 +89,8 @@ type Feed struct {
 }
 
 // tokenPrice is a graph-derived USD price.
+// tokenPrice 记录价格从哪个池子、经过哪个对手币（Via）传过来，离锚定资产几跳，
+// 以及定价池对手方储备的 USD 价值。
 type tokenPrice struct {
 	USD          decimal.Decimal
 	Hops         uint8
@@ -90,6 +102,7 @@ type tokenPrice struct {
 }
 
 // orientation fixes a pool's quote token once it is known.
+// orientation：交易对一旦确定了计价币（Fixed=true）就不再改变，保证 K 线方向稳定。
 type orientation struct {
 	Quote string
 	Fixed bool
@@ -102,6 +115,10 @@ type candleKey struct {
 }
 
 // Processor is one chain's market state. It is not safe for concurrent use.
+//
+// Processor 是单条链的全部市场状态（池子、价格、交易对方向、K 线、预言机报价、
+// 待定交易、tick 表等），每一项都是按高度记录撤销信息的 journal。Apply 逐块
+// 推进，Revert 回滚到指定高度。不支持并发调用。
 type Processor struct {
 	options      Options
 	decimals     *journal[string, uint32]
@@ -224,6 +241,15 @@ func NewProcessor(options Options) (*Processor, error) {
 // valued at their own block's prices and added to their candles, ahead of
 // the block's own trades. The token's prices at those blocks are
 // recomputed too.
+//
+// Apply 处理一个区块，大致顺序：
+//  1. 应用可信预言机报价，从资产事实和交易数量中学习代币小数位；
+//  2. 若有代币刚获得小数位，回放此前挂起的交易（必要时从 ClickHouse 回填）；
+//  3. 应用 tick 快照、流动性区间与 swap，更新池子状态（储备 / 价格）；
+//  4. 对受影响的代币沿价格图重新定价（reprice）；
+//  5. 给每笔交易定方向、按收盘价估值、标记异常交易并聚合 K 线；
+//     小数位未知的交易被挂起（hold）等待后续区块；
+//  6. 清理过期的挂起交易，按 finalized 高度修剪撤销历史。
 func (processor *Processor) Apply(ctx context.Context, block *streamv1.BlockEvent) (model.BlockOutput, error) {
 	if err := ctx.Err(); err != nil {
 		return model.BlockOutput{}, err
@@ -284,6 +310,8 @@ func (processor *Processor) Apply(ctx context.Context, block *streamv1.BlockEven
 	return output, nil
 }
 
+// Revert 把所有 journal 回滚到 rollbackTo，并重建派生索引（挂起交易、tick 表）。
+// 回滚低于已修剪的历史时返回 ErrReorgTooDeep。
 func (processor *Processor) Revert(_ context.Context, rollbackTo int64) error {
 	if rollbackTo < processor.prunedThrough {
 		return fmt.Errorf("%w: rollback to %d, history starts after %d", ErrReorgTooDeep, rollbackTo, processor.prunedThrough)
@@ -437,6 +465,9 @@ func (processor *Processor) guard(height int64, token string, candidate tokenPri
 
 // reprice recomputes every touched token from its most liquid priced
 // counterpart. Each pass can extend prices one hop further from an anchor.
+//
+// reprice：最多迭代 MaxHops 轮，每轮让价格从锚定资产再向外传播一跳；某轮没有任何
+// 价格变化时提前结束。锚定资产（稳定币）不参与图定价，直接用预言机或 $1 锚定价。
 func (processor *Processor) reprice(height int64, output model.BlockOutput, touched map[string]struct{}) []model.TokenPrice {
 	tokens := make([]string, 0, len(touched))
 	for token := range touched {
@@ -582,6 +613,9 @@ const (
 
 // orient fixes a trade's base and quote. The caller sets the chain, block
 // and USD fields.
+//
+// orient 只处理两币交易：决定 base / quote 并换算数量；返回 orientLate 表示有代币
+// 小数位未知需要挂起，orientSkip 表示不是可定价的交易（如多币池或零数量）。
 func (processor *Processor) orient(height int64, source *streamv1.Trade) (model.Trade, orientStatus) {
 	var legs []*streamv1.Amount
 	for _, amount := range source.GetAmounts() {
@@ -670,6 +704,9 @@ func (processor *Processor) outlier(trade model.Trade) bool {
 
 // strays reports whether trade is an outlier against its base token's
 // reference price.
+//
+// strays：成交 USD 价与参考价之比超出 [1/(1+d), 1+d]（d = OutlierDeviation）即为
+// 异常交易。参考价所在的池子本身永远不算异常。
 func (processor *Processor) strays(trade model.Trade, reference tokenPrice, ok bool) bool {
 	limit := processor.options.OutlierDeviation
 	if !limit.IsPositive() || (trade.Side != model.SideBuy && trade.Side != model.SideSell) || !trade.PriceUSD.IsPositive() {
@@ -727,6 +764,9 @@ func reserveUSD(catalog asset.Catalog, state pool, token string, usd decimal.Dec
 // base token's when the quote reserve reaches CandleMinLiquidityUSD and the
 // swap is not an outlier. An outlier still joins its pool's candles, which
 // show that pool's own prices.
+//
+// candleSubjects：每笔已定价的 swap 一定进入池子 K 线；只有计价方储备达到
+// CandleMinLiquidityUSD 且不是异常交易时，才进入 base 代币的聚合 K 线。
 func (processor *Processor) candleSubjects(trade model.Trade, quoteLiquidity decimal.Decimal) []candleKey {
 	if trade.Side != model.SideBuy && trade.Side != model.SideSell {
 		return nil

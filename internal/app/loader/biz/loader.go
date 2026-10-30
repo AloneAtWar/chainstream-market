@@ -10,6 +10,11 @@
 // Blocks older than BatchLag are buffered and written together, up to
 // FlushRows facts or FlushInterval, so catching up does not create a part per
 // block. Newer blocks are written on their own commit.
+//
+// ch-loader 业务层：把链 topic 的原始事实（ERC-20 转账、未定方向的交易、预言机更新、
+// 资产与池子事实）原样写入 ClickHouse。ClickHouse 没有事务，所以先写事实、后写检查点
+// （同一个库）；崩溃重启后第一个区块会先删除其高度及以上的数据再插入，保证重放幂等。
+// 追块时（区块早于 BatchLag）缓冲后批量写入，接近链头的区块随各自的提交立即写入。
 package biz
 
 import (

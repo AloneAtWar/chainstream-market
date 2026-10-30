@@ -3,6 +3,10 @@
 // holder balances, the token and pool registry and the token rankings. Every
 // component creates them all, so services can start in any order; each keeps
 // its own queries.
+//
+// pgdb 包打开所有组件共享的 PostgreSQL 数据库，保存全部表的 DDL 以及多组件共用表的
+// 行模型与查询。各服务启动时在以 schema 名为 key 的 advisory lock 下建表，所以服务可以
+// 任意顺序同时启动。
 package pgdb
 
 import (

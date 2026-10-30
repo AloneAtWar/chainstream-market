@@ -1,5 +1,8 @@
 // Package transport holds the Kratos transport servers every command shares:
 // an HTTP server, and a Runner that runs a long-lived function as a server.
+//
+// transport 包是各命令共用的 Kratos 服务：HTTP 服务器，以及运行长期任务（每条链一个
+// 消费循环）的 Runner。
 package transport
 
 import (

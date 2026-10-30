@@ -18,6 +18,17 @@
 // Balances live only in the store, never in memory, and every change is
 // stored as an undoable delta, so a reorg subtracts what the reverted blocks
 // added.
+//
+// holder-indexer 业务层：根据链 topic 维护每个持有人的 ERC-20（及可选原生币）余额。
+//   - 播种：(代币, 持有人) 首次出现时，在该区块哈希处读取 balanceOf，已包含本块转账；
+//   - 累加：之后每个区块只叠加净转账；
+//   - 对账：每 ReconcileEvery 个块，挑最久未校验的持仓重新读 balanceOf 修正
+//     （处理 rebase、转账收费等不产生 Transfer 的余额变化）；
+//   - 原生币：不累加转账，而是对 native_touched 中的地址在区块哈希处重读余额，
+//     差值作为已校验的 delta；
+//   - 重组：所有变化都以可撤销 delta 存储，回滚时减去被回滚区块加上的部分。
+//
+// 余额只存在于 PostgreSQL，内存不随持有人数量增长。
 package biz
 
 import (
@@ -114,6 +125,7 @@ func (indexer *Indexer) Restore(ctx context.Context, chainID uint64) (chainsync.
 	return checkpoint, true, nil
 }
 
+// Apply 汇总本块净转账，为新持仓播种、按周期对账、刷新原生币余额，生成待提交的 delta。
 func (indexer *Indexer) Apply(ctx context.Context, block *streamv1.BlockEvent) error {
 	height, hash := block.GetBlockHeight(), block.GetBlockHash()
 	deltas := netTransfers(block.GetTransfers())

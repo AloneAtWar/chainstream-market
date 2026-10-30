@@ -1,6 +1,10 @@
 // Package chdb opens the ClickHouse database every component shares and
 // holds the DDL and retention of all its tables: market-engine's output and
 // ch-loader's raw facts. Each component keeps its own queries.
+//
+// chdb 包打开所有组件共享的 ClickHouse 数据库，保存全部表的 DDL（schema.go，手写而非
+// GORM 迁移，因为依赖 ClickHouse 引擎、排序键和 TTL）、保留期 TTL（retention.go），以及
+// 被多个组件读写的表的行模型与查询。
 package chdb
 
 import (
