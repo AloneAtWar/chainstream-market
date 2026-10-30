@@ -1,6 +1,9 @@
 // Package asset holds what every component knows about token addresses: the
 // per-chain Catalog of USD anchors, quote preferences and aliases, and the
 // metadata chainstream-evm publishes for each asset.
+//
+// asset 包是所有组件共享的代币地址知识：每条链的 Catalog（USD 锚定资产、计价优先级、
+// 别名，例如原生币伪地址映射到 wrapped 代币），以及 chainstream-evm 发布的资产元数据解析。
 package asset
 
 import (
@@ -14,6 +17,9 @@ import (
 const NativeAddress = "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
 
 // Catalog holds a chain's USD anchors and quote preferences.
+//
+// Catalog 保存一条链的 USD 锚定资产（价格图的起点，没有预言机报价时按 $1）和
+// 计价优先级（决定交易对中谁做 quote）。
 type Catalog struct {
 	anchors  map[string]decimal.Decimal
 	priority map[string]int

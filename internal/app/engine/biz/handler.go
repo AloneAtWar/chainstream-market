@@ -15,6 +15,8 @@ import (
 // BlockProcessor turns blocks into market output. The handler calls it in
 // height order, one chain per processor, and calls Revert before replacement
 // blocks after a reorg.
+//
+// BlockProcessor 把区块转换为市场输出；按高度顺序调用，重组时先调用 Revert 再交付替换块。
 type BlockProcessor interface {
 	Apply(ctx context.Context, block *streamv1.BlockEvent) (model.BlockOutput, error)
 	// Revert discards in-memory state derived from blocks above rollbackTo.
@@ -23,6 +25,8 @@ type BlockProcessor interface {
 
 // Stateful is a BlockProcessor whose state the handler persists through a
 // StateStore, so a restart resumes where it stopped.
+//
+// Stateful 是可以持久化状态的 BlockProcessor（state.driver=postgres 时使用）。
 type Stateful interface {
 	BlockProcessor
 	// Restore loads persisted state into a processor that has not applied
@@ -44,6 +48,9 @@ type CandleReverter interface {
 // after the output store has the change and before the checkpoint is
 // committed, so a failure stops the engine and the record is applied and
 // notified again after a restart. Notifications are therefore at least once.
+//
+// Notifier 把每条记录的变化推送给实时客户端（live push）。在输出已写入存储之后、
+// 提交检查点之前调用；失败会让引擎停止并在重启后重放，所以推送是“至少一次”。
 type Notifier interface {
 	NotifyBlock(ctx context.Context, output model.BlockOutput, finalizedHeight int64) error
 	NotifyRevert(ctx context.Context, revert model.Revert) error
@@ -62,6 +69,9 @@ func NewBlockOutput(block *streamv1.BlockEvent) model.BlockOutput {
 }
 
 // HandlerOptions configure the chainsync.Handler that runs a BlockProcessor.
+//
+// HandlerOptions 配置运行 BlockProcessor 的 chainsync.Handler：输出存储、检查点或
+// 状态存储、可选的实时推送。
 type HandlerOptions struct {
 	ChainID   uint64
 	Processor BlockProcessor
@@ -79,6 +89,9 @@ type HandlerOptions struct {
 }
 
 // processorHandler runs a BlockProcessor and writes its output to a store.
+//
+// processorHandler 实现 chainsync.Handler：Apply 调用 Processor 并写输出，Revert
+// 回滚 Processor 与输出，Commit 保存检查点（或状态增量 + 检查点）。
 type processorHandler struct {
 	processor   BlockProcessor
 	output      Output

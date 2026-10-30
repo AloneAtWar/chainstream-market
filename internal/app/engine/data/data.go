@@ -1,6 +1,10 @@
 // Package data is market-engine's data layer: the chain topics it reads, its
 // output in ClickHouse or memory, its state in PostgreSQL or memory, the raw
 // trades its backfills read back, and the live publisher.
+//
+// market-engine 的数据层：读取链 topic、输出存储（memory 或 ClickHouse）、状态存储
+// （memory 或 PostgreSQL，状态增量与检查点在同一事务提交）、回填用的历史数据读取，
+// 以及启动时解析 Chainlink proxy。
 package data
 
 import (

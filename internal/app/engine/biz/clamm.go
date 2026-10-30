@@ -66,6 +66,8 @@ func validateDepthBands(options *Options) error {
 // applySnapshots replaces the tick tables of the pools the block seeds. A
 // snapshot was read at the parent block, so the block's own ranges apply on
 // top of it.
+//
+// applySnapshots 用区块携带的 tick 快照替换池子的 tick 表（快照在父区块读取，本块的区间变化叠加在其上）。
 func (processor *Processor) applySnapshots(height int64, block *streamv1.BlockEvent, changed map[string]struct{}) {
 	for _, snapshot := range block.GetTickSnapshots() {
 		id := normalize(snapshot.GetPoolId())
@@ -109,6 +111,8 @@ func (processor *Processor) applySnapshots(height int64, block *streamv1.BlockEv
 }
 
 // applyRange adds a mint or burn to its seeded pool's tick table.
+//
+// applyRange 把 mint / burn 的区间变化加到 tick 表：下界 tick 加 delta，上界 tick 减 delta。
 func (processor *Processor) applyRange(height int64, trade *streamv1.Trade, changed map[string]struct{}) {
 	span := trade.GetLiquidityRange()
 	if span == nil {
@@ -135,6 +139,9 @@ func (processor *Processor) applyRange(height int64, trade *streamv1.Trade, chan
 
 // checkSwap moves a seeded pool to its post-swap price and checks the swap's
 // active liquidity against the table, marking the table stale on a mismatch.
+//
+// checkSwap 用 swap 后的价格移动池子，并校验事件给出的活跃流动性是否等于 tick 表中
+// 当前 tick 以下 liquidityNet 之和；不一致说明表已失真，标记为 stale，直到下次快照。
 func (processor *Processor) checkSwap(height int64, trade *streamv1.Trade, changed map[string]struct{}) {
 	state := trade.GetPoolState()
 	if trade.GetAction() != streamv1.TradeAction_TRADE_ACTION_SWAP || state.GetSqrtPriceX96() == "" {
@@ -229,6 +236,8 @@ func (processor *Processor) tableAmounts(id string, sqrtPriceX96 *big.Int) ([2]*
 
 // settleTables sets the token amounts and depth of every seeded pool whose
 // table or price the block changed, at the pool's latest price.
+//
+// settleTables 对本块中 tick 表或价格变化的池子，按最新价格重新计算储备和价格带深度。
 func (processor *Processor) settleTables(height int64, changed map[string]struct{}, touched map[string]struct{}) {
 	for _, id := range slices.Sorted(maps.Keys(changed)) {
 		state, exists := processor.pools.get(id)
@@ -292,6 +301,10 @@ func (processor *Processor) book(id string) (*tickBook, error) {
 // token1 below it, so the amounts are a suffix sum, a prefix sum and the one
 // range the price sits in. Amounts round down per range, as SegmentAmounts
 // does.
+//
+// tickBook 是为任意价格下快速查询币量而预处理的 tick 表：价格之上的区间只有 token0，
+// 之下只有 token1，因此币量 = 后缀和 + 前缀和 + 价格所在区间的拆分；每段向下取整，
+// 与 OMB 的 SegmentAmounts 一致。
 type tickBook struct {
 	distribution clamm.Distribution
 	// ticks are the initialized ticks in order, and liquidity[i] the active

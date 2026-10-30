@@ -15,6 +15,10 @@ const precision = 36
 var q96 = decimal.NewFromBigInt(new(big.Int).Lsh(big.NewInt(1), 96), 0)
 
 // pool is a two-token pool's latest observed state in human units.
+//
+// pool 是两币池最新的状态（已按小数位换算为人类单位）。储备来源：常数乘积池用
+// 事件中的 reserves_after；集中流动性池用 tick 表在当前价下实际持有的币量（没有可用
+// tick 表时只有价格没有储备，因此不能用来传播价格）；其它池子只用成交价，没有储备。
 type pool struct {
 	Tokens [2]string // pool token order, normalized
 	// reserves are the tokens the pool holds: its reserves for
@@ -39,6 +43,9 @@ type tableAmounts func(poolID string, sqrtPriceX96 *big.Int) ([2]*big.Int, bool)
 
 // observePool returns the pool state after trade. decimals reports known
 // token decimals. ok is false when the trade carries nothing new.
+//
+// observePool 根据一笔交易计算池子的新状态：优先使用储备，其次 sqrtPriceX96，
+// 最后退回到 swap 的成交价。两个代币的小数位必须都已知。
 func observePool(prev pool, trade *streamv1.Trade, decimals func(string) (uint32, bool), amountsAt tableAmounts) (pool, bool) {
 	amounts := trade.GetAmounts()
 	if len(amounts) != 2 {
@@ -95,6 +102,8 @@ func observePool(prev pool, trade *streamv1.Trade, decimals func(string) (uint32
 
 // concentratedPrice parses a Uniswap v3 style sqrtPriceX96 and converts it to
 // a human price of token1 per token0.
+//
+// concentratedPrice：price = (sqrtPriceX96 / 2^96)^2 × 10^(d0-d1)，即 token1/token0 的人类单位价格。
 func concentratedPrice(sqrtPriceX96 string, d0, d1 uint32) (*big.Int, decimal.Decimal, bool) {
 	sqrtRaw, ok := new(big.Int).SetString(sqrtPriceX96, 10)
 	if !ok || sqrtRaw.Sign() <= 0 {

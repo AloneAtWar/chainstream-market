@@ -3,6 +3,10 @@
 // with the abigen bindings in internal/pkg/contract; this package only adds
 // the indexers' failure rules and metrics on top of the SDK's batching,
 // retries and multicall aggregation.
+//
+// rpc 包通过 oh-my-blockchain 的 EVM SDK 读取合约状态（批量、重试、multicall 聚合）：
+// 锁定区块哈希的 balanceOf（EIP-1898）、最新区块上的调用，并加上索引器的失败规则与指标。
+// calldata 一律用 abigen 绑定编解码，不手写 selector。
 package rpc
 
 import (

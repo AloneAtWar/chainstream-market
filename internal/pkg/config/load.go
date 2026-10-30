@@ -2,6 +2,10 @@
 // sections more than one of them reads. A component defines its own
 // protobuf config message, embedding the sections of common.proto that it
 // needs, and loads it with Load.
+//
+// config 包加载每个组件的配置（Kratos config，支持 ${NAME} / ${NAME:default} 环境变量
+// 占位），并定义多个组件共用的配置段（common.proto）：链数据源、Kafka、数据库、实时推送、
+// 指标和链列表。
 package config
 
 import (

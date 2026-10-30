@@ -17,6 +17,7 @@ import (
 	"github.com/AloneAtWar/chainstream-market/internal/pkg/asset"
 )
 
+// HubOptions 对应 market-api 的 live.* 配置：K 线合并发送间隔、慢客户端缓冲上限、订阅数上限、允许的跨域来源。
 type HubOptions struct {
 	// Feed delivers what market-engine publishes.
 	Feed Feed
@@ -43,6 +44,10 @@ type HubOptions struct {
 // are coalesced and sent every Throttle. A revert first sends whatever is
 // coalesced, then the revert and the reset of each affected series, so a
 // client that applies messages in order always ends in the corrected state.
+//
+// Hub 把 live topic 按频道扇出给 WebSocket 客户端：交易随区块到达立即发送；K 线桶与链头
+// 在 Throttle 间隔内合并、只发最新值；遇到 revert 先把已合并的内容发出，再发 revert 和
+// 各受影响序列的 reset，因此按序应用消息的客户端最终状态总是正确的。
 type Hub struct {
 	options   HubOptions
 	logger    *slog.Logger
@@ -330,6 +335,8 @@ func (hub *Hub) unsubscribe(client *Client, channel string, chainID uint64) {
 }
 
 // Client is one connection's subscriptions and outgoing queue.
+//
+// Client 是一个 WebSocket 连接的订阅状态；发送缓冲满（客户端太慢）时直接断开，而不是悄悄丢弃修正消息。
 type Client struct {
 	hub  *Hub
 	send chan []byte

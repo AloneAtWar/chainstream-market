@@ -1,6 +1,10 @@
 // Package chainsync applies one chainstream-evm chain topic, in offset order,
 // to a Handler: it checks continuity, handles reverts and redeliveries, and
 // commits a checkpoint after every record.
+//
+// chainsync 包按 offset 顺序把一条 chainstream-evm 链 topic 应用到 Handler：
+// 校验区块连续性、处理 revert 与重复投递，并在每条记录后提交检查点。
+// market-engine、holder-indexer、market-registry、ch-loader 共用这一顺序应用循环。
 package chainsync
 
 import (
@@ -30,6 +34,7 @@ var (
 // SourceFactory opens the chain topic at a start offset.
 type SourceFactory func(start int64) (source.Source, error)
 
+// Options 配置一条链的消费引擎：链 ID、打开 topic 的工厂（kafka 或 file）、Handler。
 type Options struct {
 	ChainID uint64
 	Chain   string
@@ -42,6 +47,9 @@ type Options struct {
 
 // Engine consumes one chain topic. Each record is applied and committed
 // before the next, so a restart resumes at the first uncommitted record.
+//
+// Engine 消费一条链 topic，每条记录应用并提交后才处理下一条，所以重启后会从第一条
+// 未提交的记录继续。
 type Engine struct {
 	chainID uint64
 	chain   string
@@ -112,6 +120,8 @@ func (engine *Engine) Run(ctx context.Context) error {
 	}
 }
 
+// handle 处理一条记录：offset 不大于检查点的直接跳过；revert 交给 revert，区块交给
+// apply；最后调用 Handler.Commit 保存新的检查点并更新指标。
 func (engine *Engine) handle(ctx context.Context, checkpoint Checkpoint, message source.Message) (Checkpoint, error) {
 	if message.Offset <= checkpoint.Offset {
 		return checkpoint, nil
@@ -154,6 +164,8 @@ func (engine *Engine) handle(ctx context.Context, checkpoint Checkpoint, message
 	return next, nil
 }
 
+// revert：revert 可能被重复投递，回滚高度不低于已应用高度时无事可做；否则调用
+// Handler.Revert，并把检查点高度降到 rollback_to、清空哈希（下一个块不再校验 parent）。
 func (engine *Engine) revert(ctx context.Context, checkpoint Checkpoint, revert *streamv1.BlockRevert, next *Checkpoint) error {
 	if revert.GetChainId() != engine.chainID {
 		return fmt.Errorf("%w: revert chain %d", ErrChainMismatch, revert.GetChainId())
@@ -174,6 +186,8 @@ func (engine *Engine) revert(ctx context.Context, checkpoint Checkpoint, revert 
 	return nil
 }
 
+// apply 校验连续性：高度不大于已应用高度视为重复投递并跳过；跳高度或 parent hash
+// 对不上（且之前没有 revert）说明数据异常，返回错误让引擎停止，而不是错误地继续。
 func (engine *Engine) apply(ctx context.Context, checkpoint Checkpoint, block *streamv1.BlockEvent, next *Checkpoint) error {
 	if block.GetChainId() != engine.chainID {
 		return fmt.Errorf("%w: block chain %d", ErrChainMismatch, block.GetChainId())

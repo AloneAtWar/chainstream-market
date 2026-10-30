@@ -12,6 +12,10 @@ import (
 //
 // A journal also tracks what changed since the last take, so the engine can
 // persist each record's changes instead of the whole state.
+//
+// journal 是带撤销日志的 map：每次写入都按区块高度记下旧值，重组时可回滚到任意
+// 保留高度。它同时记录自上次 take 以来的变化（dirty / pending），引擎每处理完一条
+// 记录只持久化增量，而不是整个状态。
 type journal[K comparable, V any] struct {
 	codec  keyCodec[K]
 	values map[K]V
@@ -77,6 +81,8 @@ func (j *journal[K, V]) remove(height int64, key K) {
 }
 
 // revert undoes every write made above height.
+//
+// revert 从后往前撤销所有高于 height 的写入，恢复旧值或删除新建的 key。
 func (j *journal[K, V]) revert(height int64) {
 	index := len(j.undo) - 1
 	for ; index >= 0 && j.undo[index].Height > height; index-- {
@@ -107,6 +113,8 @@ func (j *journal[K, V]) restored(height int64) map[K]undoEntry[K, V] {
 
 // prune forgets undo entries at or below height; those writes become
 // permanent.
+//
+// prune 丢弃 height 及以下的撤销记录（通常是 finalized 高度），这些写入从此不可撤销。
 func (j *journal[K, V]) prune(height int64) {
 	keep := sort.Search(len(j.undo), func(index int) bool { return j.undo[index].Height > height })
 	if keep == 0 {
@@ -118,6 +126,8 @@ func (j *journal[K, V]) prune(height int64) {
 // take returns the changes since the last take and starts a new change set.
 // Only the first undo entry per key and height is kept: reverting to a block
 // boundary restores the value from before that block's first write.
+//
+// take 把自上次以来的变化追加到 delta，供 StateStore 原子提交。
 func (j *journal[K, V]) take(delta *StateDelta) error {
 	for key := range j.dirty {
 		entry := StateEntry{Kind: j.codec.kind, Key: j.codec.encode(key)}
