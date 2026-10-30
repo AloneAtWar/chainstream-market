@@ -153,6 +153,9 @@ type Processor struct {
 	// tokenBalancePools and derivedPools index them by canonical token, pool
 	// token and token priced by rate, and only grow; balanceEdges caches what
 	// each record implies per token pair. None of the three is persisted.
+	//
+	// 	// balances 记录 Curve / Balancer 池最新的余额快照（记入日志、会持久化）；
+	// 	// tokenBalancePools、derivedPools 是只增不减的索引，balanceEdges 是边缓存，三者都不持久化，恢复或回滚后重建。
 	balances          *journal[string, model.BalancePool]
 	tokenBalancePools map[string][]string
 	derivedPools      map[string][]string
@@ -521,6 +524,9 @@ func (processor *Processor) reprice(height int64, output model.BlockOutput, touc
 
 // bestQuote prices token through its best pool, see quoteCandidate.beats.
 // A rate reported for the token itself wins over every pool.
+//
+// bestQuote 选出代币的定价池：池子报告的汇率（derivedQuote）优先；否则两币池和余额池的每个代币对
+// 一起竞争，按 quoteCandidate.beats 的顺序（深度优先）取最优。
 func (processor *Processor) bestQuote(height int64, token string) (tokenPrice, bool) {
 	if derived, ok := processor.derivedQuote(height, token); ok {
 		return derived, true

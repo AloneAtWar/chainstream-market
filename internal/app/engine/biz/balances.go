@@ -19,12 +19,25 @@ import (
 // balances and curve parameters at the end of the block and publishes them.
 // Each snapshot replaces the pool's record; prices and depths between every
 // pair of its tokens follow from the record alone.
+//
+// Curve / Balancer 池最多有八个币，管理费、Balancer V3 聚合费与收益费、代币汇率都不会出现在事件里，
+// 因此无法靠交易累加余额。chainstream-evm 在区块末读取每个本块有事件的池子的真实余额和曲线参数并发布；
+// engine 每收到一个快照就替换该池的记录（BalancePool），池内任意两币之间的价格与深度都只由这条记录推出：
+//   - stable：按汇率缩放余额后求 StableSwap 不变量，得到边际价格，深度用不变量二分求解；
+//   - weighted：价格 = (B_out / w_out) / (B_in / w_in)，深度有闭式解；
+//   - crypto：用 get_dy 报价阶梯第一档（扣除手续费）作价格，深度在阶梯上插值；
+//   - unknown：只用该交易对最近一笔 swap 的成交价，没有深度。
 
 // wad is the 1e18 scale of fees, weights and rates.
+//
+// wad 是费率、权重、汇率使用的 1e18 缩放。
 var wad = new(big.Int).Exp(big.NewInt(10), big.NewInt(18), nil)
 
 // applyBalances replaces the records of the pools the block snapshots and
 // marks their tokens, and the tokens they price by rate, for repricing.
+//
+// applyBalances 用本块的余额快照替换池子记录（记入日志，可回滚），快照没带报价阶梯时沿用上一次的；
+// 然后把池内代币和按汇率定价的代币标记为本块需要重新定价。
 func (processor *Processor) applyBalances(height int64, block *streamv1.BlockEvent, touched map[string]struct{}) {
 	for _, snapshot := range block.GetPoolBalances() {
 		id := normalize(snapshot.GetPoolId())
@@ -78,6 +91,8 @@ func (processor *Processor) applyBalances(height int64, block *streamv1.BlockEve
 
 // indexBalancePool lists a pool under each of its tokens and each token it
 // prices by rate. The indexes only grow; lookups skip stale entries.
+//
+// indexBalancePool 按代币建立索引；索引只增不减，查询时跳过已失效的条目。
 func (processor *Processor) indexBalancePool(id string, record model.BalancePool) {
 	for _, member := range record.Tokens {
 		token := processor.options.Catalog.Canonical(member)
@@ -94,6 +109,8 @@ func (processor *Processor) indexBalancePool(id string, record model.BalancePool
 }
 
 // rebuildBalances indexes the balance journal after a restore or revert.
+//
+// rebuildBalances 在恢复或回滚后从日志重建索引，并清空边缓存。
 func (processor *Processor) rebuildBalances() {
 	processor.tokenBalancePools = make(map[string][]string)
 	processor.derivedPools = make(map[string][]string)
@@ -104,6 +121,8 @@ func (processor *Processor) rebuildBalances() {
 }
 
 // poolEdges caches what a pool record implies for each ordered token pair.
+//
+// poolEdges 缓存一条池子记录推出的每个有序代币对的结果；记录被替换时整体丢弃。
 type poolEdges struct {
 	// xp and d are a stable pool's scaled balances and invariant.
 	xp []*big.Int
@@ -114,6 +133,8 @@ type poolEdges struct {
 
 // balanceEdge is what a pool says about selling Tokens[sold] for
 // Tokens[bought], in human units.
+//
+// balanceEdge 是卖出 Tokens[sold]、买入 Tokens[bought] 这条边的价格和价格带内深度（人类单位）。
 type balanceEdge struct {
 	// price is one sold token in bought tokens.
 	price    decimal.Decimal
@@ -125,6 +146,8 @@ type balanceEdge struct {
 }
 
 // balanceOf returns a pool token's balance in human units.
+//
+// balanceOf 把池内某个代币的原始余额换算为人类单位，小数位未知时返回 false。
 func (processor *Processor) balanceOf(record model.BalancePool, position int) (decimal.Decimal, bool) {
 	decimals, ok := processor.tokenDecimals(record.Tokens[position])
 	raw, okRaw := parseRaw(record.Balances[position])
@@ -135,6 +158,8 @@ func (processor *Processor) balanceOf(record model.BalancePool, position int) (d
 }
 
 // tokenDecimals returns a token's decimals; the native coin always has 18.
+//
+// tokenDecimals 取已学到的小数位，原生币固定为 18。
 func (processor *Processor) tokenDecimals(token string) (uint32, bool) {
 	if decimals, ok := processor.decimals.get(token); ok {
 		return decimals, true
@@ -147,6 +172,8 @@ func (processor *Processor) tokenDecimals(token string) (uint32, bool) {
 
 // edge returns what pool id says about selling Tokens[sold] for
 // Tokens[bought], computing it once per record.
+//
+// edge 按记录懒计算并缓存某条边。
 func (processor *Processor) edge(id string, record model.BalancePool, sold, bought int) balanceEdge {
 	cache := processor.balanceEdges[id]
 	if cache == nil {
@@ -165,6 +192,7 @@ func (processor *Processor) edge(id string, record model.BalancePool, sold, boug
 	return value
 }
 
+// computeEdge 按曲线族计算一条边的价格与深度，各分支公式见文件开头的说明。
 func (processor *Processor) computeEdge(record model.BalancePool, cache *poolEdges, sold, bought int) balanceEdge {
 	var result balanceEdge
 	dSold, okSold := processor.tokenDecimals(record.Tokens[sold])
@@ -249,6 +277,8 @@ func (processor *Processor) computeEdge(record model.BalancePool, cache *poolEdg
 
 // stableInvariant scales a stable pool's balances by its rates and returns
 // them with their invariant, or nil when the record cannot give one.
+//
+// stableInvariant：xp = balance × rate / 1e18，再求不变量 D。
 func stableInvariant(record model.BalancePool) ([]*big.Int, *big.Int) {
 	amp, ok := stableAmp(record)
 	if !ok || len(record.Rates) != len(record.Tokens) {
@@ -270,6 +300,7 @@ func stableInvariant(record model.BalancePool) ([]*big.Int, *big.Int) {
 	return xp, d
 }
 
+// stableAmp 解析放大系数 A 及其精度。
 func stableAmp(record model.BalancePool) (stableswap.Amp, bool) {
 	value, okValue := parseRaw(record.Amp)
 	precision, okPrecision := parseRaw(record.AmpPrecision)
@@ -282,6 +313,9 @@ func stableAmp(record model.BalancePool) (stableswap.Amp, bool) {
 // derivedQuote prices token by the rate a pool reports for it against the
 // cheapest of its priced underlyings. A rate is exact, so it is preferred to
 // any market price.
+//
+// derivedQuote 用池子报告的汇率给代币定价（对比其已定价底层资产中最便宜的一个）。
+// 汇率是精确值，所以优先于任何市场价格。
 func (processor *Processor) derivedQuote(height int64, token string) (tokenPrice, bool) {
 	var best tokenPrice
 	found := false
@@ -334,6 +368,8 @@ func (processor *Processor) derivedQuote(height int64, token string) (tokenPrice
 
 // balanceQuote lets every token pair of the balance pools holding token
 // compete with best.
+//
+// balanceQuote 让持有该代币的余额池里每个代币对都作为候选，与 bestQuote 已选出的池子按 beats 比较。
 func (processor *Processor) balanceQuote(height int64, token string, best quoteCandidate, found bool) (quoteCandidate, bool) {
 	for _, id := range processor.tokenBalancePools[token] {
 		record, ok := processor.balances.get(id)
@@ -383,6 +419,8 @@ func (processor *Processor) balanceQuote(height int64, token string, best quoteC
 
 // balancePrice returns one Tokens[sold] in Tokens[bought] from the pool's
 // curve, or from its latest swap of that pair when the curve gives none.
+//
+// balancePrice 优先用曲线算出的价格；曲线给不出时退回到该交易对最近一笔 swap 的成交价。
 func (processor *Processor) balancePrice(id string, record model.BalancePool, sold, bought int) (decimal.Decimal, bool) {
 	if edge := processor.edge(id, record, sold, bought); edge.hasPrice {
 		return edge.price, true
@@ -402,6 +440,8 @@ func (processor *Processor) balancePrice(id string, record model.BalancePool, so
 
 // feeTier converts the 1e18 fee into hundredths of a basis point, with
 // model.DynamicFeeFlag for a dynamic fee.
+//
+// feeTier 把 1e18 缩放的费率换成百分之一基点（与 Uniswap 费率档同单位），动态费率返回 DynamicFeeFlag。
 func feeTier(record model.BalancePool) uint32 {
 	if record.DynamicFee {
 		return model.DynamicFeeFlag
@@ -419,6 +459,8 @@ func feeTier(record model.BalancePool) uint32 {
 
 // ladderOf returns the pool's quotes for selling Tokens[sold] for
 // Tokens[bought].
+//
+// ladderOf 取卖出 sold、买入 bought 方向的报价阶梯，至少两档且全部为正才可用。
 func ladderOf(record model.BalancePool, sold, bought int) ([]*big.Int, []*big.Int, bool) {
 	for _, quotes := range record.Ladders {
 		if quotes.In != sold || quotes.Out != bought || len(quotes.Amounts) < 2 || len(quotes.Amounts) != len(quotes.Quotes) {
@@ -438,6 +480,7 @@ func ladderOf(record model.BalancePool, sold, bought int) ([]*big.Int, []*big.In
 	return nil, nil, false
 }
 
+// parseRaw 解析非负十进制整数字符串。
 func parseRaw(value string) (*big.Int, bool) {
 	if value == "" {
 		return nil, false
@@ -449,6 +492,7 @@ func parseRaw(value string) (*big.Int, bool) {
 	return parsed, true
 }
 
+// at 是越界安全的切片取值。
 func at(values []string, index int) string {
 	if index < 0 || index >= len(values) {
 		return ""
