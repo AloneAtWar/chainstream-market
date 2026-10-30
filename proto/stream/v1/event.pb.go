@@ -308,6 +308,11 @@ type BlockEvent struct {
 	// the parent block, before this block's trades. Consumers load a snapshot
 	// and then apply this block's liquidity_range trades on top of it.
 	TickSnapshots []*PoolTickSnapshot `protobuf:"bytes,18,rep,name=tick_snapshots,json=tickSnapshots,proto3" json:"tick_snapshots,omitempty"`
+	// pool_balances are the real balances and curve parameters of the
+	// multi-token pools (Curve, Balancer) with any event in this block, read at
+	// this block's hash, after all of its events. Consumers replace whatever
+	// they kept for each pool.
+	PoolBalances  []*PoolBalanceSnapshot `protobuf:"bytes,19,rep,name=pool_balances,json=poolBalances,proto3" json:"pool_balances,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -454,6 +459,329 @@ func (x *BlockEvent) GetTickSnapshots() []*PoolTickSnapshot {
 	return nil
 }
 
+func (x *BlockEvent) GetPoolBalances() []*PoolBalanceSnapshot {
+	if x != nil {
+		return x.PoolBalances
+	}
+	return nil
+}
+
+// PoolBalanceSnapshot is a multi-token pool's real balances and curve
+// parameters at snapshot_height. Integers are decimal strings; every repeated
+// field that is set is aligned with tokens.
+type PoolBalanceSnapshot struct {
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	PoolId         string                 `protobuf:"bytes,1,opt,name=pool_id,json=poolId,proto3" json:"pool_id,omitempty"`
+	Protocol       string                 `protobuf:"bytes,2,opt,name=protocol,proto3" json:"protocol,omitempty"`
+	PoolAddress    string                 `protobuf:"bytes,3,opt,name=pool_address,json=poolAddress,proto3" json:"pool_address,omitempty"`
+	SnapshotHeight int64                  `protobuf:"varint,4,opt,name=snapshot_height,json=snapshotHeight,proto3" json:"snapshot_height,omitempty"`
+	// tokens exclude a composable pool's own pre-minted BPT.
+	Tokens []string `protobuf:"bytes,5,rep,name=tokens,proto3" json:"tokens,omitempty"`
+	// balances are raw token units, without unclaimed admin or protocol fees.
+	Balances []string `protobuf:"bytes,6,rep,name=balances,proto3" json:"balances,omitempty"`
+	// curve is weighted, stable, crypto or unknown. Unknown pools carry
+	// balances only, and reason says why.
+	Curve  string `protobuf:"bytes,7,opt,name=curve,proto3" json:"curve,omitempty"`
+	Reason string `protobuf:"bytes,8,opt,name=reason,proto3" json:"reason,omitempty"`
+	// fee is the swap fee scaled by 1e18; dynamic_fee marks fees that move
+	// with pool state or a hook.
+	Fee        string `protobuf:"bytes,9,opt,name=fee,proto3" json:"fee,omitempty"`
+	DynamicFee bool   `protobuf:"varint,10,opt,name=dynamic_fee,json=dynamicFee,proto3" json:"dynamic_fee,omitempty"`
+	// weights are a weighted pool's normalized weights scaled by 1e18.
+	Weights []string `protobuf:"bytes,11,rep,name=weights,proto3" json:"weights,omitempty"`
+	// amp is a stable pool's amplification times amp_precision (Curve
+	// A_precise 100, legacy A() 1, Balancer 1000).
+	Amp          string `protobuf:"bytes,12,opt,name=amp,proto3" json:"amp,omitempty"`
+	AmpPrecision string `protobuf:"bytes,13,opt,name=amp_precision,json=ampPrecision,proto3" json:"amp_precision,omitempty"`
+	// rates scale balances to the invariant's precision:
+	// xp = balance × rate / 1e18.
+	Rates []string `protobuf:"bytes,14,rep,name=rates,proto3" json:"rates,omitempty"`
+	// ladders are on-chain quotes for pools whose depth is not computed
+	// locally (Curve crypto pools). They are refreshed at most every few
+	// blocks, so a snapshot without them keeps the previous ladders.
+	Ladders []*QuoteLadder `protobuf:"bytes,15,rep,name=ladders,proto3" json:"ladders,omitempty"`
+	// derived values pool tokens that wrap other tokens, such as a Curve base
+	// pool LP or a Balancer V3 ERC4626 token.
+	Derived       []*DerivedToken `protobuf:"bytes,16,rep,name=derived,proto3" json:"derived,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *PoolBalanceSnapshot) Reset() {
+	*x = PoolBalanceSnapshot{}
+	mi := &file_stream_v1_event_proto_msgTypes[3]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *PoolBalanceSnapshot) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*PoolBalanceSnapshot) ProtoMessage() {}
+
+func (x *PoolBalanceSnapshot) ProtoReflect() protoreflect.Message {
+	mi := &file_stream_v1_event_proto_msgTypes[3]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use PoolBalanceSnapshot.ProtoReflect.Descriptor instead.
+func (*PoolBalanceSnapshot) Descriptor() ([]byte, []int) {
+	return file_stream_v1_event_proto_rawDescGZIP(), []int{3}
+}
+
+func (x *PoolBalanceSnapshot) GetPoolId() string {
+	if x != nil {
+		return x.PoolId
+	}
+	return ""
+}
+
+func (x *PoolBalanceSnapshot) GetProtocol() string {
+	if x != nil {
+		return x.Protocol
+	}
+	return ""
+}
+
+func (x *PoolBalanceSnapshot) GetPoolAddress() string {
+	if x != nil {
+		return x.PoolAddress
+	}
+	return ""
+}
+
+func (x *PoolBalanceSnapshot) GetSnapshotHeight() int64 {
+	if x != nil {
+		return x.SnapshotHeight
+	}
+	return 0
+}
+
+func (x *PoolBalanceSnapshot) GetTokens() []string {
+	if x != nil {
+		return x.Tokens
+	}
+	return nil
+}
+
+func (x *PoolBalanceSnapshot) GetBalances() []string {
+	if x != nil {
+		return x.Balances
+	}
+	return nil
+}
+
+func (x *PoolBalanceSnapshot) GetCurve() string {
+	if x != nil {
+		return x.Curve
+	}
+	return ""
+}
+
+func (x *PoolBalanceSnapshot) GetReason() string {
+	if x != nil {
+		return x.Reason
+	}
+	return ""
+}
+
+func (x *PoolBalanceSnapshot) GetFee() string {
+	if x != nil {
+		return x.Fee
+	}
+	return ""
+}
+
+func (x *PoolBalanceSnapshot) GetDynamicFee() bool {
+	if x != nil {
+		return x.DynamicFee
+	}
+	return false
+}
+
+func (x *PoolBalanceSnapshot) GetWeights() []string {
+	if x != nil {
+		return x.Weights
+	}
+	return nil
+}
+
+func (x *PoolBalanceSnapshot) GetAmp() string {
+	if x != nil {
+		return x.Amp
+	}
+	return ""
+}
+
+func (x *PoolBalanceSnapshot) GetAmpPrecision() string {
+	if x != nil {
+		return x.AmpPrecision
+	}
+	return ""
+}
+
+func (x *PoolBalanceSnapshot) GetRates() []string {
+	if x != nil {
+		return x.Rates
+	}
+	return nil
+}
+
+func (x *PoolBalanceSnapshot) GetLadders() []*QuoteLadder {
+	if x != nil {
+		return x.Ladders
+	}
+	return nil
+}
+
+func (x *PoolBalanceSnapshot) GetDerived() []*DerivedToken {
+	if x != nil {
+		return x.Derived
+	}
+	return nil
+}
+
+// QuoteLadder is the pool's quoted output of tokens[token_out] for each
+// amount of tokens[token_in], with amounts strictly increasing.
+type QuoteLadder struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	TokenIn       uint32                 `protobuf:"varint,1,opt,name=token_in,json=tokenIn,proto3" json:"token_in,omitempty"`
+	TokenOut      uint32                 `protobuf:"varint,2,opt,name=token_out,json=tokenOut,proto3" json:"token_out,omitempty"`
+	Amounts       []string               `protobuf:"bytes,3,rep,name=amounts,proto3" json:"amounts,omitempty"`
+	Quotes        []string               `protobuf:"bytes,4,rep,name=quotes,proto3" json:"quotes,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *QuoteLadder) Reset() {
+	*x = QuoteLadder{}
+	mi := &file_stream_v1_event_proto_msgTypes[4]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *QuoteLadder) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*QuoteLadder) ProtoMessage() {}
+
+func (x *QuoteLadder) ProtoReflect() protoreflect.Message {
+	mi := &file_stream_v1_event_proto_msgTypes[4]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use QuoteLadder.ProtoReflect.Descriptor instead.
+func (*QuoteLadder) Descriptor() ([]byte, []int) {
+	return file_stream_v1_event_proto_rawDescGZIP(), []int{4}
+}
+
+func (x *QuoteLadder) GetTokenIn() uint32 {
+	if x != nil {
+		return x.TokenIn
+	}
+	return 0
+}
+
+func (x *QuoteLadder) GetTokenOut() uint32 {
+	if x != nil {
+		return x.TokenOut
+	}
+	return 0
+}
+
+func (x *QuoteLadder) GetAmounts() []string {
+	if x != nil {
+		return x.Amounts
+	}
+	return nil
+}
+
+func (x *QuoteLadder) GetQuotes() []string {
+	if x != nil {
+		return x.Quotes
+	}
+	return nil
+}
+
+// DerivedToken values one whole token (10^decimals raw units) as rate / 1e18
+// whole units of an underlying. A token with several underlyings, such as a
+// Curve LP, is worth rate / 1e18 of the cheapest of them.
+type DerivedToken struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Token         string                 `protobuf:"bytes,1,opt,name=token,proto3" json:"token,omitempty"`
+	Underlyings   []string               `protobuf:"bytes,2,rep,name=underlyings,proto3" json:"underlyings,omitempty"`
+	Rate          string                 `protobuf:"bytes,3,opt,name=rate,proto3" json:"rate,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *DerivedToken) Reset() {
+	*x = DerivedToken{}
+	mi := &file_stream_v1_event_proto_msgTypes[5]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DerivedToken) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DerivedToken) ProtoMessage() {}
+
+func (x *DerivedToken) ProtoReflect() protoreflect.Message {
+	mi := &file_stream_v1_event_proto_msgTypes[5]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DerivedToken.ProtoReflect.Descriptor instead.
+func (*DerivedToken) Descriptor() ([]byte, []int) {
+	return file_stream_v1_event_proto_rawDescGZIP(), []int{5}
+}
+
+func (x *DerivedToken) GetToken() string {
+	if x != nil {
+		return x.Token
+	}
+	return ""
+}
+
+func (x *DerivedToken) GetUnderlyings() []string {
+	if x != nil {
+		return x.Underlyings
+	}
+	return nil
+}
+
+func (x *DerivedToken) GetRate() string {
+	if x != nil {
+		return x.Rate
+	}
+	return ""
+}
+
 // PoolTickSnapshot is a concentrated-liquidity pool's initialized ticks and
 // price at snapshot_height. A consumer replaces any table it kept for the pool.
 type PoolTickSnapshot struct {
@@ -478,7 +806,7 @@ type PoolTickSnapshot struct {
 
 func (x *PoolTickSnapshot) Reset() {
 	*x = PoolTickSnapshot{}
-	mi := &file_stream_v1_event_proto_msgTypes[3]
+	mi := &file_stream_v1_event_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -490,7 +818,7 @@ func (x *PoolTickSnapshot) String() string {
 func (*PoolTickSnapshot) ProtoMessage() {}
 
 func (x *PoolTickSnapshot) ProtoReflect() protoreflect.Message {
-	mi := &file_stream_v1_event_proto_msgTypes[3]
+	mi := &file_stream_v1_event_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -503,7 +831,7 @@ func (x *PoolTickSnapshot) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PoolTickSnapshot.ProtoReflect.Descriptor instead.
 func (*PoolTickSnapshot) Descriptor() ([]byte, []int) {
-	return file_stream_v1_event_proto_rawDescGZIP(), []int{3}
+	return file_stream_v1_event_proto_rawDescGZIP(), []int{6}
 }
 
 func (x *PoolTickSnapshot) GetPoolId() string {
@@ -567,7 +895,7 @@ type TickNet struct {
 
 func (x *TickNet) Reset() {
 	*x = TickNet{}
-	mi := &file_stream_v1_event_proto_msgTypes[4]
+	mi := &file_stream_v1_event_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -579,7 +907,7 @@ func (x *TickNet) String() string {
 func (*TickNet) ProtoMessage() {}
 
 func (x *TickNet) ProtoReflect() protoreflect.Message {
-	mi := &file_stream_v1_event_proto_msgTypes[4]
+	mi := &file_stream_v1_event_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -592,7 +920,7 @@ func (x *TickNet) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TickNet.ProtoReflect.Descriptor instead.
 func (*TickNet) Descriptor() ([]byte, []int) {
-	return file_stream_v1_event_proto_rawDescGZIP(), []int{4}
+	return file_stream_v1_event_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *TickNet) GetTick() int32 {
@@ -624,7 +952,7 @@ type LiquidityRange struct {
 
 func (x *LiquidityRange) Reset() {
 	*x = LiquidityRange{}
-	mi := &file_stream_v1_event_proto_msgTypes[5]
+	mi := &file_stream_v1_event_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -636,7 +964,7 @@ func (x *LiquidityRange) String() string {
 func (*LiquidityRange) ProtoMessage() {}
 
 func (x *LiquidityRange) ProtoReflect() protoreflect.Message {
-	mi := &file_stream_v1_event_proto_msgTypes[5]
+	mi := &file_stream_v1_event_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -649,7 +977,7 @@ func (x *LiquidityRange) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use LiquidityRange.ProtoReflect.Descriptor instead.
 func (*LiquidityRange) Descriptor() ([]byte, []int) {
-	return file_stream_v1_event_proto_rawDescGZIP(), []int{5}
+	return file_stream_v1_event_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *LiquidityRange) GetTickLower() int32 {
@@ -690,7 +1018,7 @@ type NativeTransfer struct {
 
 func (x *NativeTransfer) Reset() {
 	*x = NativeTransfer{}
-	mi := &file_stream_v1_event_proto_msgTypes[6]
+	mi := &file_stream_v1_event_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -702,7 +1030,7 @@ func (x *NativeTransfer) String() string {
 func (*NativeTransfer) ProtoMessage() {}
 
 func (x *NativeTransfer) ProtoReflect() protoreflect.Message {
-	mi := &file_stream_v1_event_proto_msgTypes[6]
+	mi := &file_stream_v1_event_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -715,7 +1043,7 @@ func (x *NativeTransfer) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use NativeTransfer.ProtoReflect.Descriptor instead.
 func (*NativeTransfer) Descriptor() ([]byte, []int) {
-	return file_stream_v1_event_proto_rawDescGZIP(), []int{6}
+	return file_stream_v1_event_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *NativeTransfer) GetFrom() string {
@@ -778,7 +1106,7 @@ type OracleUpdate struct {
 
 func (x *OracleUpdate) Reset() {
 	*x = OracleUpdate{}
-	mi := &file_stream_v1_event_proto_msgTypes[7]
+	mi := &file_stream_v1_event_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -790,7 +1118,7 @@ func (x *OracleUpdate) String() string {
 func (*OracleUpdate) ProtoMessage() {}
 
 func (x *OracleUpdate) ProtoReflect() protoreflect.Message {
-	mi := &file_stream_v1_event_proto_msgTypes[7]
+	mi := &file_stream_v1_event_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -803,7 +1131,7 @@ func (x *OracleUpdate) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use OracleUpdate.ProtoReflect.Descriptor instead.
 func (*OracleUpdate) Descriptor() ([]byte, []int) {
-	return file_stream_v1_event_proto_rawDescGZIP(), []int{7}
+	return file_stream_v1_event_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *OracleUpdate) GetFeed() string {
@@ -881,7 +1209,7 @@ type Trade struct {
 
 func (x *Trade) Reset() {
 	*x = Trade{}
-	mi := &file_stream_v1_event_proto_msgTypes[8]
+	mi := &file_stream_v1_event_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -893,7 +1221,7 @@ func (x *Trade) String() string {
 func (*Trade) ProtoMessage() {}
 
 func (x *Trade) ProtoReflect() protoreflect.Message {
-	mi := &file_stream_v1_event_proto_msgTypes[8]
+	mi := &file_stream_v1_event_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -906,7 +1234,7 @@ func (x *Trade) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Trade.ProtoReflect.Descriptor instead.
 func (*Trade) Descriptor() ([]byte, []int) {
-	return file_stream_v1_event_proto_rawDescGZIP(), []int{8}
+	return file_stream_v1_event_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *Trade) GetTransactionHash() string {
@@ -1024,7 +1352,7 @@ type PoolState struct {
 
 func (x *PoolState) Reset() {
 	*x = PoolState{}
-	mi := &file_stream_v1_event_proto_msgTypes[9]
+	mi := &file_stream_v1_event_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1036,7 +1364,7 @@ func (x *PoolState) String() string {
 func (*PoolState) ProtoMessage() {}
 
 func (x *PoolState) ProtoReflect() protoreflect.Message {
-	mi := &file_stream_v1_event_proto_msgTypes[9]
+	mi := &file_stream_v1_event_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1049,7 +1377,7 @@ func (x *PoolState) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PoolState.ProtoReflect.Descriptor instead.
 func (*PoolState) Descriptor() ([]byte, []int) {
-	return file_stream_v1_event_proto_rawDescGZIP(), []int{9}
+	return file_stream_v1_event_proto_rawDescGZIP(), []int{12}
 }
 
 func (x *PoolState) GetReservesAfter() []string {
@@ -1102,7 +1430,7 @@ type TokenTransfer struct {
 
 func (x *TokenTransfer) Reset() {
 	*x = TokenTransfer{}
-	mi := &file_stream_v1_event_proto_msgTypes[10]
+	mi := &file_stream_v1_event_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1114,7 +1442,7 @@ func (x *TokenTransfer) String() string {
 func (*TokenTransfer) ProtoMessage() {}
 
 func (x *TokenTransfer) ProtoReflect() protoreflect.Message {
-	mi := &file_stream_v1_event_proto_msgTypes[10]
+	mi := &file_stream_v1_event_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1127,7 +1455,7 @@ func (x *TokenTransfer) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TokenTransfer.ProtoReflect.Descriptor instead.
 func (*TokenTransfer) Descriptor() ([]byte, []int) {
-	return file_stream_v1_event_proto_rawDescGZIP(), []int{10}
+	return file_stream_v1_event_proto_rawDescGZIP(), []int{13}
 }
 
 func (x *TokenTransfer) GetToken() string {
@@ -1192,7 +1520,7 @@ type Amount struct {
 
 func (x *Amount) Reset() {
 	*x = Amount{}
-	mi := &file_stream_v1_event_proto_msgTypes[11]
+	mi := &file_stream_v1_event_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1204,7 +1532,7 @@ func (x *Amount) String() string {
 func (*Amount) ProtoMessage() {}
 
 func (x *Amount) ProtoReflect() protoreflect.Message {
-	mi := &file_stream_v1_event_proto_msgTypes[11]
+	mi := &file_stream_v1_event_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1217,7 +1545,7 @@ func (x *Amount) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Amount.ProtoReflect.Descriptor instead.
 func (*Amount) Descriptor() ([]byte, []int) {
-	return file_stream_v1_event_proto_rawDescGZIP(), []int{11}
+	return file_stream_v1_event_proto_rawDescGZIP(), []int{14}
 }
 
 func (x *Amount) GetAsset() string {
@@ -1271,7 +1599,7 @@ type AssetFact struct {
 
 func (x *AssetFact) Reset() {
 	*x = AssetFact{}
-	mi := &file_stream_v1_event_proto_msgTypes[12]
+	mi := &file_stream_v1_event_proto_msgTypes[15]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1283,7 +1611,7 @@ func (x *AssetFact) String() string {
 func (*AssetFact) ProtoMessage() {}
 
 func (x *AssetFact) ProtoReflect() protoreflect.Message {
-	mi := &file_stream_v1_event_proto_msgTypes[12]
+	mi := &file_stream_v1_event_proto_msgTypes[15]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1296,7 +1624,7 @@ func (x *AssetFact) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AssetFact.ProtoReflect.Descriptor instead.
 func (*AssetFact) Descriptor() ([]byte, []int) {
-	return file_stream_v1_event_proto_rawDescGZIP(), []int{12}
+	return file_stream_v1_event_proto_rawDescGZIP(), []int{15}
 }
 
 func (x *AssetFact) GetAddress() string {
@@ -1368,7 +1696,7 @@ type DeploymentRef struct {
 
 func (x *DeploymentRef) Reset() {
 	*x = DeploymentRef{}
-	mi := &file_stream_v1_event_proto_msgTypes[13]
+	mi := &file_stream_v1_event_proto_msgTypes[16]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1380,7 +1708,7 @@ func (x *DeploymentRef) String() string {
 func (*DeploymentRef) ProtoMessage() {}
 
 func (x *DeploymentRef) ProtoReflect() protoreflect.Message {
-	mi := &file_stream_v1_event_proto_msgTypes[13]
+	mi := &file_stream_v1_event_proto_msgTypes[16]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1393,7 +1721,7 @@ func (x *DeploymentRef) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeploymentRef.ProtoReflect.Descriptor instead.
 func (*DeploymentRef) Descriptor() ([]byte, []int) {
-	return file_stream_v1_event_proto_rawDescGZIP(), []int{13}
+	return file_stream_v1_event_proto_rawDescGZIP(), []int{16}
 }
 
 func (x *DeploymentRef) GetBlockHeight() int64 {
@@ -1447,7 +1775,7 @@ type PoolFact struct {
 
 func (x *PoolFact) Reset() {
 	*x = PoolFact{}
-	mi := &file_stream_v1_event_proto_msgTypes[14]
+	mi := &file_stream_v1_event_proto_msgTypes[17]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1459,7 +1787,7 @@ func (x *PoolFact) String() string {
 func (*PoolFact) ProtoMessage() {}
 
 func (x *PoolFact) ProtoReflect() protoreflect.Message {
-	mi := &file_stream_v1_event_proto_msgTypes[14]
+	mi := &file_stream_v1_event_proto_msgTypes[17]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1472,7 +1800,7 @@ func (x *PoolFact) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PoolFact.ProtoReflect.Descriptor instead.
 func (*PoolFact) Descriptor() ([]byte, []int) {
-	return file_stream_v1_event_proto_rawDescGZIP(), []int{14}
+	return file_stream_v1_event_proto_rawDescGZIP(), []int{17}
 }
 
 func (x *PoolFact) GetPoolId() string {
@@ -1544,7 +1872,7 @@ const file_stream_v1_event_proto_rawDesc = "" +
 	"\bchain_id\x18\x01 \x01(\x04R\achainId\x12\x14\n" +
 	"\x05chain\x18\x02 \x01(\tR\x05chain\x12\x1f\n" +
 	"\vrollback_to\x18\x03 \x01(\x03R\n" +
-	"rollbackTo\"\xe3\x05\n" +
+	"rollbackTo\"\xa8\x06\n" +
 	"\n" +
 	"BlockEvent\x12\x19\n" +
 	"\bchain_id\x18\x01 \x01(\x04R\achainId\x12\x14\n" +
@@ -1566,8 +1894,37 @@ const file_stream_v1_event_proto_rawDesc = "" +
 	"\x0eoracle_updates\x18\x0f \x03(\v2\x17.stream.v1.OracleUpdateR\roracleUpdates\x12D\n" +
 	"\x10native_transfers\x18\x10 \x03(\v2\x19.stream.v1.NativeTransferR\x0fnativeTransfers\x12%\n" +
 	"\x0enative_touched\x18\x11 \x03(\tR\rnativeTouched\x12B\n" +
-	"\x0etick_snapshots\x18\x12 \x03(\v2\x1b.stream.v1.PoolTickSnapshotR\rtickSnapshotsJ\x04\b\n" +
-	"\x10\vJ\x04\b\v\x10\fR\fblock_pricesR\x10reference_prices\"\xfc\x01\n" +
+	"\x0etick_snapshots\x18\x12 \x03(\v2\x1b.stream.v1.PoolTickSnapshotR\rtickSnapshots\x12C\n" +
+	"\rpool_balances\x18\x13 \x03(\v2\x1e.stream.v1.PoolBalanceSnapshotR\fpoolBalancesJ\x04\b\n" +
+	"\x10\vJ\x04\b\v\x10\fR\fblock_pricesR\x10reference_prices\"\xf7\x03\n" +
+	"\x13PoolBalanceSnapshot\x12\x17\n" +
+	"\apool_id\x18\x01 \x01(\tR\x06poolId\x12\x1a\n" +
+	"\bprotocol\x18\x02 \x01(\tR\bprotocol\x12!\n" +
+	"\fpool_address\x18\x03 \x01(\tR\vpoolAddress\x12'\n" +
+	"\x0fsnapshot_height\x18\x04 \x01(\x03R\x0esnapshotHeight\x12\x16\n" +
+	"\x06tokens\x18\x05 \x03(\tR\x06tokens\x12\x1a\n" +
+	"\bbalances\x18\x06 \x03(\tR\bbalances\x12\x14\n" +
+	"\x05curve\x18\a \x01(\tR\x05curve\x12\x16\n" +
+	"\x06reason\x18\b \x01(\tR\x06reason\x12\x10\n" +
+	"\x03fee\x18\t \x01(\tR\x03fee\x12\x1f\n" +
+	"\vdynamic_fee\x18\n" +
+	" \x01(\bR\n" +
+	"dynamicFee\x12\x18\n" +
+	"\aweights\x18\v \x03(\tR\aweights\x12\x10\n" +
+	"\x03amp\x18\f \x01(\tR\x03amp\x12#\n" +
+	"\ramp_precision\x18\r \x01(\tR\fampPrecision\x12\x14\n" +
+	"\x05rates\x18\x0e \x03(\tR\x05rates\x120\n" +
+	"\aladders\x18\x0f \x03(\v2\x16.stream.v1.QuoteLadderR\aladders\x121\n" +
+	"\aderived\x18\x10 \x03(\v2\x17.stream.v1.DerivedTokenR\aderived\"w\n" +
+	"\vQuoteLadder\x12\x19\n" +
+	"\btoken_in\x18\x01 \x01(\rR\atokenIn\x12\x1b\n" +
+	"\ttoken_out\x18\x02 \x01(\rR\btokenOut\x12\x18\n" +
+	"\aamounts\x18\x03 \x03(\tR\aamounts\x12\x16\n" +
+	"\x06quotes\x18\x04 \x03(\tR\x06quotes\"Z\n" +
+	"\fDerivedToken\x12\x14\n" +
+	"\x05token\x18\x01 \x01(\tR\x05token\x12 \n" +
+	"\vunderlyings\x18\x02 \x03(\tR\vunderlyings\x12\x12\n" +
+	"\x04rate\x18\x03 \x01(\tR\x04rate\"\xfc\x01\n" +
 	"\x10PoolTickSnapshot\x12\x17\n" +
 	"\apool_id\x18\x01 \x01(\tR\x06poolId\x12\x1a\n" +
 	"\bprotocol\x18\x02 \x01(\tR\bprotocol\x12'\n" +
@@ -1694,48 +2051,54 @@ func file_stream_v1_event_proto_rawDescGZIP() []byte {
 }
 
 var file_stream_v1_event_proto_enumTypes = make([]protoimpl.EnumInfo, 2)
-var file_stream_v1_event_proto_msgTypes = make([]protoimpl.MessageInfo, 15)
+var file_stream_v1_event_proto_msgTypes = make([]protoimpl.MessageInfo, 18)
 var file_stream_v1_event_proto_goTypes = []any{
-	(TradeAction)(0),         // 0: stream.v1.TradeAction
-	(AssetFactType)(0),       // 1: stream.v1.AssetFactType
-	(*StreamRecord)(nil),     // 2: stream.v1.StreamRecord
-	(*BlockRevert)(nil),      // 3: stream.v1.BlockRevert
-	(*BlockEvent)(nil),       // 4: stream.v1.BlockEvent
-	(*PoolTickSnapshot)(nil), // 5: stream.v1.PoolTickSnapshot
-	(*TickNet)(nil),          // 6: stream.v1.TickNet
-	(*LiquidityRange)(nil),   // 7: stream.v1.LiquidityRange
-	(*NativeTransfer)(nil),   // 8: stream.v1.NativeTransfer
-	(*OracleUpdate)(nil),     // 9: stream.v1.OracleUpdate
-	(*Trade)(nil),            // 10: stream.v1.Trade
-	(*PoolState)(nil),        // 11: stream.v1.PoolState
-	(*TokenTransfer)(nil),    // 12: stream.v1.TokenTransfer
-	(*Amount)(nil),           // 13: stream.v1.Amount
-	(*AssetFact)(nil),        // 14: stream.v1.AssetFact
-	(*DeploymentRef)(nil),    // 15: stream.v1.DeploymentRef
-	(*PoolFact)(nil),         // 16: stream.v1.PoolFact
+	(TradeAction)(0),            // 0: stream.v1.TradeAction
+	(AssetFactType)(0),          // 1: stream.v1.AssetFactType
+	(*StreamRecord)(nil),        // 2: stream.v1.StreamRecord
+	(*BlockRevert)(nil),         // 3: stream.v1.BlockRevert
+	(*BlockEvent)(nil),          // 4: stream.v1.BlockEvent
+	(*PoolBalanceSnapshot)(nil), // 5: stream.v1.PoolBalanceSnapshot
+	(*QuoteLadder)(nil),         // 6: stream.v1.QuoteLadder
+	(*DerivedToken)(nil),        // 7: stream.v1.DerivedToken
+	(*PoolTickSnapshot)(nil),    // 8: stream.v1.PoolTickSnapshot
+	(*TickNet)(nil),             // 9: stream.v1.TickNet
+	(*LiquidityRange)(nil),      // 10: stream.v1.LiquidityRange
+	(*NativeTransfer)(nil),      // 11: stream.v1.NativeTransfer
+	(*OracleUpdate)(nil),        // 12: stream.v1.OracleUpdate
+	(*Trade)(nil),               // 13: stream.v1.Trade
+	(*PoolState)(nil),           // 14: stream.v1.PoolState
+	(*TokenTransfer)(nil),       // 15: stream.v1.TokenTransfer
+	(*Amount)(nil),              // 16: stream.v1.Amount
+	(*AssetFact)(nil),           // 17: stream.v1.AssetFact
+	(*DeploymentRef)(nil),       // 18: stream.v1.DeploymentRef
+	(*PoolFact)(nil),            // 19: stream.v1.PoolFact
 }
 var file_stream_v1_event_proto_depIdxs = []int32{
 	4,  // 0: stream.v1.StreamRecord.block:type_name -> stream.v1.BlockEvent
 	3,  // 1: stream.v1.StreamRecord.revert:type_name -> stream.v1.BlockRevert
-	10, // 2: stream.v1.BlockEvent.trades:type_name -> stream.v1.Trade
-	14, // 3: stream.v1.BlockEvent.assets:type_name -> stream.v1.AssetFact
-	16, // 4: stream.v1.BlockEvent.pools:type_name -> stream.v1.PoolFact
-	12, // 5: stream.v1.BlockEvent.transfers:type_name -> stream.v1.TokenTransfer
-	9,  // 6: stream.v1.BlockEvent.oracle_updates:type_name -> stream.v1.OracleUpdate
-	8,  // 7: stream.v1.BlockEvent.native_transfers:type_name -> stream.v1.NativeTransfer
-	5,  // 8: stream.v1.BlockEvent.tick_snapshots:type_name -> stream.v1.PoolTickSnapshot
-	6,  // 9: stream.v1.PoolTickSnapshot.ticks:type_name -> stream.v1.TickNet
-	13, // 10: stream.v1.Trade.amounts:type_name -> stream.v1.Amount
-	11, // 11: stream.v1.Trade.pool_state:type_name -> stream.v1.PoolState
-	0,  // 12: stream.v1.Trade.action:type_name -> stream.v1.TradeAction
-	7,  // 13: stream.v1.Trade.liquidity_range:type_name -> stream.v1.LiquidityRange
-	1,  // 14: stream.v1.AssetFact.type:type_name -> stream.v1.AssetFactType
-	15, // 15: stream.v1.AssetFact.deployment:type_name -> stream.v1.DeploymentRef
-	16, // [16:16] is the sub-list for method output_type
-	16, // [16:16] is the sub-list for method input_type
-	16, // [16:16] is the sub-list for extension type_name
-	16, // [16:16] is the sub-list for extension extendee
-	0,  // [0:16] is the sub-list for field type_name
+	13, // 2: stream.v1.BlockEvent.trades:type_name -> stream.v1.Trade
+	17, // 3: stream.v1.BlockEvent.assets:type_name -> stream.v1.AssetFact
+	19, // 4: stream.v1.BlockEvent.pools:type_name -> stream.v1.PoolFact
+	15, // 5: stream.v1.BlockEvent.transfers:type_name -> stream.v1.TokenTransfer
+	12, // 6: stream.v1.BlockEvent.oracle_updates:type_name -> stream.v1.OracleUpdate
+	11, // 7: stream.v1.BlockEvent.native_transfers:type_name -> stream.v1.NativeTransfer
+	8,  // 8: stream.v1.BlockEvent.tick_snapshots:type_name -> stream.v1.PoolTickSnapshot
+	5,  // 9: stream.v1.BlockEvent.pool_balances:type_name -> stream.v1.PoolBalanceSnapshot
+	6,  // 10: stream.v1.PoolBalanceSnapshot.ladders:type_name -> stream.v1.QuoteLadder
+	7,  // 11: stream.v1.PoolBalanceSnapshot.derived:type_name -> stream.v1.DerivedToken
+	9,  // 12: stream.v1.PoolTickSnapshot.ticks:type_name -> stream.v1.TickNet
+	16, // 13: stream.v1.Trade.amounts:type_name -> stream.v1.Amount
+	14, // 14: stream.v1.Trade.pool_state:type_name -> stream.v1.PoolState
+	0,  // 15: stream.v1.Trade.action:type_name -> stream.v1.TradeAction
+	10, // 16: stream.v1.Trade.liquidity_range:type_name -> stream.v1.LiquidityRange
+	1,  // 17: stream.v1.AssetFact.type:type_name -> stream.v1.AssetFactType
+	18, // 18: stream.v1.AssetFact.deployment:type_name -> stream.v1.DeploymentRef
+	19, // [19:19] is the sub-list for method output_type
+	19, // [19:19] is the sub-list for method input_type
+	19, // [19:19] is the sub-list for extension type_name
+	19, // [19:19] is the sub-list for extension extendee
+	0,  // [0:19] is the sub-list for field type_name
 }
 
 func init() { file_stream_v1_event_proto_init() }
@@ -1747,14 +2110,14 @@ func file_stream_v1_event_proto_init() {
 		(*StreamRecord_Block)(nil),
 		(*StreamRecord_Revert)(nil),
 	}
-	file_stream_v1_event_proto_msgTypes[9].OneofWrappers = []any{}
+	file_stream_v1_event_proto_msgTypes[12].OneofWrappers = []any{}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_stream_v1_event_proto_rawDesc), len(file_stream_v1_event_proto_rawDesc)),
 			NumEnums:      2,
-			NumMessages:   15,
+			NumMessages:   18,
 			NumExtensions: 0,
 			NumServices:   0,
 		},
