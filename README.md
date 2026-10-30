@@ -439,7 +439,7 @@ Requires Go 1.26.10 and Buf.
 
 ```sh
 make generate   # regenerate the config protos, the abigen bindings, wire_gen.go and proto/stream/v1, and tidy both modules
-make verify     # buf lint, gofmt, golangci-lint, go test -race
+make verify     # buf lint, gofmt, golangci-lint, commentlint, go test -race
 ```
 
 Every command follows chainstream-evm's layout. `main.go` loads `-conf` (default `configs/<command>.yaml`) into its component's `conf.Bootstrap` with Kratos config, and `wire.go` lists the component's provider sets that `wireApp` assembles into a `kratos.App`. Change a constructor or a provider set, then run `make wire` (or `go generate ./cmd/...`) to rewrite the `wire_gen.go` files; change a component's `conf/conf.proto` or `internal/pkg/config/common.proto`, then run `make config`. CI runs `make generate` and fails when it changes or adds any file.

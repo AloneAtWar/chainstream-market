@@ -57,7 +57,7 @@ topic 由 `kafka-init` 创建，单分区、不限保留期，因为每个消费
 
 ```sh
 make generate   # 重新生成配置 proto、abigen 绑定、wire_gen.go 和 proto/stream/v1，并 tidy 两个模块
-make verify     # buf lint、gofmt、golangci-lint、go test -race
+make verify     # buf lint、gofmt、golangci-lint、中文注释检查 commentlint、go test -race
 ```
 
 - **Wire**：每个命令的 `main.go` 用 Kratos config 把 `-conf` 加载到组件的 `conf.Bootstrap`，`wire.go` 列出 `wireApp` 组装 `kratos.App` 所需的 provider set。
