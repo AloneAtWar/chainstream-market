@@ -38,6 +38,13 @@ chain:
     enabled: true
     max_pools_per_block: 20
     reseed_interval_blocks: 7200
+  # Attach the real balances of every Curve and Balancer pool touched in a
+  # block, read at that block, so market-engine prices them from what they
+  # hold.
+  pool_balances:
+    enabled: true
+    max_pools_per_block: 200
+    ladder_interval_blocks: 10
 
 data:
   redis:

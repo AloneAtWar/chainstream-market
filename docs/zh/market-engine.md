@@ -11,6 +11,7 @@ market-engine 每条链一个进程，按 offset 顺序读该链的 topic，把 
 | `internal/app/engine/biz/processor.go` | `Processor`：每块的定价流程（`Apply` / `Revert`） |
 | `internal/app/engine/biz/journal.go` | 按高度记录的撤销日志，所有状态都放在里面 |
 | `internal/app/engine/biz/pool.go`、`clamm.go` | 池子状态、集中流动性 tick 表与深度 |
+| `internal/app/engine/biz/balances.go`、`selection.go` | Curve / Balancer 余额快照池的价格与深度、按深度选择定价池 |
 | `internal/app/engine/biz/late.go`、`backfill.go` | 迟到的代币小数位：挂起、回放、回填 |
 | `internal/app/engine/biz/handler.go` | 把 `Processor` 接入 chainsync 的 `Handler` |
 | `internal/app/engine/data` | ClickHouse / 内存输出存储、PostgreSQL / 内存状态存储 |
@@ -28,6 +29,7 @@ market-engine 每条链一个进程，按 offset 顺序读该链的 topic，把 
 | --- | --- | --- |
 | 常数乘积池（Uniswap V2 一类） | `reserves_after` 之比 | `reserves_after` |
 | 集中流动性池（Uniswap/PancakeSwap V3、Uniswap V4、PancakeSwap Infinity） | `sqrt_price_x96` | tick 表在当前价下实际持有的币量，见下文 |
+| Curve / Balancer 池 | 区块附带的余额快照，见[下文](#curve-与-balancer-池) | 快照中的真实余额 |
 | 其它池子（含暂时的 liquidity-book 池） | swap 成交价 | 无 |
 
 **没有储备的池子只有价格，不能用来传播价格。** 集中流动性池在 tick 表不可用时同样如此。
@@ -38,8 +40,13 @@ market-engine 每条链一个进程，按 offset 顺序读该链的 topic，把 
 ### 2. 价格图
 
 - **锚点**：资产目录（catalog）里的 USD 稳定币。有 Chainlink 喂价覆盖时取最近一次可信报价，否则按 $1。
-- 本块涉及的每个代币，都通过"**已定价对手方储备的 USD 价值最高**"的那个池子定价。
-- 该储备必须达到 `min_liquidity_usd`（默认 1000），价格离锚点最多传播 `max_hops` 跳（默认 3）。
+- Curve 基础池 LP 代币、Balancer V3 的 ERC4626 代币按池子报告的**汇率**定价（对比其已定价底层资产中最便宜的一个），优先于任何池子。
+- 其它本块涉及的代币，通过**最深**的池子（或 Curve / Balancer 池中的某个代币对）定价：在对手方价格移动一个费率档价格带的过程中，
+  付出的已定价对手方代币 USD 价值最多的那个。
+  - 集中流动性池的深度来自 tick 表；Curve / Balancer 池见下文；只有储备的池子按 0.3% 费率档的常数乘积公式 `B·(1 − 1/√(1 + band))` 计算。
+  - 深度未知的池子排在所有深度已知的池子之后，它们之间再按对手方储备的 USD 价值排序。
+  - 比较顺序：深度已知优先 → 深度更大 → 对手方余额更大 → 池子 ID 更小（`selection.go` 的 `quoteCandidate.beats`）。
+- 对手方的真实余额就是价格的 `liquidity_usd`，必须达到 `min_liquidity_usd`（默认 1000）；价格离锚点最多传播 `max_hops` 跳（默认 3）。
 - 不会出现循环定价：A 不会通过一个本身由 A 定价的对手方来定价。
 - 包装原生币（WETH、WBNB……）和其它代币一样走价格图，原生币伪地址共享它的价格。
 
@@ -82,6 +89,28 @@ market-engine 每条链一个进程，按 offset 顺序读该链的 topic，把 
 
 tick 表保存在 engine 状态里（需要 `state.driver: postgres` 才能跨重启），通过
 `GET /v1/chains/{chain}/pools/{pool}/liquidity` 对外提供。
+
+## Curve 与 Balancer 池
+
+Curve 和 Balancer 池最多有八个币，管理费、Balancer V3 的聚合费与收益费、代币汇率都不会出现在事件里，所以无法靠交易累加余额。
+chainstream-evm 开启 `chain.pool_balances.enabled` 后，会在区块哈希上读取本块每个有事件的此类池子，附上 `pool_balances`：
+真实余额、曲线族、费率、权重、放大系数、汇率，以及 Curve crypto 池每隔几个块读取一次的 `get_dy` 报价阶梯。
+
+engine 每收到一个快照就替换该池的记录（`model.BalancePool`），快照没带报价阶梯时沿用上一次的，并和其它状态一样记入日志（可回滚）。
+池内任意两个代币构成价格图的一条边，对手方余额就是这条边的储备：
+
+| 曲线族 | 价格 | 费率档价格带内的深度 |
+| --- | --- | --- |
+| `stable`（Curve StableSwap、Balancer Stable） | 按汇率缩放余额后的 StableSwap 边际价格 | 在不变量上二分求解 |
+| `weighted`（Balancer Weighted） | `(B_out / w_out) / (B_in / w_in)` | `B_out · (1 − (1 + band)^(−w_in / (w_in + w_out)))` |
+| `crypto`（Curve CryptoSwap） | 报价阶梯第一档，扣除手续费 | 在阶梯上插值；价格带超出最后一档时截在最后一档 |
+| `unknown` | 该交易对最近一笔 swap 的成交价 | 无 |
+
+Curve 元池会按基础池的虚拟价格报告基础池 LP 代币，Balancer V3 池会按汇率报告每个 ERC4626 代币，这些代币直接按汇率定价。
+深度按边计算、只保存在内存中（`balanceEdges` 缓存，记录被替换时失效），并按上面的规则参与定价池选择。
+
+相关代码：`internal/app/engine/biz/balances.go`（快照应用、各曲线族的价格与深度、汇率定价）、`selection.go`（定价池比较规则），
+曲线数学来自 oh-my-blockchain 的 `dex/mechanism/{stableswap,weighted,ladder}`。
 
 ## Chainlink 喂价
 
@@ -192,7 +221,7 @@ PostgreSQL 状态表（位于 `state.postgres.schema`）：
 | 表 | 内容 |
 | --- | --- |
 | `engine_checkpoints` | 每条链一行：Kafka offset、高度、哈希、已裁剪高度 |
-| `engine_state` | 当前状态 `(chain_id, kind, key) -> value JSONB`，kind 为 `pools`、`prices`、`orientations`、`candles`、`decimals`、`oracle` 等 |
+| `engine_state` | 当前状态 `(chain_id, kind, key) -> value JSONB`，kind 为 `pools`、`prices`、`orientations`、`candles`、`decimals`、`oracle`、`balance_pools` 等 |
 | `engine_state_undo` | 每个区块改动过的 key 在该块之前的值；回滚删除 `rollback_to` 以上的行，裁剪删除已最终确定且超出 `history_depth` 的行 |
 
 计算全部在内存里完成，PostgreSQL 每块只写一次，热路径上从不读取。

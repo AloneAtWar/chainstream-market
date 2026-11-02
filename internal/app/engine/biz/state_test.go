@@ -63,6 +63,22 @@ func chainBlock(height, variant int64) *streamv1.BlockEvent {
 			-269520: fmt.Sprintf("%d", 1_000_000+step), -269280: fmt.Sprintf("-%d", 1_000_000+step),
 		})}
 	}
+	// A weighted pool prices MEME against WETH from its balances, and every
+	// third block also carries a ladder for a crypto pool.
+	block.PoolBalances = []*streamv1.PoolBalanceSnapshot{{
+		PoolId: weightedPool, Protocol: "balancer_v2", SnapshotHeight: height, Tokens: []string{meme, weth},
+		Balances: []string{fmt.Sprintf("%d000000000000000000", 4_000_000+step), "100000000000000000000"},
+		Curve:    model.CurveWeighted, Fee: "3000000000000000", Weights: []string{"800000000000000000", "200000000000000000"},
+	}, {
+		PoolId: cryptoPool, Protocol: "curve_twocrypto_ng", SnapshotHeight: height, Tokens: []string{meme, weth},
+		Balances: []string{"1000000000000000000000", fmt.Sprintf("%d0000000000000000", 100+step)}, Curve: model.CurveCrypto,
+	}}
+	if height%3 == 0 {
+		block.PoolBalances[1].Ladders = []*streamv1.QuoteLadder{{
+			TokenIn: 0, TokenOut: 1, Amounts: []string{"1000000000000000000", "2000000000000000000"},
+			Quotes: []string{fmt.Sprintf("%d", 1_000_000+step), fmt.Sprintf("%d", 1_990_000+step)},
+		}}
+	}
 	block.BlockHash = fmt.Sprintf("0x%d-%d", height, variant)
 	block.FinalizedHeight = height - 4
 	return block
@@ -156,6 +172,9 @@ func (h *harness) values() map[string]string {
 	}
 	for key, value := range processor.clamm.values {
 		add(model.StateKindCLAMMPools, key, value)
+	}
+	for key, value := range processor.balances.values {
+		add(model.StateKindBalancePools, key, value)
 	}
 	return out
 }
