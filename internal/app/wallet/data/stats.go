@@ -78,13 +78,13 @@ func (repo *statsRepo) PruneStats(ctx context.Context, chainID uint64, keep []ui
 	return nil
 }
 
-func (repo *statsRepo) EarliestTradeAfter(ctx context.Context, chainID uint64, height int64) (time.Time, bool, error) {
+func (repo *statsRepo) EarliestTradeFrom(ctx context.Context, chainID uint64, height int64) (time.Time, bool, error) {
 	var row struct {
 		Earliest time.Time
 		Found    uint64
 	}
 	err := repo.db.WithContext(ctx).Raw(`SELECT min(block_time) AS earliest, count() AS found
-		FROM wallet_trades WHERE chain_id = ? AND apply_height > ?`, chainID, height).Scan(&row).Error
+		FROM wallet_trades WHERE chain_id = ? AND apply_height >= ?`, chainID, height).Scan(&row).Error
 	if err != nil {
 		return time.Time{}, false, fmt.Errorf("clickhouse store: earliest wallet trade: %w", err)
 	}

@@ -19,6 +19,7 @@ var walletSchema = []string{
 		kafka_offset   BIGINT NOT NULL,
 		block_height   BIGINT NOT NULL,
 		part           INT NOT NULL,
+		parts          INT NOT NULL DEFAULT 0,
 		pruned_through BIGINT NOT NULL,
 		updated_at     TIMESTAMPTZ NOT NULL
 	)`,
@@ -56,6 +57,14 @@ var walletSchema = []string{
 		token        TEXT NOT NULL,
 		prev         JSONB,
 		PRIMARY KEY (chain_id, block_height, wallet, token)
+	)`,
+	// 删除 wallet_trades 之前记下的失效范围：被删流水里最早的成交日和删除后保留的最高高度。
+	// 删除完成、写进 ClickHouse 的 wallet_invalidations 之后清掉；崩溃留下的在下次删除时
+	// （启动时必定会做一次）补写。
+	`CREATE TABLE IF NOT EXISTS wallet_pending_invalidations (
+		chain_id BIGINT PRIMARY KEY,
+		day      DATE NOT NULL,
+		height   BIGINT NOT NULL
 	)`,
 	`CREATE TABLE IF NOT EXISTS wallet_labels (
 		chain_id BIGINT NOT NULL,

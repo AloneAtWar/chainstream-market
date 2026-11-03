@@ -223,12 +223,12 @@ go run ./cmd/market-wallet -conf configs/market-wallet.yaml   # 需要 kafka、c
 
 **跟读 live topic**：market-engine 在 live topic 上跳过比 `live.max_lag` 更旧的区块，所以区块到达时如果高度不连续，
 market-wallet 先从 ClickHouse 的 `trades` 表按 `revision_height` 补上缺的高度再应用。首次启动从 live topic 末尾开始读，
-同样从 ClickHouse 回放 `wallet.history`（最长 90 天）。已应用的区块重复投递会跳过；同一区块缺了分片则停止。
+同样从 ClickHouse 回放 `wallet.history`（最长 90 天）。已应用的区块重复投递会跳过；同一区块缺了分片则停止。每条区块记录都带 `parts`（该区块的记录总数）：下一个区块到达时，如果上一个区块的分片还没收齐（market-engine 发布到一半崩溃，之后又因为太旧跳过了它），先回滚这个区块，再从 ClickHouse 补齐。
 每次写入都在 `wallet_undo` 记下每个持仓在该块第一次改动之前的状态，`revert` 时恢复持仓并删掉被回滚的 `wallet_trades`；
 未终局的区块和最近 `wallet.history_depth` 个区块的 undo 都保留；终局高度未知时，只裁剪补缺时 revision 区块自身时间早于 `wallet.final_age` 的高度。回滚到已裁剪的高度以下会报错停止。流水先写 ClickHouse，再在一个 PostgreSQL 事务里提交持仓和检查点；
 重启时删掉检查点之后的流水。接近链头时每块提交，追块时按 `wallet.flush_rows` 或 `wallet.flush_interval` 攒批。
 
-**统计与标签**：每隔 `wallet.stats.refresh_interval`，从 `wallet_trades` 重算变化过的日子的 `wallet_token_daily`，
+**统计与标签**：每隔 `wallet.stats.refresh_interval`，从 `wallet_trades` 重算变化过的日子的 `wallet_token_daily`（上次汇总最新成交的前一天、上次汇总开始后被删掉的流水里最早的那天、上次汇总最高 apply_height 及以上写入的流水里最早的那天，后者能覆盖同一区块后到的分片），
 按每个窗口（从最新成交所在的日子往前数，不按墙钟）写一个新版本的 `wallet_stats`，记进 `wallet_refreshes`，再重算规则标签：
 
 - `smart_money`：`smart_money.window_days`（30 天）内已实现盈亏 ≥ 5000 美元、胜率 ≥ 50%、交易代币 ≥ 10 个、
@@ -240,11 +240,12 @@ market-wallet 先从 ClickHouse 的 `trades` 表按 `revision_height` 补上缺�
 | 表 | 内容 |
 | --- | --- |
 | `wallet_positions`（PostgreSQL） | `(chain_id, wallet, token)`：持仓数量、剩余成本、已实现盈亏、成交额和笔数、首次买入、本轮建仓时间 |
-| `wallet_undo`、`wallet_checkpoints`（PostgreSQL） | 回滚历史和跟读位置：live topic offset、高度、区块分片 |
+| `wallet_undo`、`wallet_checkpoints`（PostgreSQL） | 回滚历史和跟读位置：live topic offset、高度、区块分片和分片总数 |
+| `wallet_pending_invalidations`（PostgreSQL） | 将要删除的流水范围，写进 `wallet_invalidations` 之后才清掉；两步之间崩溃，下次启动补写 |
 | `wallet_labels`（PostgreSQL） | `(chain_id, wallet, label)`，带 `source`（market-wallet 写的是 `rule`）和生效时间 |
 | `wallet_trades`（ClickHouse） | 每笔账本流水：事件、已实现盈亏、持仓时长，按钱包和时间排序；`wallet.trades_days` 后过期 |
 | `wallet_token_daily`、`wallet_stats`、`wallet_refreshes`（ClickHouse） | 日汇总、按窗口的统计（每个版本一个分区）、每次汇总；market-api 只读最新版本，market-wallet 发布新版本后只留它和上一个版本 |
-| `wallet_invalidations`（ClickHouse） | 回滚或重启删掉流水时记下受影响的最早成交日，下次汇总从那天重算 |
+| `wallet_invalidations`（ClickHouse） | 回滚或重启删掉流水之后记下受影响的最早成交日，下次汇总从那天重算 |
 
 资金来源聚类、KOL 名单和关注列表还没有做。
 

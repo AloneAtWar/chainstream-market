@@ -113,6 +113,9 @@ func BlockUpdates(output model.BlockOutput, finalizedHeight int64) []Update {
 	for _, candle := range output.Candles {
 		add(func(update *Update) { update.Candles = append(update.Candles, candleOf(candle)) })
 	}
+	for index := range updates {
+		updates[index].Parts = len(updates)
+	}
 	return updates
 }
 

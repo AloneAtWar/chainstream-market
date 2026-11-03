@@ -42,6 +42,9 @@ type Checkpoint struct {
 	// Height 和 Part 是最后应用的区块和它的分片；Part 为 WholeBlock 时整个区块都已应用。
 	Height int64
 	Part   int32
+	// Parts 是 Height 这个区块在 live topic 上的分片总数，用来发现只收到前几个分片的区块；
+	// 0 表示未知，或 Part 为 WholeBlock。
+	Parts int32
 	// PrunedThrough 是 undo 已经裁剪到的高度。
 	PrunedThrough int64
 	UpdatedAt     time.Time
@@ -272,8 +275,19 @@ func (follower *Follower) block(ctx context.Context, offset int64, update live.U
 		return nil
 	case height == applied.Height && part == applied.Part+1:
 	case height > applied.Height && part == 0:
-		if height > applied.Height+1 {
-			if err := follower.backfill(ctx, offset, applied.Height+1, height-1); err != nil {
+		from := applied.Height + 1
+		if incomplete(applied) {
+			// 上一个区块只收到了前几个分片：market-engine 发布到一半崩溃，重启时区块已经超过
+			// live.max_lag，剩下的分片不会再发。回滚掉它，和跳过的高度一起从 ClickHouse 补。
+			follower.logger.Warn("live block is incomplete, refilling it from clickhouse",
+				"height", applied.Height, "parts", applied.Parts, "received", applied.Part+1)
+			if err := follower.rollback(ctx, max(applied.Offset, offset-1), applied.Height-1); err != nil {
+				return err
+			}
+			from = applied.Height
+		}
+		if height > from {
+			if err := follower.backfill(ctx, offset, from, height-1); err != nil {
 				return err
 			}
 		}
@@ -292,6 +306,7 @@ func (follower *Follower) block(ctx context.Context, offset int64, update live.U
 		return err
 	}
 	follower.checkpoint.Offset, follower.checkpoint.Height, follower.checkpoint.Part = offset, height, part
+	follower.checkpoint.Parts = int32(update.Parts)
 	follower.dirty = true
 	blockTime := time.Unix(update.BlockTime, 0)
 	follower.blockTime = blockTime
@@ -310,11 +325,11 @@ func (follower *Follower) bootstrap(ctx context.Context, offset, height int64) e
 		return fmt.Errorf("find replay start: %w", err)
 	}
 	if !ok || from >= height {
-		follower.checkpoint.Height, follower.checkpoint.Part = height-1, WholeBlock
+		follower.checkpoint.Height, follower.checkpoint.Part, follower.checkpoint.Parts = height-1, WholeBlock, 0
 		return nil
 	}
 	follower.logger.Info("replaying wallet history", "from", from, "to", height-1)
-	follower.checkpoint.Height, follower.checkpoint.Part = from-1, WholeBlock
+	follower.checkpoint.Height, follower.checkpoint.Part, follower.checkpoint.Parts = from-1, WholeBlock, 0
 	return follower.backfill(ctx, offset, from, height-1)
 }
 
@@ -349,7 +364,7 @@ func (follower *Follower) backfill(ctx context.Context, offset, from, to int64) 
 			follower.pruneAge = max(follower.pruneAge, old)
 		}
 		follower.checkpoint.Offset = max(follower.checkpoint.Offset, offset-1)
-		follower.checkpoint.Height, follower.checkpoint.Part = end, WholeBlock
+		follower.checkpoint.Height, follower.checkpoint.Part, follower.checkpoint.Parts = end, WholeBlock, 0
 		follower.dirty = true
 		if err := follower.flush(ctx); err != nil {
 			return err
@@ -493,6 +508,16 @@ func (follower *Follower) revert(ctx context.Context, offset int64, update live.
 	if update.Part != 0 || to >= follower.checkpoint.Height || !follower.started {
 		return nil
 	}
+	return follower.rollback(ctx, offset, to)
+}
+
+// incomplete 判断检查点的区块是否只应用了前几个分片。
+func incomplete(checkpoint Checkpoint) bool {
+	return checkpoint.Part != WholeBlock && checkpoint.Parts > 0 && checkpoint.Part+1 < checkpoint.Parts
+}
+
+// rollback 先提交内存里的变更，再把账本回滚到 to，检查点的 offset 记为 offset。
+func (follower *Follower) rollback(ctx context.Context, offset, to int64) error {
 	if err := follower.flush(ctx); err != nil {
 		return err
 	}
@@ -501,7 +526,7 @@ func (follower *Follower) revert(ctx context.Context, offset int64, update live.
 		return fmt.Errorf("revert to %d is below the pruned undo history (%d)", to, follower.checkpoint.PrunedThrough)
 	}
 	checkpoint := follower.checkpoint
-	checkpoint.Offset, checkpoint.Height, checkpoint.Part = offset, to, WholeBlock
+	checkpoint.Offset, checkpoint.Height, checkpoint.Part, checkpoint.Parts = offset, to, WholeBlock, 0
 	checkpoint.UpdatedAt = follower.now().UTC()
 	if err := follower.options.Repo.RevertWallet(ctx, to, checkpoint); err != nil {
 		return fmt.Errorf("revert to %d: %w", to, err)

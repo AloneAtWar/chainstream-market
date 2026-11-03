@@ -35,7 +35,7 @@ func (stats *fakeStats) LoadRefresh(context.Context, uint64) (Refresh, bool, err
 	return *stats.previous, true, nil
 }
 
-func (stats *fakeStats) EarliestTradeAfter(_ context.Context, _ uint64, height int64) (time.Time, bool, error) {
+func (stats *fakeStats) EarliestTradeFrom(_ context.Context, _ uint64, height int64) (time.Time, bool, error) {
 	stats.afterHeight = height
 	return stats.earliest, !stats.earliest.IsZero(), nil
 }

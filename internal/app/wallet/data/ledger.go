@@ -32,6 +32,7 @@ type checkpointRow struct {
 	KafkaOffset   int64
 	BlockHeight   int64
 	Part          int32
+	Parts         int32
 	PrunedThrough int64
 	UpdatedAt     time.Time `gorm:"autoUpdateTime:false"`
 }
@@ -48,7 +49,7 @@ func (repo *walletRepo) LoadWalletCheckpoint(ctx context.Context, chainID uint64
 		return biz.Checkpoint{}, false, fmt.Errorf("postgres store: load wallet checkpoint: %w", err)
 	}
 	return biz.Checkpoint{
-		ChainID: chainID, Offset: row.KafkaOffset, Height: row.BlockHeight, Part: row.Part,
+		ChainID: chainID, Offset: row.KafkaOffset, Height: row.BlockHeight, Part: row.Part, Parts: row.Parts,
 		PrunedThrough: row.PrunedThrough, UpdatedAt: row.UpdatedAt.UTC(),
 	}, true, nil
 }
@@ -60,11 +61,11 @@ func saveCheckpoint(tx *gorm.DB, checkpoint biz.Checkpoint) error {
 	}
 	row := checkpointRow{
 		ChainID: int64(checkpoint.ChainID), KafkaOffset: checkpoint.Offset, BlockHeight: checkpoint.Height,
-		Part: checkpoint.Part, PrunedThrough: checkpoint.PrunedThrough, UpdatedAt: updatedAt,
+		Part: checkpoint.Part, Parts: checkpoint.Parts, PrunedThrough: checkpoint.PrunedThrough, UpdatedAt: updatedAt,
 	}
 	return tx.Clauses(clause.OnConflict{
 		Columns:   []clause.Column{{Name: "chain_id"}},
-		DoUpdates: clause.AssignmentColumns([]string{"kafka_offset", "block_height", "part", "pruned_through", "updated_at"}),
+		DoUpdates: clause.AssignmentColumns([]string{"kafka_offset", "block_height", "part", "parts", "pruned_through", "updated_at"}),
 	}).Create(&row).Error
 }
 
@@ -82,9 +83,12 @@ func (repo *walletRepo) DiscardTradesAfter(ctx context.Context, chainID uint64, 
 }
 
 // deleteTrades 删掉 wallet_trades 里符合 query 的流水，并在 wallet_invalidations 里记下其中
-// 最早的成交日，让下次汇总重算那些日子（汇总可能已经读过这些流水）。删除之前记一次，崩溃
-// 后重做时删除已经完成、找不到这些行也不会漏；删除之后再记一次，时间晚于删除，正在进行的
-// 汇总如果读到了删除前的数据，下次汇总也会把它算进来。height 是删除后保留的最高高度。
+// 最早的成交日，让下次汇总重算那些日子（汇总可能已经读过这些流水）。height 是删除后保留的
+// 最高高度。
+//
+// 失效记录的时间必须晚于删除完成：开始得更早的汇总可能读到了删除前的数据，下次汇总只看
+// 它开始之后的记录。所以删除前先把范围存进 PostgreSQL 的 wallet_pending_invalidations，
+// 删除后再写进 ClickHouse 并清掉。中途崩溃时行已经删了、重做找不到它们，靠存下的范围补写。
 func (repo *walletRepo) deleteTrades(ctx context.Context, chainID uint64, height int64, query string, args []any) error {
 	var row struct {
 		Earliest time.Time
@@ -95,22 +99,42 @@ func (repo *walletRepo) deleteTrades(ctx context.Context, chainID uint64, height
 		Where(query, args...).Scan(&row).Error; err != nil {
 		return err
 	}
-	if row.Found == 0 {
+	if row.Found > 0 {
+		if err := repo.state.WithContext(ctx).Exec(`INSERT INTO wallet_pending_invalidations (chain_id, day, height)
+			VALUES (?, ?, ?) ON CONFLICT (chain_id) DO UPDATE SET
+				day = LEAST(wallet_pending_invalidations.day, EXCLUDED.day),
+				height = LEAST(wallet_pending_invalidations.height, EXCLUDED.height)`,
+			int64(chainID), row.Earliest.UTC().Truncate(24*time.Hour), height).Error; err != nil {
+			return err
+		}
+		if err := db.Where(query, args...).Delete(&chdb.WalletTradeRow{}).Error; err != nil {
+			return err
+		}
+	}
+	return repo.publishInvalidation(ctx, chainID)
+}
+
+// publishInvalidation 把存下的失效范围写进 wallet_invalidations 并清掉；没有时什么都不做。
+func (repo *walletRepo) publishInvalidation(ctx context.Context, chainID uint64) error {
+	var pending []struct {
+		Day    time.Time
+		Height int64
+	}
+	state := repo.state.WithContext(ctx)
+	if err := state.Raw(`SELECT day, height FROM wallet_pending_invalidations WHERE chain_id = ?`, int64(chainID)).
+		Scan(&pending).Error; err != nil {
+		return err
+	}
+	if len(pending) == 0 {
 		return nil
 	}
-	invalidate := func() error {
-		rows := []chdb.WalletInvalidationRow{{
-			ChainID: chainID, At: uint64(time.Now().UnixMilli()), Day: row.Earliest.UTC().Truncate(24 * time.Hour), Height: height,
-		}}
-		return chdb.Insert(ctx, repo.market, &rows)
-	}
-	if err := invalidate(); err != nil {
+	rows := []chdb.WalletInvalidationRow{{
+		ChainID: chainID, At: uint64(time.Now().UnixMilli()), Day: pending[0].Day.UTC(), Height: pending[0].Height,
+	}}
+	if err := chdb.Insert(ctx, repo.market, &rows); err != nil {
 		return err
 	}
-	if err := db.Where(query, args...).Delete(&chdb.WalletTradeRow{}).Error; err != nil {
-		return err
-	}
-	return invalidate()
+	return state.Exec(`DELETE FROM wallet_pending_invalidations WHERE chain_id = ?`, int64(chainID)).Error
 }
 
 func (repo *walletRepo) Positions(ctx context.Context, chainID uint64, keys []model.WalletKey) ([]model.Position, error) {

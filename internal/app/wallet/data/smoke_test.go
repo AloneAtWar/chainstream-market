@@ -141,7 +141,7 @@ func (chain *smokeChain) publish(update live.Update) int64 {
 }
 
 func (chain *smokeChain) block(height int64, trades ...chdb.TradeRow) live.Update {
-	update := live.Update{Type: live.UpdateBlock, Height: height, BlockTime: chain.at(height).Unix(), FinalizedHeight: height - 64}
+	update := live.Update{Type: live.UpdateBlock, Height: height, Parts: 1, BlockTime: chain.at(height).Unix(), FinalizedHeight: height - 64}
 	for _, trade := range trades {
 		update.Trades = append(update.Trades, liveTradeOf(trade))
 	}
@@ -375,6 +375,9 @@ func TestSmokeKafkaLedgerAndStats(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if checkpoint.Height != 15 || checkpoint.Part != 0 || checkpoint.Parts != 1 {
+		t.Fatalf("checkpoint %+v", checkpoint)
+	}
 	checkpoint.Height = 14
 	if err = repo.RevertWallet(context.Background(), 14, checkpoint); err != nil {
 		t.Fatal(err)
@@ -389,6 +392,24 @@ func TestSmokeKafkaLedgerAndStats(t *testing.T) {
 	profile, err := NewStatsRepo(data).(*statsRepo).latestStats(context.Background(), alice, 30)
 	if err != nil || !profile.RealizedUSD.Equal(decimal.RequireFromString("-50")) {
 		t.Fatalf("alice after revert %+v %v", profile, err)
+	}
+
+	// 同一高度的后续分片在汇总之后才写入，成交日早于上次汇总重算的范围：下次汇总也要算进去。
+	part := []model.WalletTrade{{
+		ChainID: 1, ApplyHeight: 14, Part: 1, BlockHeight: 2, BlockTime: chain.base.AddDate(0, 0, -3),
+		TransactionHash: "0xpart1", Wallet: alice, Token: tokenX, QuoteToken: weth, PoolID: "0xpool",
+		Side: model.SideSell, Event: model.WalletEventReduce, Amount: decimal.RequireFromString("1"),
+		ValueUSD: decimal.RequireFromString("100"), RealizedUSD: decimal.RequireFromString("100"), Counted: true,
+	}}
+	if err = chdb.InsertWalletTrades(context.Background(), data.market, part); err != nil {
+		t.Fatal(err)
+	}
+	if err = refresher.Refresh(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	profile, err = NewStatsRepo(data).(*statsRepo).latestStats(context.Background(), alice, 30)
+	if err != nil || !profile.RealizedUSD.Equal(decimal.RequireFromString("50")) {
+		t.Fatalf("alice after a later part of the same height %+v %v", profile, err)
 	}
 }
 
@@ -426,5 +447,27 @@ func TestTradeSourceFindsTradesHeldLongerThanAnyWindow(t *testing.T) {
 	height, ok, err := NewTradeSource(data).LastHeightBefore(context.Background(), 1, 60000, at.Add(time.Minute))
 	if err != nil || !ok || height != 59999 {
 		t.Fatalf("last height before %d %v %v", height, ok, err)
+	}
+}
+
+// TestDeleteRecoversPendingInvalidation 删除流水后、写失效记录前崩溃：重启时的删除找不到
+// 这些行，也要按存下的范围补写失效记录。
+func TestDeleteRecoversPendingInvalidation(t *testing.T) {
+	data := openData(t)
+	ctx := context.Background()
+	day := time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
+	if err := data.state.Exec(`INSERT INTO wallet_pending_invalidations (chain_id, day, height) VALUES (1, ?, 7)`, day).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := NewWalletRepo(data).DiscardTradesAfter(ctx, 1, 9, biz.WholeBlock); err != nil {
+		t.Fatal(err)
+	}
+	invalidDay, invalidHeight, invalid, err := NewStatsRepo(data).Invalidations(ctx, 1, 0)
+	if err != nil || !invalid || !invalidDay.Equal(day) || invalidHeight != 7 {
+		t.Fatalf("invalidation %v %d %v %v", invalidDay, invalidHeight, invalid, err)
+	}
+	var left int64
+	if err = data.state.Raw(`SELECT count(*) FROM wallet_pending_invalidations`).Scan(&left).Error; err != nil || left != 0 {
+		t.Fatalf("pending invalidations left %d %v", left, err)
 	}
 }

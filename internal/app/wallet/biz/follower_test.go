@@ -313,6 +313,32 @@ func TestFollowerParts(t *testing.T) {
 	}
 }
 
+func TestFollowerRefillsIncompleteBlocks(t *testing.T) {
+	first, second := trade(11, model.SideBuy, "10", "10"), on(tokenY, trade(11, model.SideBuy, "1", "2"))
+	trades := &memoryTrades{trades: []Trade{first, second, trade(12, model.SideBuy, "5", "5")}}
+	h := newHarness(t, newMemoryRepo(), trades)
+	h.block(10, 0)
+	// 11 有两个分片，market-engine 只发布了 part 0 就崩溃；重启时 11 已经超过 max_lag，不再发。
+	if err := h.send(live.Update{Height: 11, Parts: 2, Trades: []live.Trade{liveTrade(first)}}); err != nil {
+		t.Fatal(err)
+	}
+	if h.repo.checkpoint.Parts != 2 {
+		t.Fatalf("checkpoint %+v", *h.repo.checkpoint)
+	}
+	if err := h.send(live.Update{Height: 13, Parts: 1}); err != nil {
+		t.Fatal(err)
+	}
+	if got := h.tradeHeights(); !slices.Equal(got, []int64{11, 11, 12}) {
+		t.Fatalf("trades %v", got)
+	}
+	if !h.position(tokenX).Quantity.Equal(dec("15")) || !h.position(tokenY).Quantity.Equal(dec("1")) {
+		t.Fatalf("positions x %s y %s", h.position(tokenX).Quantity, h.position(tokenY).Quantity)
+	}
+	if checkpoint := *h.repo.checkpoint; checkpoint.Height != 13 || checkpoint.Part != 0 || checkpoint.Parts != 1 {
+		t.Fatalf("checkpoint %+v", checkpoint)
+	}
+}
+
 func TestFollowerRevert(t *testing.T) {
 	h := newHarness(t, newMemoryRepo(), &memoryTrades{})
 	h.block(10, 0, trade(10, model.SideBuy, "10", "10"))

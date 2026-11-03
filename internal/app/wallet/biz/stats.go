@@ -51,8 +51,9 @@ type StatsRepo interface {
 	// TradeHead 返回 wallet_trades 里最新的成交时间和最高的 apply_height。
 	TradeHead(ctx context.Context, chainID uint64) (time.Time, int64, bool, error)
 	LoadRefresh(ctx context.Context, chainID uint64) (Refresh, bool, error)
-	// EarliestTradeAfter 返回 apply_height 大于 height 的流水里最早的成交时间。
-	EarliestTradeAfter(ctx context.Context, chainID uint64, height int64) (time.Time, bool, error)
+	// EarliestTradeFrom 返回 apply_height 不低于 height 的流水里最早的成交时间。包含 height
+	// 本身：同一区块的分片分开提交，上次汇总之后同一高度还可能写进新的流水。
+	EarliestTradeFrom(ctx context.Context, chainID uint64, height int64) (time.Time, bool, error)
 	// Invalidations 返回 since（毫秒）及之后被回滚或丢弃的流水里最早的成交日，以及删除
 	// 时最低的保留高度：之后重新写入的流水 apply_height 会从它往上。
 	Invalidations(ctx context.Context, chainID uint64, since uint64) (time.Time, int64, bool, error)
@@ -117,7 +118,8 @@ func NewRefresher(options StatsOptions) (*Refresher, error) {
 // Refresh 汇总一次。还没有流水时什么都不做。
 //
 // 日汇总只重算变化过的日子：上次汇总时最新成交的前一天起，上次汇总开始之后被回滚或丢弃的
-// 流水里最早的那天起，以及之后新写入的流水里最早的那天起（补缺或延迟写进来的旧成交）。
+// 流水里最早的那天起，以及上次汇总的最高 apply_height 起（含该高度的后续分片）写入的流水
+// 里最早的那天起（补缺或延迟写进来的旧成交）。
 // 首次汇总重算最长窗口内的全部日子。窗口按最新成交所在的日子往前数，不按墙钟，所以追块时
 // 统计也对得上。
 //
@@ -148,7 +150,7 @@ func (refresher *Refresher) Refresh(ctx context.Context) error {
 			changed = minTime(changed, invalidDay.UTC().Truncate(day))
 			cursor = min(cursor, invalidHeight)
 		}
-		earliest, found, earliestErr := options.Repo.EarliestTradeAfter(ctx, options.ChainID, cursor)
+		earliest, found, earliestErr := options.Repo.EarliestTradeFrom(ctx, options.ChainID, cursor)
 		if earliestErr != nil {
 			return earliestErr
 		}
