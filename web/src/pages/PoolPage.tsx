@@ -2,6 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import { CandleChart } from "../components/CandleChart";
 import { CopyButton, Info, Status, Tabs, TokenAvatar } from "../components/common";
+import { LiquidityCard } from "../components/LiquidityChart";
 import { PairName, TokenSymbol } from "../components/tables";
 import { TradesTable } from "../components/TradesTable";
 import { api } from "../lib/api";
@@ -66,6 +67,7 @@ export function PoolPage({ chain }: { chain: Chain }) {
               <CandleChart candles={candles.data} interval={interval} onNeedOlder={() => void candles.loadOlder()} />
             )}
           </section>
+          <LiquidityCard key={poolId} chain={chain} poolId={poolId} baseToken={trades.data.find((trade) => trade.side === "buy" || trade.side === "sell")?.base_token} />
           <section className="card">
             <div className="card-head">
               <h3>实时成交</h3>

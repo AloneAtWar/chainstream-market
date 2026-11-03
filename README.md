@@ -119,7 +119,7 @@ go run ./cmd/market-api -conf configs/market-api.yaml   # needs clickhouse.addr 
 | `GET /v1/chains/{chain}/tokens/{token}` | Token metadata from market-registry: standard, recognition, name, symbol, decimals, deployment and the raw metadata JSON. |
 | `GET /v1/chains/{chain}/tokens/{token}/pools` | Pools that trade the token, most recently observed first. Accepts `limit`. |
 | `GET /v1/chains/{chain}/pools/{pool}` | Pool metadata: protocol, DEX, tokens and the raw metadata JSON. |
-| `GET /v1/chains/{chain}/pools/{pool}/liquidity` | A concentrated pool's tokens per price range at its current price, their totals and its depth within `band_bps` (default: the fee tier's band), from market-engine's tick table. Amounts are raw, with `value` added when market-registry knows the token's decimals. `usable` is false when the table is stale or the pool's hook may settle swaps outside it. 404 when the engine keeps no table for the pool. |
+| `GET /v1/chains/{chain}/pools/{pool}/liquidity` | A concentrated pool's tokens per price range at its current price, their totals and its depth within `band_bps` (default: the fee tier's band), from market-engine's tick table. Amounts are raw, with `value` added when market-registry knows the token's decimals; `decimals` lists them in pool order (null when unknown, 18 for a V4 pool's native coin). `usable` is false when the table is stale or the pool's hook may settle swaps outside it. 404 when the engine keeps no table for the pool. |
 | `GET /v1/chains/{chain}/tokens?sort=volume_24h` | The token list from market-rankings, see [market-rankings](#market-rankings). |
 | `GET /v1/chains/{chain}/launchpad/tokens?column=new` | One of the three launchpad lists from market-launchpad, see [market-launchpad](#market-launchpad). |
 | `GET /v1/chains/{chain}/launchpad/tokens/{token}` | One launchpad token's curve: status, progress, quote raised, trade counts, launch and migration. 404 when it is not a launchpad token. |
@@ -446,7 +446,7 @@ The topics are created by `kafka-init` with one partition and no retention limit
 | `/{chain}` | The token list from market-rankings, sorted by 24h volume, price change, liquidity, holders or creation, with a liquidity filter and symbol or address search. Refreshed every 15s. |
 | `/{chain}/launchpad` | The three launchpad lists from market-launchpad side by side: new launches, curves by progress, and migrations, with a protocol filter. Each column polls every 5s. |
 | `/{chain}/token/{address}` | Price, 24h stats, the token's aggregated candles and live trades, and tabs for holders, pools and transfers, beside the registry metadata and how the price was derived. A launchpad token also shows its curve's progress, quote raised and migration. |
-| `/{chain}/pool/{pool}` | The pool's own candles and live trades, its tokens and metadata. |
+| `/{chain}/pool/{pool}` | The pool's own candles and live trades, its tokens and metadata. A concentrated-liquidity pool (Uniswap V3/V4, PancakeSwap V3/Infinity) also shows its liquidity distribution: active liquidity per price range around the current price, from `/pools/{pool}/liquidity`, with zoom levels, a switch for which token is priced, the amounts each range holds on hover, and a table of the nearest ranges. Refreshed every 15s. |
 | `/{chain}/holder/{address}` | The address's ERC-20 transfers across tokens. |
 
 Candles are drawn with TradingView's lightweight-charts. Live data follows [Live push](#live-push): the page subscribes first, loads history over REST once the hub's `subscribed` reply confirms the channel, then applies what arrived meanwhile; it replaces candle buckets by `open_time` and keys trades by `(block_height, transaction_hash, log_index, operation_index)`. History is loaded again on every confirmation, which follows each reconnect, and after every revert, since REST trades do not carry `revision_height`; older candle pages requested before a reload, revert or reset are dropped. Scrolling the chart left pages back through older candles. Empty buckets are drawn flat at the previous close.
@@ -458,7 +458,7 @@ cd web
 npm ci
 npm run mock     # optional: a fake market-api with generated data and live pushes on :8080
 npm run dev      # http://localhost:5173
-npm test         # unit tests: formatting, candle and trade merging, the WebSocket client
+npm test         # unit tests: formatting, candle and trade merging, the WebSocket client, liquidity chart layout
 npm run build    # type-check and build into dist/
 make docker-web  # from the repository root: the chainstream-web image
 ```

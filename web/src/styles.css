@@ -832,3 +832,98 @@ main {
     height: 340px;
   }
 }
+
+/* Liquidity distribution */
+
+.liquidity-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.small-button {
+  padding: 3px 9px;
+  font-size: 12px;
+  border-color: var(--border);
+}
+
+.liquidity-stats {
+  margin: 0;
+  padding: 10px 14px 0;
+}
+
+.liquidity-warning {
+  margin: 8px 14px 0;
+  font-size: 12px;
+  color: var(--warn);
+}
+
+.liquidity-plot {
+  position: relative;
+  margin: 8px 14px 0;
+}
+
+.liquidity-plot svg {
+  display: block;
+}
+
+.liquidity-baseline {
+  stroke: var(--border);
+}
+
+.liquidity-current {
+  stroke: var(--text);
+  stroke-width: 1.5;
+  stroke-dasharray: 4 3;
+}
+
+.liquidity-axis {
+  fill: var(--muted);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.liquidity-tip {
+  position: absolute;
+  top: 8px;
+  z-index: 2;
+  min-width: 180px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel-2);
+  font-size: 12px;
+  pointer-events: none;
+}
+
+.liquidity-foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 14px;
+  padding: 8px 14px 0;
+  font-size: 12px;
+}
+
+.legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text);
+}
+
+.swatch {
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+}
+
+.liquidity-table {
+  padding: 0 14px 12px;
+}
+
+.liquidity-table .table-scroll {
+  max-height: 320px;
+  margin-top: 8px;
+}
