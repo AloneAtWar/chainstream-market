@@ -142,6 +142,77 @@ var registrySchema = []string{
 	)`,
 }
 
+// launchpadSchema creates the market-launchpad tables: one row per bonding
+// curve token with its lifecycle status and latest curve state. Each list
+// reads a partial index, so a page touches only the rows it returns.
+var launchpadSchema = []string{
+	`CREATE TABLE IF NOT EXISTS launchpad_checkpoints (
+		chain_id       BIGINT PRIMARY KEY,
+		kafka_offset   BIGINT NOT NULL,
+		block_height   BIGINT NOT NULL,
+		block_hash     TEXT NOT NULL,
+		pruned_through BIGINT NOT NULL,
+		updated_at     TIMESTAMPTZ NOT NULL
+	)`,
+	// The newest applied block's time, the "now" of the list windows, so a
+	// catch-up or replay lists what the chain showed at its head.
+	`CREATE TABLE IF NOT EXISTS launchpad_heads (
+		chain_id     BIGINT PRIMARY KEY,
+		block_height BIGINT NOT NULL,
+		block_time   BIGINT NOT NULL
+	)`,
+	// launch_* is the launch block, or the first block the token was seen
+	// in when its launch was not (launch_seen false). Curve values are raw
+	// integers; progress is a wad.
+	`CREATE TABLE IF NOT EXISTS launchpad_tokens (
+		chain_id          BIGINT NOT NULL,
+		token             TEXT NOT NULL,
+		protocol          TEXT NOT NULL,
+		pool_id           TEXT NOT NULL,
+		manager           TEXT NOT NULL,
+		quote             TEXT NOT NULL,
+		creator           TEXT,
+		name              TEXT,
+		symbol            TEXT,
+		meta_uri          TEXT,
+		launch_tx         TEXT,
+		launch_seen       BOOLEAN NOT NULL,
+		launch_height     BIGINT NOT NULL,
+		launch_time       BIGINT NOT NULL,
+		status            TEXT NOT NULL,
+		progress          NUMERIC(78, 0),
+		base_remaining    NUMERIC(78, 0),
+		quote_raised      NUMERIC(78, 0),
+		price             NUMERIC(78, 0),
+		trades            BIGINT NOT NULL DEFAULT 0,
+		buys              BIGINT NOT NULL DEFAULT 0,
+		sells             BIGINT NOT NULL DEFAULT 0,
+		last_trade_time   BIGINT,
+		completed_height  BIGINT,
+		completed_time    BIGINT,
+		migrated_height   BIGINT,
+		migrated_time     BIGINT,
+		target_pool_id    TEXT,
+		updated_height    BIGINT NOT NULL,
+		PRIMARY KEY (chain_id, token)
+	)`,
+	`CREATE INDEX IF NOT EXISTS launchpad_tokens_new ON launchpad_tokens (chain_id, launch_time DESC, token)
+		WHERE status = 'bonding'`,
+	`CREATE INDEX IF NOT EXISTS launchpad_tokens_bonding ON launchpad_tokens (chain_id, progress DESC NULLS LAST, token)
+		WHERE status IN ('bonding', 'completed')`,
+	`CREATE INDEX IF NOT EXISTS launchpad_tokens_migrated ON launchpad_tokens (chain_id, migrated_time DESC, token)
+		WHERE status = 'migrated'`,
+	// Each row holds a token row as it was before block_height first
+	// changed it, or NULL when that block created it.
+	`CREATE TABLE IF NOT EXISTS launchpad_undo (
+		chain_id     BIGINT NOT NULL,
+		block_height BIGINT NOT NULL,
+		token        TEXT NOT NULL,
+		prev         JSONB,
+		PRIMARY KEY (chain_id, block_height, token)
+	)`,
+}
+
 // rankingSchema creates the token rankings, a rollup that market-rankings
 // rewrites from the ClickHouse output, holder_counts and registry_tokens.
 // Each sort column has an index led by chain_id, so a page reads only the

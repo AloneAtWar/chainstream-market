@@ -1,6 +1,6 @@
 // Package data is market-api's data layer: the ClickHouse tables of
 // market-engine and ch-loader, the PostgreSQL tables of holder-indexer,
-// market-registry and market-rankings, and the live feed from market-engine.
+// market-registry, market-rankings and market-launchpad, and the live feed from market-engine.
 package data
 
 import (
@@ -20,14 +20,14 @@ import (
 // ProviderSet is the data-layer provider set.
 var ProviderSet = wire.NewSet(
 	NewData, NewMarketReader, NewTransferReader, NewHolderReader, NewRegistryReader, NewRankingReader, NewLiquidityReader,
-	NewHub,
+	NewLaunchpadReader, NewHub,
 )
 
 // Data holds market-api's two databases.
 type Data struct {
 	// market holds market-engine's output and ch-loader's raw tables.
 	market *gorm.DB
-	// state holds the holder, registry and ranking tables.
+	// state holds the holder, registry, ranking and launchpad tables.
 	state *gorm.DB
 }
 

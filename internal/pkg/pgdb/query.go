@@ -18,6 +18,10 @@ const (
 	EngineCheckpoints   = "engine_checkpoints"
 	HolderCheckpoints   = "holder_checkpoints"
 	RegistryCheckpoints = "registry_checkpoints"
+	// LaunchpadCheckpoints is market-launchpad's checkpoint table.
+	//
+	// LaunchpadCheckpoints 是 market-launchpad 的检查点表。
+	LaunchpadCheckpoints = "launchpad_checkpoints"
 )
 
 // CheckpointRow is a row of a checkpoint table; queries name the table.

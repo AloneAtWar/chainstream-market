@@ -106,6 +106,7 @@ func Migrate(db *gorm.DB, name string) error {
 		statements = append(statements, holderSchema...)
 		statements = append(statements, registrySchema...)
 		statements = append(statements, rankingSchema...)
+		statements = append(statements, launchpadSchema...)
 		for _, statement := range statements {
 			if err := tx.Exec(statement).Error; err != nil {
 				return err
