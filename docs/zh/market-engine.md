@@ -118,7 +118,7 @@ Curve 元池会按基础池的虚拟价格报告基础池 LP 代币，Balancer V
 four.meme、Flap 的曲线交易带有交易后的曲线价格和已募集计价币（`pool_state.curve`）。engine 把曲线池当作常数乘积池定价：价格是换算成人类单位的曲线价，
 计价币储备是已募集量，代币储备是已募集量按该价格可换的数量。新曲线几乎没有募集，所以对曲线池用 `curve_min_liquidity_usd`（默认 0）
 同时替代 `min_liquidity_usd` 和 `candle_min_liquidity_usd`，让发射代币从第一笔交易起就有价格和 K 线。曲线迁移后不再参与定价：
-储备被清空，代币改由迁移到的 DEX 池定价。
+储备被清空，代币改由迁移到的 DEX 池定价。迁移发生在曲线还没有状态时（代币小数位未知）也会写入占位并保留迁移标记，之后补齐小数位回放的交易不会让曲线重新带储备；迁移区块内的曲线交易按迁移前的流动性判断能否进入代币 K 线。
 
 相关代码：`internal/app/engine/biz/pool.go`（`observeCurve`）、`launchpad.go`（阈值与迁移处理）。
 

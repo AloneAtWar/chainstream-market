@@ -40,6 +40,10 @@ type pool struct {
 	// token amount that quote buys at the curve price. Migrated curves keep
 	// their last price but no reserves, so they stop pricing the token.
 	Curve bool `json:",omitempty"`
+	// Migrated marks a curve whose liquidity moved to a DEX pool. It is set
+	// even before the curve has a state, so a curve trade replayed once its
+	// decimals arrive never brings the curve's reserves back.
+	Migrated bool `json:",omitempty"`
 }
 
 // tableAmounts returns the raw token amounts a concentrated pool's tick table
@@ -128,6 +132,9 @@ func observeCurve(prev, next pool, curve *streamv1.CurveState, d0, d1 uint32) (p
 		return prev, false
 	}
 	next.Reserves, next.HasReserves = [2]decimal.Decimal{}, false
+	if next.Migrated {
+		return next, true
+	}
 	if raised, ok := rawValue(curve.GetQuoteRaised(), d1); ok && !raised.IsNegative() {
 		next.Reserves = [2]decimal.Decimal{raised.DivRound(next.Price, precision), raised}
 		next.HasReserves = true

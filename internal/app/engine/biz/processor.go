@@ -283,7 +283,7 @@ func (processor *Processor) Apply(ctx context.Context, block *streamv1.BlockEven
 		processor.checkSwap(height, trade, tables)
 		processor.observe(height, trade, touched)
 	}
-	processor.applyLaunchpad(height, block, touched)
+	migrated := processor.applyLaunchpad(height, block, touched)
 	processor.settleTables(height, tables, touched)
 	processor.applyBalances(height, block, touched)
 	output.Prices = past.prices
@@ -308,7 +308,7 @@ func (processor *Processor) Apply(ctx context.Context, block *streamv1.BlockEven
 			trade.Outlier = processor.outlier(trade)
 		}
 		output.Trades = append(output.Trades, trade)
-		processor.aggregate(height, trade, touchedCandles)
+		processor.aggregate(height, trade, migrated, touchedCandles)
 	}
 	output.Candles = processor.collectCandles(touchedCandles, replayed)
 	processor.expireLate(height)
@@ -797,9 +797,17 @@ func (processor *Processor) candleSubjects(trade model.Trade, quoteLiquidity dec
 	return subjects
 }
 
-// aggregate adds a priced swap to its candles.
-func (processor *Processor) aggregate(height int64, trade model.Trade, touched map[candleKey]struct{}) {
-	for _, subject := range processor.candleSubjects(trade, processor.quoteLiquidityUSD(trade)) {
+// aggregate adds a priced swap to its candles. migrated holds the states of
+// curves that migrated in this block from before they did, which is the
+// liquidity their trades in this block saw.
+func (processor *Processor) aggregate(height int64, trade model.Trade, migrated map[string]pool, touched map[candleKey]struct{}) {
+	liquidity := processor.quoteLiquidityUSD(trade)
+	if state, ok := migrated[trade.PoolID]; ok {
+		if price, priced := processor.priceOf(trade.QuoteToken); priced {
+			liquidity = reserveUSD(processor.options.Catalog, state, trade.QuoteToken, price.USD)
+		}
+	}
+	for _, subject := range processor.candleSubjects(trade, liquidity) {
 		for _, interval := range processor.options.Intervals {
 			key := candleKey{Subject: subject.Subject, Key: subject.Key, Interval: interval}
 			current, exists := processor.candles.get(key)

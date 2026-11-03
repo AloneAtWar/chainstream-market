@@ -54,6 +54,10 @@ type LaunchpadChange struct {
 	// Reverted undoes every change above RevertTo before anything else.
 	Reverted bool
 	RevertTo int64
+	// Applied marks a change that carries a block. Without it, and without
+	// Reverted, a commit only moves the checkpoint: chainsync commits blocks
+	// it skipped as already handled, and those must leave the head alone.
+	Applied bool
 	// Height and Time are the block the tokens belong to; each token
 	// appears at most once.
 	Height int64

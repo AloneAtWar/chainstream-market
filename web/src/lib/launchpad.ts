@@ -1,7 +1,7 @@
 // Display helpers for market-launchpad's bonding-curve tokens.
 
 import type { LaunchpadToken } from "./api";
-import type { Chain } from "./chains";
+import { canonicalToken, type Chain } from "./chains";
 import { formatCompact, scaleRaw } from "./format";
 
 // LAUNCHPAD_PROTOCOLS names the launchpads chainstream-evm parses, with the
@@ -15,18 +15,28 @@ export function protocolLabel(protocol: string): string {
   return LAUNCHPAD_PROTOCOLS.find((item) => item.value === protocol)?.label ?? protocol;
 }
 
+// isNativeQuote reports a curve raising the chain's coin, given as either
+// the wrapped token or the native pseudo-address.
+function isNativeQuote(chain: Chain, token: LaunchpadToken): boolean {
+  return canonicalToken(chain, token.quote) === chain.wrappedNative;
+}
+
 // quoteSymbol names the quote a curve raises: the chain's coin for its
 // wrapped token, the registry symbol otherwise.
 export function quoteSymbol(chain: Chain, token: LaunchpadToken): string {
-  if (token.quote === chain.wrappedNative) return chain.nativeSymbol;
+  if (isNativeQuote(chain, token)) return chain.nativeSymbol;
   return token.quote_symbol ?? "quote";
 }
 
-// formatRaised writes how much quote a curve has raised, like 12.4 BNB.
+// formatRaised writes how much quote a curve has raised, like 12.4 BNB. Only
+// the chain's coin is known to have 18 decimals; another quote the registry
+// has not described yet shows its raw amount, marked as such, since guessing
+// its decimals can be off by many orders of magnitude.
 export function formatRaised(chain: Chain, token: LaunchpadToken): string {
   if (token.quote_raised === null) return "—";
-  const amount = scaleRaw(token.quote_raised, token.quote_decimals ?? 18);
-  return `${formatCompact(amount, 2)} ${quoteSymbol(chain, token)}`;
+  const decimals = token.quote_decimals ?? (isNativeQuote(chain, token) ? 18 : null);
+  if (decimals === null) return `${formatCompact(token.quote_raised, 2)} ${quoteSymbol(chain, token)} 最小单位（精度未知）`;
+  return `${formatCompact(scaleRaw(token.quote_raised, decimals), 2)} ${quoteSymbol(chain, token)}`;
 }
 
 // metaLink turns a launch's metadata reference into a link, when it is one.

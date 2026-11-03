@@ -190,10 +190,13 @@ func (processor *Processor) seedPools(height int64, ready []readyTrade, touched 
 		latest[normalize(trade.source.GetPoolId())] = trade.source
 	}
 	for _, id := range slices.Sorted(maps.Keys(latest)) {
-		if _, exists := processor.pools.get(id); exists {
+		// A curve that migrated before its decimals arrived only has a
+		// placeholder; seeding fills its price but keeps it migrated.
+		prev, exists := processor.pools.get(id)
+		if exists && (!prev.Migrated || prev.HasPrice) {
 			continue
 		}
-		if next, ok := observePool(pool{}, latest[id], processor.decimals.get, processor.tableAmounts); ok {
+		if next, ok := observePool(prev, latest[id], processor.decimals.get, processor.tableAmounts); ok {
 			processor.setPool(height, id, next, false, touched)
 		}
 	}

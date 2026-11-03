@@ -280,3 +280,23 @@ func TestLaunchpadRevertsAndResumes(t *testing.T) {
 		t.Fatalf("token A after revert(12) = %+v", a)
 	}
 }
+
+// chainsync commits blocks it skips, a replayed block or a revert with
+// nothing to undo, without applying them. Those commits move the checkpoint
+// but keep the head the list windows count from.
+func TestLaunchpadCheckpointOnlyCommitsKeepTheHead(t *testing.T) {
+	f := newFixture(t)
+	f.apply(100, []*streamv1.LaunchpadEvent{launch(tokenA, "AAA")}, trade(tokenA, true, wad(10)))
+	f.commit(100, "0x100")
+	f.commit(100, "0x100")
+	var head struct{ BlockHeight, BlockTime int64 }
+	if err := f.db.Raw(`SELECT block_height, block_time FROM launchpad_heads WHERE chain_id = 56`).Scan(&head).Error; err != nil {
+		t.Fatalf("read head: %v", err)
+	}
+	if head.BlockHeight != 100 || head.BlockTime != baseTime+300 {
+		t.Fatalf("head = %+v, want block 100 at %d", head, baseTime+300)
+	}
+	if a, ok := f.token(tokenA); !ok || a.Trades != 1 {
+		t.Fatalf("token A = %+v (found %v)", a, ok)
+	}
+}

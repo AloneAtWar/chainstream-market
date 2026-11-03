@@ -71,7 +71,7 @@ func TestApplyCollectsOneChangePerToken(t *testing.T) {
 		t.Fatal(err)
 	}
 	change := repo.changes[0]
-	if change.Height != 100 || change.Time != 1_000 || change.PrunedThrough != 96 || len(change.Tokens) != 2 {
+	if !change.Applied || change.Height != 100 || change.Time != 1_000 || change.PrunedThrough != 90 || len(change.Tokens) != 2 {
 		t.Fatalf("change = %+v", change)
 	}
 	a, b := change.Tokens[0], change.Tokens[1]
@@ -105,5 +105,56 @@ func TestRevertRefusesPrunedHistory(t *testing.T) {
 	}
 	if change := repo.changes[0]; !change.Reverted || change.RevertTo != 6 {
 		t.Fatalf("change = %+v", change)
+	}
+}
+
+func TestPruningKeepsEveryUnfinalizedBlock(t *testing.T) {
+	repo := &recordingRepo{}
+	launchpad, err := New(Options{ChainID: 56, Repo: repo, HistoryDepth: 4})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Finalized lags the depth: everything above it stays revertible.
+	if err := launchpad.Apply(context.Background(), &streamv1.BlockEvent{BlockHeight: 100, FinalizedHeight: 90}); err != nil {
+		t.Fatal(err)
+	}
+	if err := launchpad.Revert(context.Background(), 90); err != nil {
+		t.Fatalf("Revert(90) error = %v", err)
+	}
+	if err := launchpad.Revert(context.Background(), 89); err == nil {
+		t.Fatal("Revert(89) below the finalized height succeeded")
+	}
+	for _, test := range []struct{ height, finalized, want int64 }{
+		{100, 90, 90}, // finalized lags: keep everything above it
+		{100, 98, 96}, // finalized is recent: keep the depth
+		{100, 0, 96},  // finalized unknown: keep the depth
+	} {
+		if got := pruneBound(test.height, test.finalized, 4); got != test.want {
+			t.Errorf("pruneBound(%d, %d, 4) = %d, want %d", test.height, test.finalized, got, test.want)
+		}
+	}
+}
+
+func TestCommitWithoutABlockOnlyMovesTheCheckpoint(t *testing.T) {
+	repo := &recordingRepo{}
+	launchpad, err := New(Options{ChainID: 56, Repo: repo, HistoryDepth: 4})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := launchpad.Apply(context.Background(), &streamv1.BlockEvent{BlockHeight: 100, BlockTime: 1_700_000_100}); err != nil {
+		t.Fatal(err)
+	}
+	// chainsync commits a block it skipped as already handled without
+	// applying it.
+	for range 2 {
+		if err := launchpad.Commit(context.Background(), chainsync.Checkpoint{ChainID: 56}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if first := repo.changes[0]; !first.Applied || first.Height != 100 || first.Time != 1_700_000_100 {
+		t.Fatalf("applied change = %+v", first)
+	}
+	if second := repo.changes[1]; second.Applied || second.Reverted || second.PrunedThrough != 96 {
+		t.Fatalf("checkpoint-only change = %+v, want neither applied nor reverted", second)
 	}
 }

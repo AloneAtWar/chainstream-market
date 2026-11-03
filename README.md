@@ -265,7 +265,7 @@ market-launchpad reads each chain topic on its own checkpoint and follows launch
 - **Curve state.** Progress (a wad, 1e18 = 100%), base remaining, quote raised and price (raw quote units per 1e18 raw token units) follow the token's last curve trade in each block. Trades of the protocols in `launchpad.protocols` count even without a curve state. Buys, sells and the last trade time accumulate.
 - **Launches seen late.** A token first seen trading, because its launch predates the topic, gets that block as an approximate launch with `launch_seen` false, and never enters the new list.
 - **Time.** The list windows count back from the newest block time applied (`launchpad_heads`), not the wall clock, so a replay or a lagging consumer lists what the chain showed at its head.
-- **Reorgs.** Before a block first changes a row, the row (or its absence) is saved in `launchpad_undo`, restored like registry rows. Undo history is pruned at the finalized height and `launchpad.history_depth`.
+- **Reorgs.** Before a block first changes a row, the row (or its absence) is saved in `launchpad_undo`, restored like registry rows. Undo history keeps the latest `launchpad.history_depth` blocks and every block above the finalized height, whichever reaches further back; with no finalized height it keeps the depth. A commit that only moves the checkpoint (a block chainsync skipped as already handled) leaves the rows and the head alone.
 
 | Table | Contents |
 | --- | --- |
@@ -351,7 +351,7 @@ A Curve meta pool reports its base pool's LP token at the base pool's virtual pr
 
 ### Launchpad bonding curves
 
-A four.meme or Flap curve trade carries the curve's price and quote raised after it (`pool_state.curve`). The engine prices the curve's pool from them like a constant-product pool: the price is the curve price in human units, the quote reserve is the quote raised, and the token reserve is what that buys at the price. Since a fresh curve has raised almost nothing, `curve_min_liquidity_usd` (default 0) replaces both `min_liquidity_usd` and `candle_min_liquidity_usd` for curve pools, so launch tokens get prices and candles from their first trade. A curve that migrates stops pricing: its reserves are cleared and the token is priced through the DEX pool it moved to.
+A four.meme or Flap curve trade carries the curve's price and quote raised after it (`pool_state.curve`). The engine prices the curve's pool from them like a constant-product pool: the price is the curve price in human units, the quote reserve is the quote raised, and the token reserve is what that buys at the price. Since a fresh curve has raised almost nothing, `curve_min_liquidity_usd` (default 0) replaces both `min_liquidity_usd` and `candle_min_liquidity_usd` for curve pools, so launch tokens get prices and candles from their first trade. A curve that migrates stops pricing: its reserves are cleared and the token is priced through the DEX pool it moved to. The migration mark sticks even when it arrives before the curve has a state (its token's decimals still unknown), so trades replayed later never revive the curve. Curve trades in the migration block are judged for token candles against the liquidity the curve had before it migrated.
 
 ### Chainlink feeds
 

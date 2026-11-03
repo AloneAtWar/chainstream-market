@@ -38,9 +38,10 @@ func (repo *launchpadRepo) CommitLaunchpad(ctx context.Context, checkpoint chain
 	chainID := int64(checkpoint.ChainID)
 	err := repo.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		run := &pgdb.Runner{Tx: tx}
-		if change.Reverted {
+		switch {
+		case change.Reverted:
 			queueRevert(run, chainID, change.RevertTo)
-		} else {
+		case change.Applied:
 			queueTokens(run, chainID, change)
 			run.Exec(`INSERT INTO launchpad_heads (chain_id, block_height, block_time) VALUES (?, ?, ?)
 				ON CONFLICT (chain_id) DO UPDATE SET block_height = EXCLUDED.block_height, block_time = EXCLUDED.block_time`,

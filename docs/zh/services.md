@@ -180,7 +180,7 @@ go run ./cmd/market-launchpad -conf configs/market-launchpad.yaml   # 需要 pos
 - **晚发现的发射**：发射早于 topic 起点、先以交易被看到的代币，以该块作为近似发射时间，`launch_seen` 为 false，不进入新币栏。
 - **时间**：各栏的时间窗口从已应用的最新区块时间（`launchpad_heads`）往回算，而不是墙上时钟，所以重放或消费落后时列表与链头一致。
 - **重组**：一个块首次修改某行之前，先把该行（或其不存在）存入 `launchpad_undo`，回滚方式与 registry 相同；
-  撤销记录按最终确认高度和 `launchpad.history_depth` 裁剪。
+  撤销记录同时保留最近 `launchpad.history_depth` 个区块和最终确认高度以上的全部区块（取更早的边界），没有最终确认高度时只按深度保留；只推进检查点的提交（chainsync 跳过的已处理区块）不改动代币行和 head。
 
 | 表 | 内容 |
 | --- | --- |
