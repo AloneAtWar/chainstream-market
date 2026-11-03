@@ -15,10 +15,6 @@ import (
 	"gorm.io/gorm/clause"
 )
 
-// lateWindow 是补缺读 trades 时往前多看的区块数：等待代币精度的成交由之后的区块写出，
-// revision_height 会大于 block_height。
-const lateWindow = 50000
-
 // walletRepo 把账本存在 PostgreSQL（持仓、undo、检查点）和 ClickHouse（流水）里。
 type walletRepo struct {
 	market *gorm.DB
@@ -79,10 +75,42 @@ func (repo *walletRepo) DiscardTradesAfter(ctx context.Context, chainID uint64, 
 		query = "chain_id = ? AND (apply_height > ? OR (apply_height = ? AND part > ?))"
 		args = []any{chainID, height, height, part}
 	}
-	if err := repo.market.WithContext(ctx).Where(query, args...).Delete(&chdb.WalletTradeRow{}).Error; err != nil {
+	if err := repo.deleteTrades(ctx, chainID, height, query, args); err != nil {
 		return fmt.Errorf("clickhouse store: discard wallet trades: %w", err)
 	}
 	return nil
+}
+
+// deleteTrades 删掉 wallet_trades 里符合 query 的流水，并在 wallet_invalidations 里记下其中
+// 最早的成交日，让下次汇总重算那些日子（汇总可能已经读过这些流水）。删除之前记一次，崩溃
+// 后重做时删除已经完成、找不到这些行也不会漏；删除之后再记一次，时间晚于删除，正在进行的
+// 汇总如果读到了删除前的数据，下次汇总也会把它算进来。height 是删除后保留的最高高度。
+func (repo *walletRepo) deleteTrades(ctx context.Context, chainID uint64, height int64, query string, args []any) error {
+	var row struct {
+		Earliest time.Time
+		Found    uint64
+	}
+	db := repo.market.WithContext(ctx)
+	if err := db.Model(&chdb.WalletTradeRow{}).Select("min(block_time) AS earliest, count() AS found").
+		Where(query, args...).Scan(&row).Error; err != nil {
+		return err
+	}
+	if row.Found == 0 {
+		return nil
+	}
+	invalidate := func() error {
+		rows := []chdb.WalletInvalidationRow{{
+			ChainID: chainID, At: uint64(time.Now().UnixMilli()), Day: row.Earliest.UTC().Truncate(24 * time.Hour), Height: height,
+		}}
+		return chdb.Insert(ctx, repo.market, &rows)
+	}
+	if err := invalidate(); err != nil {
+		return err
+	}
+	if err := db.Where(query, args...).Delete(&chdb.WalletTradeRow{}).Error; err != nil {
+		return err
+	}
+	return invalidate()
 }
 
 func (repo *walletRepo) Positions(ctx context.Context, chainID uint64, keys []model.WalletKey) ([]model.Position, error) {
@@ -173,8 +201,8 @@ func (repo *walletRepo) CommitWallet(ctx context.Context, commit biz.Commit) err
 }
 
 func (repo *walletRepo) RevertWallet(ctx context.Context, to int64, checkpoint biz.Checkpoint) error {
-	if err := repo.market.WithContext(ctx).Where("chain_id = ? AND apply_height > ?", checkpoint.ChainID, to).
-		Delete(&chdb.WalletTradeRow{}).Error; err != nil {
+	if err := repo.deleteTrades(ctx, checkpoint.ChainID, to, "chain_id = ? AND apply_height > ?",
+		[]any{checkpoint.ChainID, to}); err != nil {
 		return fmt.Errorf("clickhouse store: revert wallet trades: %w", err)
 	}
 	values := map[string]any{"chain": int64(checkpoint.ChainID), "to": to}
@@ -223,13 +251,29 @@ func (trades *tradeSource) FirstHeightSince(ctx context.Context, chainID uint64,
 	return row.Height, row.Found > 0, nil
 }
 
+func (trades *tradeSource) LastHeightBefore(ctx context.Context, chainID uint64, upTo int64, before time.Time) (int64, bool, error) {
+	var row struct {
+		Height int64
+		Found  uint64
+	}
+	err := trades.db.WithContext(ctx).Raw(`SELECT max(block_height) AS height, count() AS found FROM blocks
+		WHERE chain_id = ? AND block_height <= ? AND block_time < ?`, chainID, upTo, before.UTC()).Scan(&row).Error
+	if err != nil {
+		return 0, false, fmt.Errorf("clickhouse store: last height before: %w", err)
+	}
+	return row.Height, row.Found > 0, nil
+}
+
 func (trades *tradeSource) TradesBetween(ctx context.Context, chainID uint64, from, to int64) ([]biz.Trade, error) {
 	var rows []chdb.TradeRow
 	err := trades.db.WithContext(ctx).
 		Select(`revision_height, block_height, block_time, transaction_hash, log_index, operation_index, pool_id,
 			trader, side, base_token, quote_token, base_amount, price_usd, value_usd, outlier`).
-		Where(`chain_id = ? AND block_height BETWEEN ? AND ? AND revision_height BETWEEN ? AND ? AND side IN ('buy', 'sell')`,
-			chainID, from-lateWindow, to, from, to).
+		// 按 revision_height 找，不限 block_height 的下界：等待代币精度的成交由之后的区块写出，
+		// 延迟多少由 market-engine 的 backfill_blocks 决定。trades 上的 revision_height minmax
+		// 索引让它不用扫全表。
+		Where(`chain_id = ? AND revision_height BETWEEN ? AND ? AND block_height <= ? AND side IN ('buy', 'sell')`,
+			chainID, from, to, to).
 		Order("revision_height, block_height, log_index, operation_index").Find(&rows).Error
 	if err != nil {
 		return nil, fmt.Errorf("clickhouse store: trades %d-%d: %w", from, to, err)

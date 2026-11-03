@@ -128,8 +128,9 @@ type Wallet struct {
 	// history is how far back a first start replays market-engine's trades
 	// from ClickHouse.
 	History *durationpb.Duration `protobuf:"bytes,2,opt,name=history,proto3" json:"history,omitempty"`
-	// final_age: blocks filled from ClickHouse that are older than this keep
-	// no undo history, since no reorg reaches them.
+	// final_age: while the finalized height is unknown, blocks filled from
+	// ClickHouse whose own block time is older than this keep no undo history.
+	// Once it is known, every unfinalized block keeps its undo history.
 	FinalAge *durationpb.Duration `protobuf:"bytes,3,opt,name=final_age,json=finalAge,proto3" json:"final_age,omitempty"`
 	// backfill_heights is how many heights one ClickHouse read covers when a
 	// gap is filled.

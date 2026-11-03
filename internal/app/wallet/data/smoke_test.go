@@ -287,11 +287,14 @@ func TestSmokeKafkaLedgerAndStats(t *testing.T) {
 
 	// 汇总：alice 在 2 个代币上已实现 -5，bob 在 1 个代币上 +20。
 	labels := NewLabelRepo(data)
+	clock := time.Now()
 	refresher, err := biz.NewRefresher(biz.StatsOptions{
 		ChainID: 1, Chain: "eth", Repo: NewStatsRepo(data), Labels: labels, Windows: []int{7, 30}, FastCloseSeconds: 60,
 		SmartMoney: biz.SmartMoneyRule{WindowDays: 30, MinRealizedUSD: 10, MinWinRate: 0.5, MinTokens: 1, MaxLossShare: 0.3, MaxWallets: 10},
 		Bot:        biz.BotRule{WindowDays: 7, MinTrades: 1000, MinCloses: 1, MinFastCloseShare: 1},
-		// 版本是汇总的墙钟时间，wallet_stats 按它过期，所以用真实时间。
+		// 版本是汇总的墙钟时间，wallet_stats 按它过期，所以用真实时间；每次调用加 1 毫秒，
+		// 连续的汇总版本不同。
+		Now: func() time.Time { clock = clock.Add(time.Millisecond); return clock },
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -347,7 +350,81 @@ func TestSmokeKafkaLedgerAndStats(t *testing.T) {
 		t.Fatalf("labels after replace %v", got)
 	}
 	var since []pgdb.WalletLabelRow
-	if err := data.state.Where("wallet = ?", bob).Find(&since).Error; err != nil || len(since) != 1 || since[0].Since.Equal(chain.at(3000)) {
+	if err = data.state.Where("wallet = ?", bob).Find(&since).Error; err != nil || len(since) != 1 || since[0].Since.Equal(chain.at(3000)) {
 		t.Fatalf("bob label should keep its first since: %+v %v", since, err)
+	}
+
+	// 每个版本单独保存，发布后只留最新的两个。
+	for range 2 {
+		if err = refresher.Refresh(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var versions []uint64
+	if err = data.market.Raw("SELECT DISTINCT version FROM wallet_stats ORDER BY version").Scan(&versions).Error; err != nil {
+		t.Fatal(err)
+	}
+	latest, _, err := chdb.LatestWalletRefresh(context.Background(), data.market, 1)
+	if err != nil || len(versions) != 2 || versions[1] != latest.Version || versions[0] <= refresh.Version {
+		t.Fatalf("versions %v, latest %d, first %d: %v", versions, latest.Version, refresh.Version, err)
+	}
+
+	// 回滚删掉流水时记下最早的成交日和保留高度，下次汇总从那天重算。
+	repo := NewWalletRepo(data)
+	checkpoint, _, err := repo.LoadWalletCheckpoint(context.Background(), 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	checkpoint.Height = 14
+	if err = repo.RevertWallet(context.Background(), 14, checkpoint); err != nil {
+		t.Fatal(err)
+	}
+	invalidDay, invalidHeight, invalid, err := NewStatsRepo(data).Invalidations(context.Background(), 1, latest.Started)
+	if err != nil || !invalid || !invalidDay.Equal(chain.base) || invalidHeight != 14 {
+		t.Fatalf("invalidation %v %d %v %v", invalidDay, invalidHeight, invalid, err)
+	}
+	if err = refresher.Refresh(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	profile, err := NewStatsRepo(data).(*statsRepo).latestStats(context.Background(), alice, 30)
+	if err != nil || !profile.RealizedUSD.Equal(decimal.RequireFromString("-50")) {
+		t.Fatalf("alice after revert %+v %v", profile, err)
+	}
+}
+
+// latestStats 读最新一次汇总里一个钱包一个窗口的统计。
+func (repo *statsRepo) latestStats(ctx context.Context, wallet string, window int) (model.WalletStats, error) {
+	refresh, _, err := chdb.LatestWalletRefresh(ctx, repo.db, 1)
+	if err != nil {
+		return model.WalletStats{}, err
+	}
+	var row chdb.WalletStatsRow
+	err = repo.db.WithContext(ctx).Where("chain_id = 1 AND version = ? AND wallet = ? AND window_days = ?", refresh.Version, wallet, window).
+		Take(&row).Error
+	return row.WalletStats(), err
+}
+
+// TestTradeSourceFindsTradesHeldLongerThanAnyWindow 补缺按 revision_height 找成交，不限它和
+// block_height 相差多少：market-engine 的 backfill_blocks 可以配得很大。
+func TestTradeSourceFindsTradesHeldLongerThanAnyWindow(t *testing.T) {
+	data := openData(t)
+	at := time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
+	late := engineTrade(9600, at, alice, tokenX, "buy", "1", "1")
+	late.RevisionHeight = 60000
+	rows := []chdb.TradeRow{late, engineTrade(60001, at, alice, tokenX, "buy", "1", "1")}
+	if err := chdb.Insert(context.Background(), data.market, &rows); err != nil {
+		t.Fatal(err)
+	}
+	trades, err := NewTradeSource(data).TradesBetween(context.Background(), 1, 60000, 61999)
+	if err != nil || len(trades) != 2 || trades[0].BlockHeight != 9600 || trades[0].RevisionHeight != 60000 {
+		t.Fatalf("trades %+v %v", trades, err)
+	}
+	blocks := []chdb.BlockRow{{ChainID: 1, BlockHeight: 59999, BlockTime: at}, {ChainID: 1, BlockHeight: 60000, BlockTime: at.Add(time.Hour)}}
+	if err = chdb.Insert(context.Background(), data.market, &blocks); err != nil {
+		t.Fatal(err)
+	}
+	height, ok, err := NewTradeSource(data).LastHeightBefore(context.Background(), 1, 60000, at.Add(time.Minute))
+	if err != nil || !ok || height != 59999 {
+		t.Fatalf("last height before %d %v %v", height, ok, err)
 	}
 }

@@ -207,15 +207,18 @@ type WalletStatsQuery struct {
 	Limit int
 }
 
-// WalletTradeQuery 查询一个钱包的账本流水，按时间倒序。
+// WalletTradeQuery 查询一个钱包的账本流水，按（区块, log_index, operation_index）倒序。
 type WalletTradeQuery struct {
 	ChainID uint64
 	Wallet  string
 	// Token 不为空时只返回这个代币。
 	Token string
-	// BeforeHeight 不为零时只返回更早区块的成交，用于翻页。
-	BeforeHeight int64
-	Limit        int
+	// BeforeHeight 不为零时只返回排在翻页位置之后的成交：只给高度时是更早的区块；再给
+	// BeforeLogIndex（和 BeforeOperationIndex）时从同一区块里接着往下翻。
+	BeforeHeight         int64
+	BeforeLogIndex       *uint32
+	BeforeOperationIndex *uint32
+	Limit                int
 }
 
 // PositionQuery 查询持仓：按钱包（Wallet）或按代币（Token）。

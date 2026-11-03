@@ -149,10 +149,21 @@ func TestWalletPositions(t *testing.T) {
 
 func TestWalletTrades(t *testing.T) {
 	wallets := &fakeWallets{}
-	code, body := serveWallets(t, wallets, "/v1/chains/1/wallets/0xaa/trades?token=0xTT&before_height=100&limit=10")
+	code, body := serveWallets(t, wallets,
+		"/v1/chains/1/wallets/0xaa/trades?token=0xTT&before_height=100&before_log_index=4&before_operation_index=1&limit=1")
 	query := wallets.tradeQuery
-	if code != http.StatusOK || query.Token != "0xtt" || query.BeforeHeight != 100 || query.Limit != 10 {
+	if code != http.StatusOK || query.Token != "0xtt" || query.BeforeHeight != 100 || query.Limit != 1 ||
+		*query.BeforeLogIndex != 4 || *query.BeforeOperationIndex != 1 {
 		t.Fatalf("code %d query %+v", code, query)
+	}
+	// 整页返回时带续页位置。
+	if next := body["next"].(map[string]any); next["before_height"].(float64) != 9 || next["before_operation_index"].(float64) != 0 {
+		t.Fatalf("next %v", body["next"])
+	}
+	for _, bad := range []string{"before_log_index=1", "before_height=5&before_operation_index=1"} {
+		if code, _ := serveWallets(t, wallets, "/v1/chains/1/wallets/0xaa/trades?"+bad); code != http.StatusBadRequest {
+			t.Errorf("%s: status %d", bad, code)
+		}
 	}
 	trade := body["trades"].([]any)[0].(map[string]any)
 	if trade["event"] != "close" || trade["counted"] != true || trade["hold_seconds"].(float64) != 60 {

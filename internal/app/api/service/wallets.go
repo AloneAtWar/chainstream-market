@@ -344,13 +344,9 @@ func (server *Server) walletTrades(writer http.ResponseWriter, request *http.Req
 			return
 		}
 	}
-	if raw := request.URL.Query().Get("before_height"); raw != "" {
-		height, parseErr := strconv.ParseInt(raw, 10, 64)
-		if parseErr != nil || height <= 0 {
-			server.fail(writer, request, badRequest("before_height must be a positive height"))
-			return
-		}
-		query.BeforeHeight = height
+	if err = walletTradeCursor(request, &query); err != nil {
+		server.fail(writer, request, err)
+		return
 	}
 	trades, err := server.wallets.WalletTrades(request.Context(), query)
 	if err != nil {
@@ -368,7 +364,51 @@ func (server *Server) walletTrades(writer http.ResponseWriter, request *http.Req
 			QuantityAfter: trade.QuantityAfter.String(), CostAfter: trade.CostAfter.String(),
 		}
 	}
-	writeJSON(writer, http.StatusOK, map[string]any{"chain_id": chain, "wallet": wallet, "trades": body})
+	response := map[string]any{"chain_id": chain, "wallet": wallet, "trades": body}
+	if len(trades) == count {
+		last := trades[len(trades)-1]
+		response["next"] = walletTradeNext{
+			BeforeHeight: last.BlockHeight, BeforeLogIndex: last.LogIndex, BeforeOperationIndex: last.OperationIndex,
+		}
+	}
+	writeJSON(writer, http.StatusOK, response)
+}
+
+// walletTradeNext 是整页返回时的续页位置：三个值原样作为查询参数传回。
+type walletTradeNext struct {
+	BeforeHeight         int64  `json:"before_height"`
+	BeforeLogIndex       uint32 `json:"before_log_index"`
+	BeforeOperationIndex uint32 `json:"before_operation_index"`
+}
+
+// walletTradeCursor 读 before_height、before_log_index、before_operation_index；后两个依次
+// 需要前一个。
+func walletTradeCursor(request *http.Request, query *model.WalletTradeQuery) error {
+	values := request.URL.Query()
+	if raw := values.Get("before_height"); raw != "" {
+		height, err := strconv.ParseInt(raw, 10, 64)
+		if err != nil || height <= 0 {
+			return badRequest("before_height must be a positive height")
+		}
+		query.BeforeHeight = height
+	}
+	if raw := values.Get("before_log_index"); raw != "" {
+		index, err := strconv.ParseUint(raw, 10, 32)
+		if err != nil || query.BeforeHeight == 0 {
+			return badRequest("before_log_index must be a log index and needs before_height")
+		}
+		logIndex := uint32(index)
+		query.BeforeLogIndex = &logIndex
+	}
+	if raw := values.Get("before_operation_index"); raw != "" {
+		index, err := strconv.ParseUint(raw, 10, 32)
+		if err != nil || query.BeforeLogIndex == nil {
+			return badRequest("before_operation_index must be an operation index and needs before_log_index")
+		}
+		operation := uint32(index)
+		query.BeforeOperationIndex = &operation
+	}
+	return nil
 }
 
 type traderResponse struct {

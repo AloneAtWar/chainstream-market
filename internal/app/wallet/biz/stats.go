@@ -14,11 +14,13 @@ import (
 // day 是日汇总的粒度，按 UTC 切日。
 const day = 24 * time.Hour
 
-// Refresh 是一次汇总：Version 是 wallet_stats 行的版本（毫秒时间戳），Head 是当时最新成交
-// 的时间，ApplyHeight 是当时 wallet_trades 的最高 apply_height。
+// Refresh 是一次汇总：Version 是 wallet_stats 行的版本（毫秒时间戳），Started 是开始读
+// wallet_trades 之前的时间（毫秒），Head 是当时最新成交的时间，ApplyHeight 是当时
+// wallet_trades 的最高 apply_height。
 type Refresh struct {
 	ChainID     uint64
 	Version     uint64
+	Started     uint64
 	Head        time.Time
 	ApplyHeight int64
 }
@@ -51,6 +53,9 @@ type StatsRepo interface {
 	LoadRefresh(ctx context.Context, chainID uint64) (Refresh, bool, error)
 	// EarliestTradeAfter 返回 apply_height 大于 height 的流水里最早的成交时间。
 	EarliestTradeAfter(ctx context.Context, chainID uint64, height int64) (time.Time, bool, error)
+	// Invalidations 返回 since（毫秒）及之后被回滚或丢弃的流水里最早的成交日，以及删除
+	// 时最低的保留高度：之后重新写入的流水 apply_height 会从它往上。
+	Invalidations(ctx context.Context, chainID uint64, since uint64) (time.Time, int64, bool, error)
 	// RebuildDaily 重算 from（某天零点）及之后每天的钱包 × 代币日汇总。
 	RebuildDaily(ctx context.Context, chainID uint64, from time.Time, fastCloseSeconds int64) error
 	// WriteStats 用 from 及之后的日汇总写出一个窗口的钱包统计，行版本为 version。
@@ -61,6 +66,8 @@ type StatsRepo interface {
 	SmartMoney(ctx context.Context, chainID uint64, rule SmartMoneyRule, bot BotRule, version uint64) ([]string, error)
 	// SaveRefresh 记下这次汇总；market-api 只读最新一次汇总写出的统计。
 	SaveRefresh(ctx context.Context, refresh Refresh) error
+	// PruneStats 删掉 keep 以外的统计版本。
+	PruneStats(ctx context.Context, chainID uint64, keep []uint64) error
 }
 
 // LabelRepo 在 PostgreSQL 里保存钱包标签。
@@ -109,11 +116,16 @@ func NewRefresher(options StatsOptions) (*Refresher, error) {
 
 // Refresh 汇总一次。还没有流水时什么都不做。
 //
-// 日汇总只重算变化过的日子：上次汇总时最新成交的前一天起（覆盖重组），以及上次汇总之后
-// 新写入的流水里最早的那天起（补缺写进来的旧成交）。首次汇总重算最长窗口内的全部日子。
-// 窗口按最新成交所在的日子往前数，不按墙钟，所以追块时统计也对得上。
+// 日汇总只重算变化过的日子：上次汇总时最新成交的前一天起，上次汇总开始之后被回滚或丢弃的
+// 流水里最早的那天起，以及之后新写入的流水里最早的那天起（补缺或延迟写进来的旧成交）。
+// 首次汇总重算最长窗口内的全部日子。窗口按最新成交所在的日子往前数，不按墙钟，所以追块时
+// 统计也对得上。
+//
+// 每个版本的统计单独保存；发布新版本后只留它和上一个版本（读的一方可能刚读到上一个版本
+// 的发布记录），其余删掉。
 func (refresher *Refresher) Refresh(ctx context.Context) error {
 	options := refresher.options
+	started := uint64(options.Now().UnixMilli())
 	head, applyHeight, ok, err := options.Repo.TradeHead(ctx, options.ChainID)
 	if err != nil || !ok {
 		return err
@@ -127,7 +139,16 @@ func (refresher *Refresher) Refresh(ctx context.Context) error {
 	}
 	if resumed {
 		changed := previous.Head.UTC().Truncate(day).AddDate(0, 0, -1)
-		earliest, found, earliestErr := options.Repo.EarliestTradeAfter(ctx, options.ChainID, previous.ApplyHeight)
+		cursor := previous.ApplyHeight
+		invalidDay, invalidHeight, invalid, invalidErr := options.Repo.Invalidations(ctx, options.ChainID, previous.Started)
+		if invalidErr != nil {
+			return invalidErr
+		}
+		if invalid {
+			changed = minTime(changed, invalidDay.UTC().Truncate(day))
+			cursor = min(cursor, invalidHeight)
+		}
+		earliest, found, earliestErr := options.Repo.EarliestTradeAfter(ctx, options.ChainID, cursor)
 		if earliestErr != nil {
 			return earliestErr
 		}
@@ -153,7 +174,9 @@ func (refresher *Refresher) Refresh(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	if err := options.Repo.SaveRefresh(ctx, Refresh{ChainID: options.ChainID, Version: version, Head: head, ApplyHeight: applyHeight}); err != nil {
+	if err = options.Repo.SaveRefresh(ctx, Refresh{
+		ChainID: options.ChainID, Version: version, Started: started, Head: head, ApplyHeight: applyHeight,
+	}); err != nil {
 		return err
 	}
 	since := options.Now().UTC()
@@ -164,7 +187,14 @@ func (refresher *Refresher) Refresh(ctx context.Context) error {
 	for _, wallet := range bots {
 		labels = append(labels, model.WalletLabel{Wallet: wallet, Label: model.LabelBot, Source: model.WalletLabelSource, Since: since})
 	}
-	if err := options.Labels.ReplaceRuleLabels(ctx, options.ChainID, labels); err != nil {
+	if err = options.Labels.ReplaceRuleLabels(ctx, options.ChainID, labels); err != nil {
+		return err
+	}
+	keep := []uint64{version}
+	if resumed {
+		keep = append(keep, previous.Version)
+	}
+	if err = options.Repo.PruneStats(ctx, options.ChainID, keep); err != nil {
 		return err
 	}
 	metrics.WalletLabels.WithLabelValues(options.Chain, model.LabelSmartMoney).Set(float64(len(smart)))

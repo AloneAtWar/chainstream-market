@@ -100,10 +100,25 @@ func (repo *memoryRepo) RevertWallet(_ context.Context, to int64, checkpoint Che
 	return nil
 }
 
-// memoryTrades 是 ClickHouse trades 表的替身。
+// memoryTrades 是 ClickHouse trades 和 blocks 表的替身。区块 h 的时间默认是 t0 + h 秒，
+// times 可以覆盖。
 type memoryTrades struct {
 	trades []Trade
 	first  int64
+	times  map[int64]time.Time
+}
+
+func (trades *memoryTrades) LastHeightBefore(_ context.Context, _ uint64, upTo int64, before time.Time) (int64, bool, error) {
+	for height := upTo; height > 0; height-- {
+		at, ok := trades.times[height]
+		if !ok {
+			at = t0.Add(time.Duration(height) * time.Second)
+		}
+		if at.Before(before) {
+			return height, true, nil
+		}
+	}
+	return 0, false, nil
 }
 
 func (trades *memoryTrades) FirstHeightSince(context.Context, uint64, time.Time) (int64, bool, error) {
@@ -249,6 +264,41 @@ func TestFollowerFillsGapsAndSkipsDuplicates(t *testing.T) {
 	}
 }
 
+func TestFollowerKeepsUndoOfRecentRevisionBlocks(t *testing.T) {
+	for _, finalized := range []int64{0, 7} {
+		// 第 5 块的成交等到第 9 块才写出：成交时间早，但第 9 块是刚出的。
+		late := trade(5, model.SideBuy, "10", "10")
+		late.RevisionHeight = 9
+		trades := &memoryTrades{trades: []Trade{late}, times: map[int64]time.Time{9: t0.Add(time.Hour), 10: t0.Add(time.Hour)}}
+		repo := newMemoryRepo()
+		follower, err := New(Options{
+			ChainID: 1, Open: func(int64) (source.Source, error) { return nil, nil }, Repo: repo, Trades: trades,
+			HistoryDepth: 256, FinalAge: 30 * time.Minute, BackfillHeights: 10, CloseRatio: 0.001,
+			Now: func() time.Time { return t0.Add(time.Hour) },
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := follower.restore(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		h := &harness{t: t, repo: repo, trades: trades, follower: follower, offset: -1}
+		h.block(4, 0)
+		if err := h.send(live.Update{Height: 10, FinalizedHeight: finalized, BlockTime: t0.Add(time.Hour).Unix()}); err != nil {
+			t.Fatal(err)
+		}
+		if repo.checkpoint.PrunedThrough >= 9 || len(repo.undo) != 1 {
+			t.Fatalf("finalized %d: pruned through %d, undo %d", finalized, repo.checkpoint.PrunedThrough, len(repo.undo))
+		}
+		if err := h.send(live.Update{Type: live.UpdateRevert, Height: 8}); err != nil {
+			t.Fatalf("finalized %d: revert: %v", finalized, err)
+		}
+		if _, ok := repo.positions[model.WalletKey{Wallet: walletA, Token: tokenX}]; ok {
+			t.Fatalf("finalized %d: the position written at 9 should be reverted", finalized)
+		}
+	}
+}
+
 func TestFollowerParts(t *testing.T) {
 	h := newHarness(t, newMemoryRepo(), &memoryTrades{})
 	h.block(10, 0)
@@ -354,5 +404,12 @@ func TestFollowerBatchesWhileCatchingUp(t *testing.T) {
 	}
 	if repo.checkpoint.PrunedThrough != 12 || len(repo.undo) != 2 {
 		t.Fatalf("pruned through %d undo %d", repo.checkpoint.PrunedThrough, len(repo.undo))
+	}
+	// 回滚到裁剪线以下没法还原：报错停下。
+	if err := h.send(live.Update{Type: live.UpdateRevert, Height: 11}); err == nil || !strings.Contains(err.Error(), "pruned") {
+		t.Fatalf("deep revert: %v", err)
+	}
+	if err := h.send(live.Update{Type: live.UpdateRevert, Height: 12}); err != nil || repo.checkpoint.Height != 12 {
+		t.Fatalf("revert to the pruned height: %v, checkpoint %+v", err, repo.checkpoint)
 	}
 }

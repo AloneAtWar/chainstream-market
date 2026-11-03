@@ -85,6 +85,8 @@ type TradeSource interface {
 	// TradesBetween 返回 revision_height 在 [from, to] 之间的买卖成交，按 revision_height、
 	// block_height、log_index、operation_index 升序。
 	TradesBetween(ctx context.Context, chainID uint64, from, to int64) ([]Trade, error)
+	// LastHeightBefore 返回不高于 upTo、block_time 早于 before 的最高已存区块高度。
+	LastHeightBefore(ctx context.Context, chainID uint64, upTo int64, before time.Time) (int64, bool, error)
 }
 
 // Opener 打开链的 live topic：start 小于 0 时从末尾开始读，否则从 offset start 开始。
@@ -101,7 +103,8 @@ type Options struct {
 	HistoryDepth int64
 	// History 是首次启动从 ClickHouse 回放的时长。
 	History time.Duration
-	// FinalAge：从 ClickHouse 补的区块比它更旧时不留 undo。
+	// FinalAge：还不知道终局高度时，从 ClickHouse 补的区块（按 revision 区块自己的时间）比它
+	// 更旧就不留 undo。
 	FinalAge time.Duration
 	// BackfillHeights 是补缺时一次读多少个高度。
 	BackfillHeights int64
@@ -136,7 +139,7 @@ type Follower struct {
 	trades    []model.WalletTrade
 	dirty     bool
 	lastFlush time.Time
-	// pruneAge 是补缺时比 FinalAge 更旧的最高高度，这些高度不留 undo。
+	// pruneAge 是补缺时 revision 区块比 FinalAge 更旧的最高高度；只在终局高度未知时用来裁剪。
 	pruneAge int64
 	// blockTime 是最后应用的区块时间，用于 metrics。
 	blockTime time.Time
@@ -331,14 +334,19 @@ func (follower *Follower) backfill(ctx context.Context, offset, from, to int64) 
 				next++
 			}
 			height := trades[index].RevisionHeight
-			if err := follower.apply(ctx, height, WholeBlock, trades[index:next]); err != nil {
+			if err = follower.apply(ctx, height, WholeBlock, trades[index:next]); err != nil {
 				return err
 			}
 			follower.blockTime = trades[next-1].BlockTime
-			if trades[next-1].BlockTime.Before(follower.now().Add(-options.FinalAge)) {
-				follower.pruneAge = max(follower.pruneAge, height)
-			}
 			index = next
+		}
+		// 年龄按 revision 区块的时间算：延迟成交自己的 block_time 早，但写出它的区块可能还没终局。
+		old, found, err := options.Trades.LastHeightBefore(ctx, options.ChainID, end, follower.now().Add(-options.FinalAge))
+		if err != nil {
+			return fmt.Errorf("find old heights: %w", err)
+		}
+		if found {
+			follower.pruneAge = max(follower.pruneAge, old)
 		}
 		follower.checkpoint.Offset = max(follower.checkpoint.Offset, offset-1)
 		follower.checkpoint.Height, follower.checkpoint.Part = end, WholeBlock
@@ -461,16 +469,13 @@ func (follower *Follower) flush(ctx context.Context) error {
 	return nil
 }
 
-// prunable 返回可以裁剪 undo 的高度：终局高度和 height − HistoryDepth 中较低的那个，以及
-// 补缺时已经足够旧的高度。
+// prunable 返回可以裁剪 undo 的高度。终局高度已知时取 height − HistoryDepth 和终局高度中
+// 较低的那个，未终局的区块都留着；未知时只裁剪补缺时 revision 区块已经足够旧的高度。
 func (follower *Follower) prunable(height int64) int64 {
-	through := height - follower.options.HistoryDepth
 	if follower.finalized > 0 {
-		through = min(through, follower.finalized)
-	} else {
-		through = 0
+		return min(height-follower.options.HistoryDepth, follower.finalized)
 	}
-	return max(through, min(follower.pruneAge, height))
+	return min(follower.pruneAge, height)
 }
 
 func (follower *Follower) reset() {
@@ -490,6 +495,10 @@ func (follower *Follower) revert(ctx context.Context, offset int64, update live.
 	}
 	if err := follower.flush(ctx); err != nil {
 		return err
+	}
+	// undo 已经裁剪到 PrunedThrough：更深的回滚无法还原持仓，停下来而不是带着错误的账本继续。
+	if to < follower.checkpoint.PrunedThrough {
+		return fmt.Errorf("revert to %d is below the pruned undo history (%d)", to, follower.checkpoint.PrunedThrough)
 	}
 	checkpoint := follower.checkpoint
 	checkpoint.Offset, checkpoint.Height, checkpoint.Part = offset, to, WholeBlock

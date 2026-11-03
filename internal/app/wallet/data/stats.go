@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"time"
 
 	"github.com/AloneAtWar/chainstream-market/internal/app/wallet/biz"
@@ -40,7 +41,41 @@ func (repo *statsRepo) LoadRefresh(ctx context.Context, chainID uint64) (biz.Ref
 	if err != nil || !ok {
 		return biz.Refresh{}, false, err
 	}
-	return biz.Refresh{ChainID: chainID, Version: row.Version, Head: row.HeadTime.UTC(), ApplyHeight: row.ApplyHeight}, true, nil
+	return biz.Refresh{
+		ChainID: chainID, Version: row.Version, Started: row.Started, Head: row.HeadTime.UTC(), ApplyHeight: row.ApplyHeight,
+	}, true, nil
+}
+
+func (repo *statsRepo) Invalidations(ctx context.Context, chainID uint64, since uint64) (time.Time, int64, bool, error) {
+	var row struct {
+		Day    time.Time
+		Height int64
+		Found  uint64
+	}
+	err := repo.db.WithContext(ctx).Raw(`SELECT min(day) AS day, min(height) AS height, count() AS found
+		FROM wallet_invalidations WHERE chain_id = ? AND at >= ?`, chainID, since).Scan(&row).Error
+	if err != nil {
+		return time.Time{}, 0, false, fmt.Errorf("clickhouse store: wallet invalidations: %w", err)
+	}
+	return row.Day.UTC(), row.Height, row.Found > 0, nil
+}
+
+func (repo *statsRepo) PruneStats(ctx context.Context, chainID uint64, keep []uint64) error {
+	var versions []uint64
+	db := repo.db.WithContext(ctx)
+	if err := db.Raw(`SELECT DISTINCT version FROM wallet_stats WHERE chain_id = ?`, chainID).Scan(&versions).Error; err != nil {
+		return fmt.Errorf("clickhouse store: wallet stats versions: %w", err)
+	}
+	for _, version := range versions {
+		if slices.Contains(keep, version) {
+			continue
+		}
+		// 每个版本一个分区，删分区不用改写数据。
+		if err := db.Exec(fmt.Sprintf("ALTER TABLE wallet_stats DROP PARTITION (%d, %d)", chainID, version)).Error; err != nil {
+			return fmt.Errorf("clickhouse store: drop wallet stats version %d: %w", version, err)
+		}
+	}
+	return nil
 }
 
 func (repo *statsRepo) EarliestTradeAfter(ctx context.Context, chainID uint64, height int64) (time.Time, bool, error) {
@@ -167,7 +202,8 @@ func (repo *statsRepo) SmartMoney(ctx context.Context, chainID uint64, rule biz.
 
 func (repo *statsRepo) SaveRefresh(ctx context.Context, refresh biz.Refresh) error {
 	rows := []chdb.WalletRefreshRow{{
-		ChainID: refresh.ChainID, Version: refresh.Version, HeadTime: refresh.Head.UTC(), ApplyHeight: refresh.ApplyHeight,
+		ChainID: refresh.ChainID, Version: refresh.Version, Started: refresh.Started, HeadTime: refresh.Head.UTC(),
+		ApplyHeight: refresh.ApplyHeight,
 	}}
 	if err := chdb.Insert(ctx, repo.db, &rows); err != nil {
 		return fmt.Errorf("clickhouse store: save wallet refresh: %w", err)

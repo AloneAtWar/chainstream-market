@@ -38,7 +38,8 @@ wallet:
   history_depth: 256
   # How far back a first start replays trades from ClickHouse; at most 90d.
   history: 2160h
-  # Blocks filled from ClickHouse older than this keep no undo history.
+  # While the finalized height is unknown, blocks filled from ClickHouse
+  # older than this keep no undo history.
   final_age: 1h
   # Heights per ClickHouse read when a gap is filled.
   backfill_heights: 2000

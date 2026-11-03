@@ -123,14 +123,21 @@ func (reader *walletReader) WalletTrades(ctx context.Context, query model.Wallet
 	if query.Token != "" {
 		db = db.Where("token = ?", query.Token)
 	}
-	if query.BeforeHeight > 0 {
+	switch {
+	case query.BeforeHeight > 0 && query.BeforeLogIndex != nil && query.BeforeOperationIndex != nil:
+		db = db.Where("(block_height, log_index, operation_index) < (?, ?, ?)",
+			query.BeforeHeight, *query.BeforeLogIndex, *query.BeforeOperationIndex)
+	case query.BeforeHeight > 0 && query.BeforeLogIndex != nil:
+		db = db.Where("(block_height, log_index) < (?, ?)", query.BeforeHeight, *query.BeforeLogIndex)
+	case query.BeforeHeight > 0:
 		db = db.Where("block_height < ?", query.BeforeHeight)
 	}
 	if query.Limit > 0 {
 		db = db.Limit(query.Limit)
 	}
 	var rows []chdb.WalletTradeRow
-	err := db.Order("block_time DESC, block_height DESC, log_index DESC, operation_index DESC").Find(&rows).Error
+	// 排序和翻页位置用同一组字段，翻页不会跳过或重复同一区块里的成交。
+	err := db.Order("block_height DESC, log_index DESC, operation_index DESC").Find(&rows).Error
 	if err != nil {
 		return nil, fmt.Errorf("clickhouse wallets: trades: %w", err)
 	}

@@ -105,6 +105,28 @@ func TestWalletReader(t *testing.T) {
 	if err != nil || len(got) != 1 || got[0].Event != model.WalletEventOpen {
 		t.Fatalf("trades %+v %v", got, err)
 	}
+	// 同一区块的三笔成交按两笔一页翻完，不跳过也不重复。
+	var sameBlock []model.WalletTrade
+	for index := range 3 {
+		sameBlock = append(sameBlock, model.WalletTrade{
+			ChainID: 1, ApplyHeight: 7, BlockHeight: 7, BlockTime: at.Add(time.Hour), LogIndex: uint32(index),
+			Wallet: "0xcc", Token: "0x01", Side: model.SideBuy, Event: model.WalletEventAdd,
+		})
+	}
+	if err = chdb.InsertWalletTrades(ctx, market, sameBlock); err != nil {
+		t.Fatal(err)
+	}
+	first, err := reader.WalletTrades(ctx, model.WalletTradeQuery{ChainID: 1, Wallet: "0xcc", Limit: 2})
+	if err != nil || len(first) != 2 || first[1].LogIndex != 1 {
+		t.Fatalf("first page %+v %v", first, err)
+	}
+	logIndex, operation := first[1].LogIndex, first[1].OperationIndex
+	second, err := reader.WalletTrades(ctx, model.WalletTradeQuery{
+		ChainID: 1, Wallet: "0xcc", BeforeHeight: 7, BeforeLogIndex: &logIndex, BeforeOperationIndex: &operation, Limit: 2,
+	})
+	if err != nil || len(second) != 1 || second[0].LogIndex != 0 {
+		t.Fatalf("second page %+v %v", second, err)
+	}
 
 	cache, stop := NewLabelCache(ctx, data, &conf.Bootstrap{Chains: []*config.Chain{{ChainId: 1}}}, nil)
 	defer stop()

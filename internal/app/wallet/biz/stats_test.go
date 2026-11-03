@@ -10,13 +10,18 @@ import (
 )
 
 type fakeStats struct {
-	head        time.Time
-	applyHeight int64
-	previous    *Refresh
-	earliest    time.Time
-	rebuiltFrom time.Time
-	windows     map[int]time.Time
-	saved       []Refresh
+	head         time.Time
+	applyHeight  int64
+	previous     *Refresh
+	earliest     time.Time
+	afterHeight  int64
+	invalidDay   time.Time
+	invalidAt    int64
+	invalidSince uint64
+	kept         []uint64
+	rebuiltFrom  time.Time
+	windows      map[int]time.Time
+	saved        []Refresh
 }
 
 func (stats *fakeStats) TradeHead(context.Context, uint64) (time.Time, int64, bool, error) {
@@ -30,8 +35,19 @@ func (stats *fakeStats) LoadRefresh(context.Context, uint64) (Refresh, bool, err
 	return *stats.previous, true, nil
 }
 
-func (stats *fakeStats) EarliestTradeAfter(context.Context, uint64, int64) (time.Time, bool, error) {
+func (stats *fakeStats) EarliestTradeAfter(_ context.Context, _ uint64, height int64) (time.Time, bool, error) {
+	stats.afterHeight = height
 	return stats.earliest, !stats.earliest.IsZero(), nil
+}
+
+func (stats *fakeStats) Invalidations(_ context.Context, _ uint64, since uint64) (time.Time, int64, bool, error) {
+	stats.invalidSince = since
+	return stats.invalidDay, stats.invalidAt, !stats.invalidDay.IsZero(), nil
+}
+
+func (stats *fakeStats) PruneStats(_ context.Context, _ uint64, keep []uint64) error {
+	stats.kept = keep
+	return nil
 }
 
 func (stats *fakeStats) RebuildDaily(_ context.Context, _ uint64, from time.Time, _ int64) error {
@@ -123,6 +139,26 @@ func TestRefreshRebuildsOnlyChangedDays(t *testing.T) {
 	}
 	if !stats.rebuiltFrom.Equal(date(10, 20)) {
 		t.Fatalf("rebuilt from %v", stats.rebuiltFrom)
+	}
+}
+
+func TestRefreshRebuildsDaysOfRevertedTrades(t *testing.T) {
+	stats := &fakeStats{
+		head: date(11, 3).Add(time.Hour), applyHeight: 101, windows: make(map[int]time.Time),
+		previous: &Refresh{Version: 7, Started: 5, Head: date(11, 3), ApplyHeight: 100},
+		// 回滚 100 → 99 删掉了 11 月 1 日的延迟成交。
+		invalidDay: date(11, 1), invalidAt: 99,
+	}
+	if err := newTestRefresher(t, stats, &fakeLabels{}).Refresh(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if stats.invalidSince != 5 || !stats.rebuiltFrom.Equal(date(11, 1)) || stats.afterHeight != 99 {
+		t.Fatalf("since %d rebuilt from %v after height %d", stats.invalidSince, stats.rebuiltFrom, stats.afterHeight)
+	}
+	// 发布后只留这次和上次的版本。
+	version := stats.saved[0].Version
+	if len(stats.kept) != 2 || stats.kept[0] != version || stats.kept[1] != 7 || stats.saved[0].Started != version {
+		t.Fatalf("kept %v saved %+v", stats.kept, stats.saved[0])
 	}
 }
 

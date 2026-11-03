@@ -15,9 +15,11 @@ import (
 //   - wallet_trades：每笔成交在钱包账本里的结果，按（链, 钱包, 时间）排序，钱包页按它翻页。
 //     apply_height 和 part 是带来这笔成交的 live 记录，重组和崩溃恢复按它们删除。
 //   - wallet_token_daily：钱包 × 代币 × 天的汇总，market-wallet 每次汇总删掉变化的日子重算。
-//   - wallet_stats：钱包在一个窗口（天）内的统计，每次汇总写一个新版本；读的一方只读
-//     wallet_refreshes 里最新的版本，旧版本合并掉或按 TTL 过期。
+//   - wallet_stats：钱包在一个窗口（天）内的统计，每次汇总写一个新版本，每个版本一个分区，
+//     互不覆盖；读的一方只读 wallet_refreshes 里最新的版本。market-wallet 发布新版本后删掉
+//     更旧的分区，TTL 兜底。
 //   - wallet_refreshes：每次汇总一行。
+//   - wallet_invalidations：回滚或崩溃恢复删掉流水时记一行，下次汇总从受影响的最早日子重算。
 var WalletSchema = []string{
 	`CREATE TABLE IF NOT EXISTS wallet_trades (
 		chain_id         UInt64,
@@ -91,17 +93,29 @@ var WalletSchema = []string{
 		hold_seconds     UInt64,
 		fast_closes      UInt64,
 		version          UInt64
-	) ENGINE = ReplacingMergeTree(version)
+	) ENGINE = MergeTree
+	PARTITION BY (chain_id, version)
 	ORDER BY (chain_id, window_days, wallet)
-	TTL toDateTime(intDiv(version, 1000)) + INTERVAL 7 DAY`,
+	TTL toDateTime(intDiv(version, 1000)) + INTERVAL 7 DAY
+	SETTINGS ttl_only_drop_parts = 1`,
 
 	`CREATE TABLE IF NOT EXISTS wallet_refreshes (
 		chain_id     UInt64,
 		version      UInt64,
+		started      UInt64,
 		head_time    DateTime('UTC'),
 		apply_height Int64
 	) ENGINE = ReplacingMergeTree(version)
 	ORDER BY chain_id`,
+
+	`CREATE TABLE IF NOT EXISTS wallet_invalidations (
+		chain_id UInt64,
+		at       UInt64,
+		day      Date,
+		height   Int64
+	) ENGINE = MergeTree
+	ORDER BY (chain_id, at)
+	TTL toDateTime(intDiv(at, 1000)) + INTERVAL 30 DAY`,
 }
 
 // WalletTradeRow 是 wallet_trades 的一行。
@@ -213,12 +227,25 @@ func (row WalletStatsRow) WalletStats() model.WalletStats {
 type WalletRefreshRow struct {
 	ChainID     uint64
 	Version     uint64
+	Started     uint64
 	HeadTime    time.Time
 	ApplyHeight int64
 }
 
 // TableName 返回表名。
 func (WalletRefreshRow) TableName() string { return "wallet_refreshes" }
+
+// WalletInvalidationRow 是 wallet_invalidations 的一行：At 是记录时间（毫秒），Day 是被删除的
+// 流水里最早的成交日，Height 是删除后保留的最高 apply_height。
+type WalletInvalidationRow struct {
+	ChainID uint64
+	At      uint64
+	Day     time.Time
+	Height  int64
+}
+
+// TableName 返回表名。
+func (WalletInvalidationRow) TableName() string { return "wallet_invalidations" }
 
 // LatestWalletRefresh 返回链最近一次汇总，没有时 ok 为 false。
 func LatestWalletRefresh(ctx context.Context, db *gorm.DB, chainID uint64) (WalletRefreshRow, bool, error) {
