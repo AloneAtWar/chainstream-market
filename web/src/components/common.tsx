@@ -113,3 +113,19 @@ export function Info({ label, value }: { label: string; value: ReactNode }) {
     </div>
   );
 }
+
+// ProgressBar draws a bonding curve's progress, a fraction from 0 to 1.
+export function ProgressBar({ fraction, done }: { fraction: string | null; done?: boolean }) {
+  const value = fraction === null ? 0 : Math.min(1, Math.max(0, Number(fraction) || 0));
+  return (
+    <span
+      className={done ? "progress done" : "progress"}
+      role="progressbar"
+      aria-valuemin={0}
+      aria-valuemax={100}
+      aria-valuenow={Math.round(value * 100)}
+    >
+      <span className="progress-fill" style={{ width: `${value * 100}%` }} />
+    </span>
+  );
+}

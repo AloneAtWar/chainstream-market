@@ -70,7 +70,8 @@ func (history *historyRepo) rawTrades(ctx context.Context, chainID uint64, token
 	err := history.db.WithContext(ctx).Select(`block_height, block_time, transaction_hash, transaction_index,
 		log_index, operation_index, protocol, dex_address, pool_id, action, sender, trader, recipient,
 		amount_assets, amount_raw, amount_values, amount_decimals, amount_decimals_known,
-		reserves_after, sqrt_price_x96, liquidity, tick, active_bin_id`).
+		reserves_after, sqrt_price_x96, liquidity, tick, active_bin_id,
+		curve_progress, curve_base_remaining, curve_quote_raised, curve_price`).
 		Where("chain_id = ? AND block_height >= ? AND block_height <= ? AND hasAny(amount_assets, ?)",
 			chainID, from, through, chdb.ArrayParam[string](tokens)).
 		Order("block_height, log_index, operation_index").Find(&rows).Error
@@ -94,6 +95,12 @@ func (history *historyRepo) rawTrades(ctx context.Context, chainID uint64, token
 		trade.Sender, trade.Trader, trade.Recipient = row.Sender, row.Trader, row.Recipient
 		trade.ReservesAfter, trade.SqrtPriceX96, trade.Liquidity = row.ReservesAfter, row.SqrtPriceX96, row.Liquidity
 		trade.Tick, trade.ActiveBinID = row.Tick, row.ActiveBinID
+		if row.CurvePrice != "" {
+			trade.Curve = &model.RawCurve{
+				Progress: row.CurveProgress, BaseRemaining: row.CurveBaseRemaining,
+				QuoteRaised: row.CurveQuoteRaised, Price: row.CurvePrice,
+			}
+		}
 		trade.Amounts = make([]model.RawAmount, count)
 		for amount := range count {
 			trade.Amounts[amount] = model.RawAmount{

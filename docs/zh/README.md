@@ -12,7 +12,7 @@ chainstream-evm 只发布链上"事实"（每块的交易、转账、资产、�
 | --- | --- |
 | [architecture.md](architecture.md) | 整体数据流、六个组件的职责、目录结构与分层约定、共享的顺序消费循环（chainsync） |
 | [market-engine.md](market-engine.md) | 定价与 K 线：池子状态、价格图、交易定方向、集中流动性 tick 表、Chainlink、异常交易、迟到的代币小数位与回填、存储与状态 |
-| [services.md](services.md) | market-api 接口、实时推送协议、holder-indexer、market-registry、market-rankings、ch-loader |
+| [services.md](services.md) | market-api 接口、实时推送协议、holder-indexer、market-registry、market-launchpad、market-rankings、ch-loader |
 | [operations.md](operations.md) | 本地完整环境、配置、开发命令、指标、Web 前端 |
 
 英文版完整说明见仓库根目录 [README.md](../../README.md)；两者不一致时以英文 README 和代码为准。
@@ -40,6 +40,8 @@ chainstream-evm 只发布链上"事实"（每块的交易、转账、资产、�
         ▼
      web 前端（React + Vite）
 ```
+
+market-launchpad 同样消费链 topic，把发射平台代币写入 PostgreSQL（launchpad_*），供 market-api 的三栏接口读取（图中省略）。
 
 每个消费组件都**各自**按 offset 顺序读同一条链 topic、各自维护检查点，互不依赖；任何一个落后或重启都不影响其它组件。
 

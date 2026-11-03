@@ -1,0 +1,30 @@
+syntax = "proto3";
+
+package app.launchpad.conf;
+
+option go_package = "github.com/AloneAtWar/chainstream-market/internal/app/launchpad/conf;conf";
+
+import "pkg/config/common.proto";
+
+// Bootstrap is market-launchpad's configuration; configs/market-launchpad.yaml
+// documents every setting. Durations may be written as Go durations such as
+// 500ms or 5m.
+message Bootstrap {
+  pkg.config.Source source = 1;
+  pkg.config.Kafka kafka = 2;
+  // postgres is the database the launchpad tables live in.
+  pkg.config.Postgres postgres = 3;
+  pkg.config.Metrics metrics = 4;
+  repeated pkg.config.Chain chains = 5;
+  Launchpad launchpad = 6;
+}
+
+// Launchpad tunes how market-launchpad follows bonding-curve tokens.
+message Launchpad {
+  // history_depth is how many recent blocks stay revertible in addition to
+  // everything above the finalized height.
+  int64 history_depth = 1;
+  // protocols are the launchpad protocols whose trades count as curve
+  // trades even when a trade carries no curve state.
+  repeated string protocols = 2;
+}

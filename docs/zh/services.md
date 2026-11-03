@@ -1,6 +1,6 @@
 # 其它服务
 
-本页介绍 market-engine 之外的五个组件：market-api（含实时推送）、holder-indexer、market-registry、market-rankings 和 ch-loader。
+本页介绍 market-engine 之外的六个组件：market-api（含实时推送）、holder-indexer、market-registry、market-launchpad、market-rankings 和 ch-loader。
 除 market-api 和 market-rankings 外，它们都通过 [chainsync](architecture.md) 各自按 offset 顺序读链 topic、维护自己的检查点。
 
 ## market-api
@@ -25,6 +25,8 @@ go run ./cmd/market-api -conf configs/market-api.yaml   # 需要 clickhouse.addr
 | `GET /v1/chains/{chain}/pools/{pool}` | 池子元数据：协议、DEX、代币、原始元数据 JSON |
 | `GET /v1/chains/{chain}/pools/{pool}/liquidity` | 集中流动性池在当前价下各价格区间的币量、合计及 `band_bps` 内的深度（来自 engine 的 tick 表）；表过期或 hook 可能在表外结算时 `usable` 为 false；engine 没有该池的表时返回 404 |
 | `GET /v1/chains/{chain}/tokens?sort=volume_24h` | market-rankings 生成的代币列表 |
+| `GET /v1/chains/{chain}/launchpad/tokens?column=new` | market-launchpad 的三栏之一（新币 / 发射中 / 已迁移），见 [market-launchpad](#market-launchpad) |
+| `GET /v1/chains/{chain}/launchpad/tokens/{token}` | 单个发射平台代币的曲线：状态、进度、已募集、成交笔数、发射与迁移信息；不是发射平台代币时返回 404 |
 | `GET /v1/chains/{chain}/tokens/{token}/transfers` | 代币的 ERC-20 转账（来自 ch-loader），`holder` 可限定某一方 |
 | `GET /v1/chains/{chain}/holders/{holder}/transfers` | 某地址跨代币的转入转出，`token` 可限定代币 |
 | `GET /v1/stream` | 实时交易与 K 线的 WebSocket，需开启 `live.enabled` |
@@ -160,6 +162,44 @@ go run ./cmd/market-registry -conf configs/market-registry.yaml   # 需要 postg
 | `registry_pools` | `(chain_id, pool_id)` 及上述字段，外加首次和最后更新的高度 |
 | `registry_undo` | 每块每行修改前的值（JSONB），该块新建时为 NULL |
 
+## market-launchpad
+
+```sh
+go run ./cmd/market-launchpad -conf configs/market-launchpad.yaml   # 需要 postgres.dsn
+```
+
+代码：`internal/app/launchpad`。它按自己的检查点读每条链的 topic，跟踪发射平台（bonding curve）代币的生命周期，
+支撑 GMGN / OKX 式的三栏：新币、发射中、已迁移。chainstream-evm 目前解析 four.meme（BSC）和 Flap（BSC、Base），
+区块里带有 `launchpad_events`（`CREATED`、`COMPLETED`、`MIGRATED`）和曲线交易：曲线交易就是作用在作用域池 `<manager>:<token>`
+上的普通 swap，其 `pool_state.curve` 是交易后的曲线状态。
+
+- **生命周期**：`bonding`（曲线交易中）→ `completed`（已打满，待迁移）→ `migrated`（已迁移到 DEX）。状态只前进不后退；
+  迁移时记录目标 DEX 池。非 `bonding` 状态但没有交易上报进度的代币按 100% 计。
+- **曲线状态**：进度（wad，1e18 = 100%）、剩余可售代币、已募集计价币、价格（每 1e18 最小单位代币对应的计价币最小单位）
+  取该代币块内最后一笔曲线交易后的值。`launchpad.protocols` 中协议的交易即使没有曲线状态也计入。买、卖笔数和最后成交时间累加。
+- **晚发现的发射**：发射早于 topic 起点、先以交易被看到的代币，以该块作为近似发射时间，`launch_seen` 为 false，不进入新币栏。
+- **时间**：各栏的时间窗口从已应用的最新区块时间（`launchpad_heads`）往回算，而不是墙上时钟，所以重放或消费落后时列表与链头一致。
+- **重组**：一个块首次修改某行之前，先把该行（或其不存在）存入 `launchpad_undo`，回滚方式与 registry 相同；
+  撤销记录同时保留最近 `launchpad.history_depth` 个区块和最终确认高度以上的全部区块（取更早的边界），没有最终确认高度时只按深度保留；只推进检查点的提交（chainsync 跳过的已处理区块）不改动代币行和 head。
+
+| 表 | 内容 |
+| --- | --- |
+| `launchpad_checkpoints` | 每条链一行：Kafka offset、高度、哈希、已裁剪高度 |
+| `launchpad_heads` | 每条链一行：最新应用区块的高度和时间 |
+| `launchpad_tokens` | `(chain_id, token)` 及协议、作用域池 ID、manager、计价币、创建者、名称、符号、元数据 URI、状态、曲线状态、成交笔数，以及发射 / 打满 / 迁移的高度和时间；每栏一个部分索引 |
+| `launchpad_undo` | 每块每个代币修改前的行（JSONB），该块新建时为 NULL |
+
+`GET /v1/chains/{chain}/launchpad/tokens` 的 `column`：
+
+- `new`（新币）：仍在 `bonding`、`max_age`（默认 24h）内看到发射的代币，按发射时间倒序。
+- `bonding`（发射中）：`bonding` 或 `completed`、`max_age` 内发射、`stale`（默认 1h）内有成交、进度不低于 `min_progress`（小数，默认 0）的代币，
+  按进度倒序。长时间没有成交的代币会退出这一栏。
+- `migrated`（已迁移）：`migrated_age`（默认 72h）内迁移的代币，按迁移时间倒序。
+
+时间窗口可写秒数或 Go duration（如 `6h`），最多 720h。`protocol`（`fourmeme`、`flap`）可筛选平台，`limit` 默认 50（最多 1000）。
+每个代币带有小数形式的进度、原始曲线数值、计价币的符号和小数位、registry 的名称和符号（兜底），以及被 market-rankings 收录后的 USD 价格、
+24h 成交额和持有人数。`head_time` 是窗口起算的链上时间。目前三栏靠轮询刷新，还没有实时推送频道。
+
 ## market-rankings
 
 ```sh
@@ -205,7 +245,7 @@ go run ./cmd/ch-loader -conf configs/ch-loader.yaml   # 需要 clickhouse.addr
 | 表 | 内容 |
 | --- | --- |
 | `raw_transfers` | 所有 ERC-20 转账（含零金额），`amount UInt256`；`token` 和 `[from_address, to_address]` 上有 bloom filter 索引 |
-| `raw_trades` | 定方向之前的池子操作：动作、sender、trader、recipient、按池子视角带符号的金额（并列数组）、交易后的池子状态 |
+| `raw_trades` | 定方向之前的池子操作：动作、sender、trader、recipient、按池子视角带符号的金额（并列数组）、交易后的池子状态（含发射平台曲线状态 `curve_*`） |
 | `oracle_updates` | 任意合约发出的所有 `AnswerUpdated` 日志，`answer Int256` |
 | `asset_facts` | 代币观察与创建：标准、识别状态、部署信息、`metadata_json` |
 | `pool_facts` | 池子观察与创建：协议、代币、来源高度、`metadata_json` |

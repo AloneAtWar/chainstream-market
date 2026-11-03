@@ -55,3 +55,14 @@ type LiquidityReader interface {
 	// when market-engine keeps none for it.
 	PoolTickTable(ctx context.Context, chainID uint64, poolID string) (model.PoolTickTable, bool, error)
 }
+
+// LaunchpadReader reads market-launchpad's bonding-curve tokens.
+//
+// LaunchpadReader 读取 market-launchpad 的发射平台代币。
+type LaunchpadReader interface {
+	// LaunchpadList returns one of the new / bonding / migrated lists.
+	LaunchpadList(ctx context.Context, query model.LaunchpadQuery) ([]model.LaunchpadListing, error)
+	// LaunchpadToken returns one token; ok is false when market-launchpad
+	// has not seen it.
+	LaunchpadToken(ctx context.Context, chainID uint64, token string) (model.LaunchpadListing, bool, error)
+}

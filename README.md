@@ -14,8 +14,9 @@ Market data services built on the [chainstream-evm](https://github.com/AloneAtWa
 | `cmd/holder-indexer` | Consumes the same chain topics and keeps ERC-20 and native coin balances per holder in PostgreSQL. |
 | `cmd/ch-loader` | Consumes the same chain topics and copies their raw facts, every ERC-20 transfer among them, into ClickHouse. |
 | `cmd/market-registry` | Consumes the same chain topics and keeps the latest token and pool metadata in PostgreSQL. |
+| `cmd/market-launchpad` | Consumes the same chain topics and follows launchpad bonding-curve tokens (four.meme, Flap) from launch to DEX migration in PostgreSQL, for the new / bonding / migrated lists. |
 | `cmd/market-rankings` | Periodically rolls prices, 24h activity, holder counts and metadata into the PostgreSQL token rankings. |
-| `internal/app/<component>` | One component per command, each with its own configuration and layers: `engine` (market-engine), `api` (market-api), `holder` (holder-indexer), `loader` (ch-loader), `registry` (market-registry) and `rankings` (market-rankings). See [Components](#components). |
+| `internal/app/<component>` | One component per command, each with its own configuration and layers: `engine` (market-engine), `api` (market-api), `holder` (holder-indexer), `loader` (ch-loader), `registry` (market-registry), `launchpad` (market-launchpad) and `rankings` (market-rankings). See [Components](#components). |
 | `internal/pkg/config` | The config loader, and the sections more than one component reads in `common.proto`: the chain source, Kafka, the databases, live push, metrics and the chains. |
 | `internal/pkg/model` | The data the components exchange: block output (oriented trades, token prices, candles), holder balances, token and pool metadata, raw facts and rankings. |
 | `internal/pkg/chdb` | The shared ClickHouse connection, the DDL of every table in it, their retention TTLs, and the row models and writes of the tables more than one component touches. |
@@ -120,6 +121,8 @@ go run ./cmd/market-api -conf configs/market-api.yaml   # needs clickhouse.addr 
 | `GET /v1/chains/{chain}/pools/{pool}` | Pool metadata: protocol, DEX, tokens and the raw metadata JSON. |
 | `GET /v1/chains/{chain}/pools/{pool}/liquidity` | A concentrated pool's tokens per price range at its current price, their totals and its depth within `band_bps` (default: the fee tier's band), from market-engine's tick table. Amounts are raw, with `value` added when market-registry knows the token's decimals. `usable` is false when the table is stale or the pool's hook may settle swaps outside it. 404 when the engine keeps no table for the pool. |
 | `GET /v1/chains/{chain}/tokens?sort=volume_24h` | The token list from market-rankings, see [market-rankings](#market-rankings). |
+| `GET /v1/chains/{chain}/launchpad/tokens?column=new` | One of the three launchpad lists from market-launchpad, see [market-launchpad](#market-launchpad). |
+| `GET /v1/chains/{chain}/launchpad/tokens/{token}` | One launchpad token's curve: status, progress, quote raised, trade counts, launch and migration. 404 when it is not a launchpad token. |
 | `GET /v1/chains/{chain}/tokens/{token}/transfers` | The token's ERC-20 transfers from ch-loader, newest first. `holder` narrows them to one party. |
 | `GET /v1/chains/{chain}/holders/{holder}/transfers` | Transfers to or from the holder across tokens, newest first. `token` narrows them to one token. |
 | `GET /v1/stream` | WebSocket stream of live trades and candles, see [Live push](#live-push). Served only with `live.enabled`. |
@@ -250,6 +253,35 @@ A token is ranked once it has a price or traded in the window. Activity, holders
 
 Name, symbol and decimals come from market-registry. The response includes `refreshed_at`, the unix time of the last refresh.
 
+## market-launchpad
+
+```sh
+go run ./cmd/market-launchpad -conf configs/market-launchpad.yaml   # needs postgres.dsn
+```
+
+market-launchpad reads each chain topic on its own checkpoint and follows launchpad bonding-curve tokens through their lifecycle, for the three lists launchpad UIs show: new launches, curves filling up, and curves that moved to a DEX. chainstream-evm parses four.meme (BSC) and Flap (BSC, Base); its blocks carry `launchpad_events` (`CREATED`, `COMPLETED`, `MIGRATED`) and curve trades, ordinary swaps on the scoped pool `<manager>:<token>` whose `pool_state.curve` holds the curve after the trade.
+
+- **Lifecycle.** `bonding` → `completed` (sold out, waiting for migration) → `migrated`. The status only moves forward; a migration also records the target DEX pool. A token that is no longer `bonding` reads as 100% even when no trade reported it.
+- **Curve state.** Progress (a wad, 1e18 = 100%), base remaining, quote raised and price (raw quote units per 1e18 raw token units) follow the token's last curve trade in each block. Trades of the protocols in `launchpad.protocols` count even without a curve state. Buys, sells and the last trade time accumulate.
+- **Launches seen late.** A token first seen trading, because its launch predates the topic, gets that block as an approximate launch with `launch_seen` false, and never enters the new list.
+- **Time.** The list windows count back from the newest block time applied (`launchpad_heads`), not the wall clock, so a replay or a lagging consumer lists what the chain showed at its head.
+- **Reorgs.** Before a block first changes a row, the row (or its absence) is saved in `launchpad_undo`, restored like registry rows. Undo history keeps the latest `launchpad.history_depth` blocks and every block above the finalized height, whichever reaches further back; with no finalized height it keeps the depth. A commit that only moves the checkpoint (a block chainsync skipped as already handled) leaves the rows and the head alone.
+
+| Table | Contents |
+| --- | --- |
+| `launchpad_checkpoints` | One row per chain: Kafka offset, height, hash and the pruned height. |
+| `launchpad_heads` | One row per chain: the newest applied block's height and time. |
+| `launchpad_tokens` | `(chain_id, token)` with protocol, scoped pool ID, manager, quote, creator, name, symbol, metadata URI, status, the curve state, trade counts and the launch, completion and migration heights and times, with a partial index per list. |
+| `launchpad_undo` | Per block and token, the row's previous value as JSONB, or NULL when the block created it. |
+
+`GET /v1/chains/{chain}/launchpad/tokens` takes `column`:
+
+- `new`: tokens still bonding whose launch was seen within `max_age` (default 24h), newest launch first.
+- `bonding`: tokens bonding or completed, launched within `max_age`, that traded within `stale` (default 1h) and reached `min_progress` (a fraction, default 0), highest progress first. A curve that stops trading drops out.
+- `migrated`: tokens that migrated within `migrated_age` (default 72h), newest migration first.
+
+Windows are seconds or Go durations such as `6h`, at most 720h. `protocol` (`fourmeme`, `flap`) narrows a list and `limit` defaults to 50 (at most 1000). Each token carries its progress as a fraction, raw curve amounts, the quote's symbol and decimals and the registry name and symbol as fallbacks, and, once market-rankings ranks it, its USD price, 24h volume and holders. `head_time` is the chain time the windows count from. Lists are polled for now; there is no live channel for them.
+
 ## ch-loader
 
 ```sh
@@ -261,7 +293,7 @@ ch-loader reads each chain topic on its own checkpoint and stores the facts chai
 | Table | Rows |
 | --- | --- |
 | `raw_transfers` | Every ERC-20 transfer, zero-value ones included, with `amount UInt256`. Bloom filter indexes on `token` and on `[from_address, to_address]`. |
-| `raw_trades` | Pool operations before orientation: action, sender, trader, recipient, the signed pool-perspective amounts as parallel arrays, and the post-trade pool state. |
+| `raw_trades` | Pool operations before orientation: action, sender, trader, recipient, the signed pool-perspective amounts as parallel arrays, and the post-trade pool state, launchpad curve state (`curve_*`) included. |
 | `oracle_updates` | Every `AnswerUpdated` log from any contract, with `answer Int256`. |
 | `asset_facts` | Token observations and creations: standard, recognition, deployment and `metadata_json`. |
 | `pool_facts` | Pool observations and creations: protocol, tokens, source height and `metadata_json`. |
@@ -316,6 +348,10 @@ Every pair of a pool's tokens is then an edge of the price graph, its counterpar
 | `unknown` | The pool's latest swap of that pair | None |
 
 A Curve meta pool reports its base pool's LP token at the base pool's virtual price, and a Balancer V3 pool each ERC4626 token at its rate, which price those tokens directly. Depths are computed per edge, kept in memory, and choose the pricing pool as above.
+
+### Launchpad bonding curves
+
+A four.meme or Flap curve trade carries the curve's price and quote raised after it (`pool_state.curve`). The engine prices the curve's pool from them like a constant-product pool: the price is the curve price in human units, the quote reserve is the quote raised, and the token reserve is what that buys at the price. Since a fresh curve has raised almost nothing, `curve_min_liquidity_usd` (default 0) replaces both `min_liquidity_usd` and `candle_min_liquidity_usd` for curve pools, so launch tokens get prices and candles from their first trade. A curve that migrates stops pricing: its reserves are cleared and the token is priced through the DEX pool it moved to. The migration mark sticks even when it arrives before the curve has a state (its token's decimals still unknown), so trades replayed later never revive the curve. Curve trades in the migration block are judged for token candles against the liquidity the curve had before it migrated.
 
 ### Chainlink feeds
 
@@ -408,7 +444,8 @@ The topics are created by `kafka-init` with one partition and no retention limit
 | Page | Shows |
 | --- | --- |
 | `/{chain}` | The token list from market-rankings, sorted by 24h volume, price change, liquidity, holders or creation, with a liquidity filter and symbol or address search. Refreshed every 15s. |
-| `/{chain}/token/{address}` | Price, 24h stats, the token's aggregated candles and live trades, and tabs for holders, pools and transfers, beside the registry metadata and how the price was derived. |
+| `/{chain}/launchpad` | The three launchpad lists from market-launchpad side by side: new launches, curves by progress, and migrations, with a protocol filter. Each column polls every 5s. |
+| `/{chain}/token/{address}` | Price, 24h stats, the token's aggregated candles and live trades, and tabs for holders, pools and transfers, beside the registry metadata and how the price was derived. A launchpad token also shows its curve's progress, quote raised and migration. |
 | `/{chain}/pool/{pool}` | The pool's own candles and live trades, its tokens and metadata. |
 | `/{chain}/holder/{address}` | The address's ERC-20 transfers across tokens. |
 

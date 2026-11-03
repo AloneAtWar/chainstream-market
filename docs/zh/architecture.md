@@ -11,6 +11,7 @@
 | `holder-indexer` | `holder` | 链 topic、EVM 节点 | PostgreSQL（holder_*） | ERC-20 与原生币持有人余额 |
 | `ch-loader` | `loader` | 链 topic | ClickHouse（raw_*、asset_facts、pool_facts） | 原样保存原始事实，供查询与回填 |
 | `market-registry` | `registry` | 链 topic | PostgreSQL（registry_*） | 代币与池子的最新元数据 |
+| `market-launchpad` | `launchpad` | 链 topic | PostgreSQL（launchpad_*） | 发射平台代币的生命周期与三栏列表 |
 | `market-rankings` | `rankings` | ClickHouse、PostgreSQL | PostgreSQL（token_rankings） | 定期重建代币排行榜 |
 
 **组件之间互不 import**，`internal/pkg` 也不 import 任何组件（golangci-lint 的 depguard 规则保证）。一个组件写、另一个组件读
@@ -74,7 +75,7 @@ type Handler interface {
 | 组件 | 提交方式 |
 | --- | --- |
 | market-engine | `state.driver: postgres` 时状态增量与检查点同一事务提交；`memory` 时只有检查点，重启从 offset 0 重放并覆盖输出 |
-| holder-indexer / market-registry | 余额或元数据变化 + 撤销记录 + 检查点，同一个 PostgreSQL 事务 |
+| holder-indexer / market-registry / market-launchpad | 余额、元数据或发射平台代币变化 + 撤销记录 + 检查点，同一个 PostgreSQL 事务 |
 | ch-loader | ClickHouse 无事务：先写事实后写检查点；重启后第一个块先删除其高度及以上的数据再插入，保证幂等 |
 
 ## 4. 数据源

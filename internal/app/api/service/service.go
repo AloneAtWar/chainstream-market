@@ -14,8 +14,9 @@ import (
 var ProviderSet = wire.NewSet(NewHandler)
 
 // NewHandler serves market-engine's output, ch-loader's transfers,
-// holder-indexer's holders, market-registry's metadata and market-rankings'
-// token lists, and the live stream when hub is set.
+// holder-indexer's holders, market-registry's metadata, market-rankings'
+// token lists and market-launchpad's lists, and the live stream when hub is
+// set.
 func NewHandler(
 	api *conf.API,
 	reader Reader,
@@ -24,12 +25,13 @@ func NewHandler(
 	registry RegistryReader,
 	rankings RankingReader,
 	liquidity LiquidityReader,
+	launchpad LaunchpadReader,
 	hub *live.Hub,
 	logger *slog.Logger,
 ) http.Handler {
 	server := New(reader, api.IntervalDurations(), logger).
 		WithTransfers(transfers).WithHolders(holders).WithRegistry(registry).WithRankings(rankings).
-		WithLiquidity(liquidity)
+		WithLiquidity(liquidity).WithLaunchpad(launchpad)
 	if hub != nil {
 		server.WithLive(hub)
 	}

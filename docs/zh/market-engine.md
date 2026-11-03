@@ -30,6 +30,7 @@ market-engine 每条链一个进程，按 offset 顺序读该链的 topic，把 
 | 常数乘积池（Uniswap V2 一类） | `reserves_after` 之比 | `reserves_after` |
 | 集中流动性池（Uniswap/PancakeSwap V3、Uniswap V4、PancakeSwap Infinity） | `sqrt_price_x96` | tick 表在当前价下实际持有的币量，见下文 |
 | Curve / Balancer 池 | 区块附带的余额快照，见[下文](#curve-与-balancer-池) | 快照中的真实余额 |
+| 发射平台曲线池（four.meme、Flap） | 交易附带的 `pool_state.curve.price`，见[下文](#发射平台曲线池) | 计价币一侧取已募集量，代币一侧取已募集量按曲线价可换的数量 |
 | 其它池子（含暂时的 liquidity-book 池） | swap 成交价 | 无 |
 
 **没有储备的池子只有价格，不能用来传播价格。** 集中流动性池在 tick 表不可用时同样如此。
@@ -111,6 +112,15 @@ Curve 元池会按基础池的虚拟价格报告基础池 LP 代币，Balancer V
 
 相关代码：`internal/app/engine/biz/balances.go`（快照应用、各曲线族的价格与深度、汇率定价）、`selection.go`（定价池比较规则），
 曲线数学来自 oh-my-blockchain 的 `dex/mechanism/{stableswap,weighted,ladder}`。
+
+## 发射平台曲线池
+
+four.meme、Flap 的曲线交易带有交易后的曲线价格和已募集计价币（`pool_state.curve`）。engine 把曲线池当作常数乘积池定价：价格是换算成人类单位的曲线价，
+计价币储备是已募集量，代币储备是已募集量按该价格可换的数量。新曲线几乎没有募集，所以对曲线池用 `curve_min_liquidity_usd`（默认 0）
+同时替代 `min_liquidity_usd` 和 `candle_min_liquidity_usd`，让发射代币从第一笔交易起就有价格和 K 线。曲线迁移后不再参与定价：
+储备被清空，代币改由迁移到的 DEX 池定价。迁移发生在曲线还没有状态时（代币小数位未知）也会写入占位并保留迁移标记，之后补齐小数位回放的交易不会让曲线重新带储备；迁移区块内的曲线交易按迁移前的流动性判断能否进入代币 K 线。
+
+相关代码：`internal/app/engine/biz/pool.go`（`observeCurve`）、`launchpad.go`（阈值与迁移处理）。
 
 ## Chainlink 喂价
 

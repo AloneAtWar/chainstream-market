@@ -60,6 +60,21 @@ type RawTrade struct {
 	Liquidity     string
 	Tick          string
 	ActiveBinID   *uint32
+	// Curve is a launchpad bonding curve's state after the trade, nil for
+	// other pools.
+	Curve *RawCurve
+}
+
+// RawCurve is a launchpad bonding curve after a trade, as published: decimal
+// integer strings, empty when unknown.
+//
+// RawCurve 是发射平台曲线交易后的状态：进度（1e18 = 100%）、剩余可卖代币、已募集计价币、
+// 每 1e18 最小单位代币的计价币价格。
+type RawCurve struct {
+	Progress      string
+	BaseRemaining string
+	QuoteRaised   string
+	Price         string
 }
 
 // RawAmount is one token leg of a trade. Raw is a signed integer string;

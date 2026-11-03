@@ -34,6 +34,7 @@ type Server struct {
 	registry  RegistryReader
 	rankings  RankingReader
 	liquidity LiquidityReader
+	launchpad LaunchpadReader
 	live      http.Handler
 	intervals map[string]time.Duration
 	logger    *slog.Logger
@@ -86,6 +87,10 @@ func (server *Server) Handler() http.Handler {
 	}
 	if server.liquidity != nil {
 		mux.HandleFunc("GET /v1/chains/{chain}/pools/{pool}/liquidity", server.poolLiquidity)
+	}
+	if server.launchpad != nil {
+		mux.HandleFunc("GET /v1/chains/{chain}/launchpad/tokens", server.launchpadList)
+		mux.HandleFunc("GET /v1/chains/{chain}/launchpad/tokens/{token}", server.launchpadDetail)
 	}
 	if server.live != nil {
 		mux.Handle("GET /v1/stream", server.live)

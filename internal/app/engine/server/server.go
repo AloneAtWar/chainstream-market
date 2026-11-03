@@ -49,6 +49,7 @@ func NewServers(
 			Catalog:               asset.DefaultCatalog(chain.GetChainId()),
 			MinLiquidityUSD:       decimal.NewFromFloat(market.GetMinLiquidityUsd()),
 			CandleMinLiquidityUSD: decimal.NewFromFloat(market.GetCandleMinLiquidityUsd()),
+			CurveMinLiquidityUSD:  decimal.NewFromFloat(market.GetCurveMinLiquidityUsd()),
 			MaxHops:               uint8(market.GetMaxHops()),
 			Intervals:             market.IntervalDurations(),
 			HistoryDepth:          market.GetHistoryDepth(),
