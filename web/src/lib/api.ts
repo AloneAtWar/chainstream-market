@@ -155,6 +155,61 @@ export interface Transfers {
   next?: TransferCursor;
 }
 
+export type LaunchpadColumn = "new" | "bonding" | "migrated";
+export type LaunchpadStatus = "bonding" | "completed" | "migrated";
+
+// LaunchpadToken is a bonding-curve token from market-launchpad. progress is
+// a fraction (1 = sold out); base_remaining, quote_raised and price are raw
+// integers, price in raw quote units per 1e18 raw token units.
+export interface LaunchpadToken {
+  token: string;
+  protocol: string;
+  pool_id: string;
+  manager: string;
+  quote: string;
+  quote_symbol: string | null;
+  quote_decimals: number | null;
+  creator: string | null;
+  name: string | null;
+  symbol: string | null;
+  decimals: number | null;
+  meta_uri: string | null;
+  status: LaunchpadStatus;
+  launch_height: number;
+  launch_time: number;
+  launch_seen: boolean;
+  progress: string | null;
+  base_remaining: string | null;
+  quote_raised: string | null;
+  price: string | null;
+  trades: number;
+  buys: number;
+  sells: number;
+  last_trade_time: number | null;
+  completed_time: number | null;
+  migrated_time: number | null;
+  target_pool_id: string | null;
+  price_usd: string | null;
+  volume_24h_usd: string | null;
+  holders: number | null;
+}
+
+export interface LaunchpadList {
+  chain_id: number;
+  column: LaunchpadColumn;
+  head_time: number | null;
+  tokens: LaunchpadToken[];
+}
+
+export interface LaunchpadQuery {
+  protocol?: string;
+  limit?: number;
+  maxAge?: string;
+  stale?: string;
+  migratedAge?: string;
+  minProgress?: string;
+}
+
 export class ApiError extends Error {
   constructor(
     readonly status: number,
@@ -221,6 +276,20 @@ export const api = {
       limit,
       before_height: beforeHeight,
     }).then((body) => body.trades),
+  launchpadList: (chain: number, column: LaunchpadColumn, query: LaunchpadQuery = {}) =>
+    get<LaunchpadList>(`${base(chain)}/launchpad/tokens`, {
+      column,
+      protocol: query.protocol,
+      limit: query.limit,
+      max_age: query.maxAge,
+      stale: query.stale,
+      migrated_age: query.migratedAge,
+      min_progress: query.minProgress,
+    }),
+  launchpadToken: (chain: number, token: string) =>
+    orNull(get<{ chain_id: number; head_time: number; token: LaunchpadToken }>(`${base(chain)}/launchpad/tokens/${token}`)).then(
+      (body) => body?.token ?? null,
+    ),
   holders: (chain: number, token: string, limit = 100) =>
     get<Holders>(`${base(chain)}/tokens/${token}/holders`, { limit }),
   transfers: (

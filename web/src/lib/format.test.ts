@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatAge, formatChange, formatCompact, formatPrice, formatUsd, scaleRaw, shortAddress } from "./format";
+import { formatAge, formatChange, formatCompact, formatPrice, formatProgress, formatUsd, scaleRaw, shortAddress } from "./format";
 
 describe("formatPrice", () => {
   it("keeps four significant digits below one", () => {
@@ -60,5 +60,15 @@ describe("misc", () => {
     expect(formatAge(0, 86400 * 3)).toBe("3d");
     expect(formatAge(null)).toBe("—");
     expect(shortAddress("0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2")).toBe("0xc02a…6cc2");
+  });
+});
+
+describe("formatProgress", () => {
+  it("writes a clamped percentage that only reads 100% when full", () => {
+    expect(formatProgress("0.4567")).toBe("45.7%");
+    expect(formatProgress("1")).toBe("100.0%");
+    expect(formatProgress("0.99999")).toBe("99.9%");
+    expect(formatProgress("1.2")).toBe("100.0%");
+    expect(formatProgress(null)).toBe("—");
   });
 });

@@ -276,6 +276,28 @@ function send(response, status, body) {
 }
 
 const routes = [
+  [/^\/v1\/chains\/(\d+)\/launchpad\/tokens$/, (chain, _match, query) => {
+    const column = query.get("column");
+    const protocol = query.get("protocol") ?? "";
+    const limit = Number(query.get("limit") ?? 50);
+    const time = now();
+    let rows = chain.launchpad.filter((token) => !protocol || token.protocol === protocol);
+    if (column === "new") rows = rows.filter((token) => token.status === "bonding" && token.launch_time >= time - 86400);
+    else if (column === "bonding") {
+      rows = rows
+        .filter((token) => token.status !== "migrated" && token.last_trade_time !== null && token.last_trade_time >= time - 3600)
+        .sort((left, right) => right.progress - left.progress || right.last_trade_time - left.last_trade_time);
+    } else if (column === "migrated") {
+      rows = rows.filter((token) => token.status === "migrated").sort((left, right) => right.migrated_time - left.migrated_time);
+    } else return [400, { error: "column must be new, bonding or migrated" }];
+    const tokens = rows.slice(0, limit).map((token) => launchpadJSON(chain, token));
+    return [200, { chain_id: chain.id, column, head_time: LAUNCHPADS[chain.id] ? time : null, tokens }];
+  }],
+  [/^\/v1\/chains\/(\d+)\/launchpad\/tokens\/(0x[0-9a-f]+)$/, (chain, match) => {
+    const token = chain.launchpad.find((item) => item.token === match[2]);
+    if (!token) return [404, { error: "not a launchpad token" }];
+    return [200, { chain_id: chain.id, head_time: now(), token: launchpadJSON(chain, token) }];
+  }],
   [/^\/v1\/chains\/(\d+)\/tokens$/, (chain, _match, query) => {
     const sort = query.get("sort") ?? "volume_24h";
     const ascending = query.get("order") === "asc";
@@ -352,6 +374,82 @@ const routes = [
   }],
 ];
 
+// --- Launchpad ---
+//
+// four.meme runs on BSC and Flap on BSC and Base; each mock block may launch
+// a curve, and every open curve trades a little, sells out at 100% and
+// migrates a few blocks later.
+
+const LAUNCHPADS = { 56: ["fourmeme", "flap"], 8453: ["flap"] };
+const LAUNCH_NAMES = ["CAT", "MOON", "FROG", "AI", "PUMP", "BULL", "GEM", "RICH", "DRAGON", "PANDA", "ROCKET", "LUCKY"];
+
+function launchCurve(chain, time) {
+  const protocols = LAUNCHPADS[chain.id];
+  if (!protocols) return;
+  const symbol = `${pick(LAUNCH_NAMES)}${Math.floor(random() * 1000)}`;
+  const token = {
+    token: address(), protocol: pick(protocols), manager: address(), quote: chain.chain.wrapped,
+    quote_symbol: chain.chain.native, quote_decimals: 18, creator: address(), name: `${symbol} Coin`, symbol,
+    decimals: 18, meta_uri: `ipfs://bafy${hex(20)}`, status: "bonding", launch_height: chain.height,
+    launch_time: time, launch_seen: true, progress: 0, trades: 0, buys: 0, sells: 0, last_trade_time: null,
+    completed_time: null, migrated_time: null, target_pool_id: null, holders: 1,
+    // Some curves catch on, most fade.
+    heat: random() < 0.25 ? 0.03 + random() * 0.05 : random() * 0.01,
+  };
+  token.pool_id = `${token.manager}:${token.token}`;
+  chain.launchpad.unshift(token);
+}
+
+function stepCurves(chain, time) {
+  if (!LAUNCHPADS[chain.id]) return;
+  if (random() < 0.5) launchCurve(chain, time);
+  for (const token of chain.launchpad) {
+    if (token.status === "completed" && time - token.completed_time >= 3) {
+      token.status = "migrated";
+      token.migrated_time = time;
+      token.target_pool_id = address();
+    }
+    if (token.status !== "bonding" || random() > 0.6) continue;
+    const buy = random() < 0.62;
+    token.progress = Math.min(1, Math.max(0, token.progress + (buy ? 1 : -0.6) * token.heat * random()));
+    token.trades++;
+    if (buy) token.buys++;
+    else token.sells++;
+    token.holders += buy && random() < 0.7 ? 1 : 0;
+    token.last_trade_time = time;
+    if (token.progress >= 1) {
+      token.status = "completed";
+      token.completed_time = time;
+    }
+  }
+  chain.launchpad = chain.launchpad.slice(0, 400);
+}
+
+function launchpadJSON(chain, token) {
+  const { heat, progress, ...rest } = token;
+  // The curve raises about 24 of the chain's coin; price follows progress.
+  const raised = BigInt(Math.floor(progress * 24e6)) * 10n ** 12n;
+  const priceUsd = 4e-6 * (1 + progress * 9) * (chain.id === 56 ? 1 : 2);
+  return {
+    ...rest,
+    progress: decimalString(progress),
+    base_remaining: (BigInt(Math.floor((1 - progress) * 8e8)) * 10n ** 18n).toString(),
+    quote_raised: raised.toString(),
+    price: String(Math.floor(priceUsd * 1e18 / chain.chain.nativePrice)),
+    price_usd: token.trades > 0 ? decimalString(priceUsd) : null,
+    volume_24h_usd: token.trades > 0 ? decimalString(token.trades * 37.5) : null,
+  };
+}
+
+function seedCurves(chain) {
+  for (let second = 600; second > 0; second--) stepCurves(chain, now() - second);
+}
+
+for (const chain of Object.values(state)) {
+  chain.launchpad = [];
+  seedCurves(chain);
+}
+
 function findToken(chain, value) {
   return chain.tokens.find((token) => token.address === value.toLowerCase());
 }
@@ -414,6 +512,7 @@ function mineBlock(chain) {
   chain.height += 1;
   chain.finalized = chain.height - 64;
   const time = now();
+  stepCurves(chain, time);
   const active = chain.tokens.filter(() => random() < 0.08);
   for (const token of active) {
     if (token.symbol === "USDC") token.price = 1 + (random() - 0.5) * 0.0002;

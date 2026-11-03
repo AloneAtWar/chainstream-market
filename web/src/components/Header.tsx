@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from "react";
-import { Link, useLocation, useNavigate } from "react-router-dom";
+import { Link, NavLink, useLocation, useNavigate } from "react-router-dom";
 import { CHAINS, type Chain } from "../lib/chains";
 import { formatInteger } from "../lib/format";
 import { useHead, useLiveStatus } from "../lib/hooks";
@@ -23,11 +23,12 @@ export function Header({ chain }: { chain: Chain }) {
     setQuery("");
   };
 
-  // Switching chains keeps the token list's query string but leaves detail
-  // pages, whose addresses belong to the old chain.
+  // Switching chains keeps the token list's query string and the launchpad
+  // page but leaves detail pages, whose addresses belong to the old chain.
   const switchChain = (id: number) => {
     const onList = location.pathname === `/${chain.id}`;
-    navigate(`/${id}${onList ? location.search : ""}`);
+    const onLaunchpad = location.pathname === `/${chain.id}/launchpad`;
+    navigate(`/${id}${onList ? location.search : onLaunchpad ? "/launchpad" : ""}`);
   };
 
   return (
@@ -51,6 +52,14 @@ export function Header({ chain }: { chain: Chain }) {
             {item.short}
           </button>
         ))}
+      </nav>
+      <nav className="sections">
+        <NavLink to={`/${chain.id}`} end className="section">
+          行情
+        </NavLink>
+        <NavLink to={`/${chain.id}/launchpad`} className="section">
+          发射台
+        </NavLink>
       </nav>
       <form className="search" onSubmit={search}>
         <input

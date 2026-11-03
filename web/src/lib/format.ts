@@ -109,6 +109,15 @@ export function scaleRaw(raw: string, decimals: number): string {
   return (negative ? "-" : "") + whole + (fraction ? `.${fraction}` : "");
 }
 
+// formatProgress writes a curve progress fraction such as 0.4567 as 45.7%,
+// clamped to 0–100%.
+export function formatProgress(fraction: string | number | null | undefined): string {
+  const number = toNumber(fraction);
+  if (number === null) return "—";
+  const percent = Math.min(100, Math.max(0, number * 100));
+  return `${percent >= 99.95 && percent < 100 ? "99.9" : percent.toFixed(1)}%`;
+}
+
 export function formatInteger(value: number | null | undefined): string {
   if (value === null || value === undefined) return "—";
   return value.toLocaleString("en-US");

@@ -678,7 +678,135 @@ main {
   pointer-events: none;
 }
 
+/* Header sections */
+
+.sections {
+  display: flex;
+  gap: 4px;
+}
+
+.section {
+  padding: 4px 10px;
+  border-radius: 6px;
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.section.active {
+  color: var(--text);
+  background: var(--panel-2);
+}
+
+/* Launchpad */
+
+.launchpad-columns {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  align-items: start;
+}
+
+.launchpad-column .card-head h3 {
+  font-size: 15px;
+}
+
+.launchpad-hint {
+  font-size: 12px;
+}
+
+.launchpad-list {
+  display: flex;
+  flex-direction: column;
+  max-height: calc(100vh - 170px);
+  overflow-y: auto;
+}
+
+.launchpad-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 14px;
+  border-bottom: 1px solid #1a1e26;
+  cursor: pointer;
+}
+
+.launchpad-card:hover {
+  background: var(--panel-2);
+}
+
+.launchpad-top {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.launchpad-title {
+  flex: 1;
+  min-width: 0;
+}
+
+.launchpad-age {
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.launchpad-progress {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+}
+
+.launchpad-progress.big {
+  margin-bottom: 8px;
+  font-size: 14px;
+}
+
+.launchpad-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  font-size: 12px;
+}
+
+.launchpad-info h3 {
+  display: flex;
+  align-items: center;
+}
+
+.progress {
+  position: relative;
+  flex: 1;
+  height: 6px;
+  border-radius: 3px;
+  background: var(--panel-2);
+  overflow: hidden;
+}
+
+.launchpad-progress.big .progress {
+  height: 8px;
+  border-radius: 4px;
+}
+
+.progress-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--accent), var(--up));
+  transition: width 0.4s ease;
+}
+
+.progress.done .progress-fill {
+  background: var(--up);
+}
+
 @media (max-width: 1100px) {
+  .launchpad-columns {
+    grid-template-columns: 1fr;
+  }
+  .launchpad-list {
+    max-height: 480px;
+  }
   .token-grid {
     grid-template-columns: 1fr;
   }
