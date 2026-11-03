@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strconv"
 
+	"github.com/AloneAtWar/chainstream-market/internal/pkg/asset"
 	"github.com/AloneAtWar/chainstream-market/internal/pkg/model"
 	"github.com/AloneAtWar/oh-my-blockchain/chain/evm/feature/dex/mechanism/clamm"
 	"github.com/shopspring/decimal"
@@ -44,6 +45,9 @@ type liquidityResponse struct {
 	SnapshotHeight int64    `json:"snapshot_height"`
 	SqrtPriceX96   string   `json:"sqrt_price_x96"`
 	Tokens         []string `json:"tokens"`
+	// Decimals are the tokens' decimals in pool order, null where the
+	// registry does not know them, so clients can turn ticks into prices.
+	Decimals []*uint8 `json:"decimals"`
 	// Usable is false when the table no longer bounds the pool: it is stale
 	// or the pool's hook may settle swaps outside it.
 	Usable         bool               `json:"usable"`
@@ -109,7 +113,8 @@ func (server *Server) poolLiquidity(writer http.ResponseWriter, request *http.Re
 	body := liquidityResponse{
 		ChainID: chain, PoolID: poolID, Protocol: table.Pool.Protocol, Fee: table.Pool.Fee,
 		SnapshotHeight: table.Pool.SnapshotHeight, SqrtPriceX96: table.Pool.SqrtPriceX96, Tokens: tokens,
-		Usable: table.Pool.Usable(), Stale: table.Pool.Stale, SwapDeltaHooks: table.Pool.SwapDeltaHooks,
+		Decimals: decimals[:],
+		Usable:   table.Pool.Usable(), Stale: table.Pool.Stale, SwapDeltaHooks: table.Pool.SwapDeltaHooks,
 		Amounts:  amounts(distribution.Amount0, distribution.Amount1),
 		Depth:    liquidityDepth{BandBPS: band, Amounts: amounts(depth0, depth1)},
 		Segments: make([]liquiditySegment, len(distribution.Segments)),
@@ -124,7 +129,10 @@ func (server *Server) poolLiquidity(writer http.ResponseWriter, request *http.Re
 }
 
 // poolDecimals returns the pool's token addresses and decimals from the
-// registry, as far as it knows them.
+// registry, as far as it knows them. The native pseudo-address of a V4 pool
+// is the chain's coin, which has 18 decimals on every chain served.
+//
+// poolDecimals 从 registry 取池子的代币地址和精度；V4 原生币伪地址固定为 18 位。
 func (server *Server) poolDecimals(request *http.Request, chain uint64, poolID string) ([]string, [2]*uint8) {
 	var decimals [2]*uint8
 	if server.registry == nil {
@@ -135,6 +143,11 @@ func (server *Server) poolDecimals(request *http.Request, chain uint64, poolID s
 		return nil, decimals
 	}
 	for index, address := range pool.Tokens {
+		if address == asset.NativeAddress {
+			native := uint8(nativeDecimals)
+			decimals[index] = &native
+			continue
+		}
 		if token, ok, err := server.registry.Token(request.Context(), chain, address); err == nil && ok {
 			decimals[index] = token.Decimals
 		}

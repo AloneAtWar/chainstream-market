@@ -5,9 +5,11 @@ import (
 	"encoding/json"
 	"math/big"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/AloneAtWar/chainstream-market/internal/pkg/asset"
 	"github.com/AloneAtWar/chainstream-market/internal/pkg/model"
 	"github.com/AloneAtWar/oh-my-blockchain/chain/evm/feature/dex/mechanism/clamm"
 )
@@ -52,6 +54,9 @@ func TestPoolLiquidity(t *testing.T) {
 	if value := got.Amounts[0].Value; value == nil || got.Amounts[1].Value != nil {
 		t.Fatalf("amount values = %s", body)
 	}
+	if len(got.Decimals) != 2 || got.Decimals[0] == nil || *got.Decimals[0] != 6 || got.Decimals[1] != nil {
+		t.Fatalf("decimals = %s", body)
+	}
 	if segment := got.Segments[1]; segment.TickLower != -60 || segment.TickUpper != 60 || segment.Liquidity != "8000000000" {
 		t.Fatalf("middle segment = %+v", segment)
 	}
@@ -68,5 +73,33 @@ func TestPoolLiquidity(t *testing.T) {
 		if code, body := serveRegistry(t, server, path); code != status {
 			t.Fatalf("%s: status %d, want %d: %s", path, code, status, body)
 		}
+	}
+}
+
+func TestPoolLiquidityNativeDecimals(t *testing.T) {
+	price, _ := clamm.SqrtRatioAtTick(0)
+	registry := newFakeRegistry()
+	registry.pools["0x"+strings.Repeat("ab", 32)] = model.Pool{
+		PoolID: "0x" + strings.Repeat("ab", 32), Protocol: "uniswap_v4", Tokens: []string{asset.NativeAddress, "0xaa"},
+	}
+	liquidity := fakeLiquidity{tables: map[string]model.PoolTickTable{
+		"0x" + strings.Repeat("ab", 32): {
+			Pool:  model.CLAMMPool{Protocol: "uniswap_v4", Fee: 3000, SqrtPriceX96: price.String()},
+			Ticks: map[int]*big.Int{-60: big.NewInt(1_000_000), 60: big.NewInt(-1_000_000)},
+		},
+	}}
+	server := New(&fakeReader{}, []time.Duration{time.Minute}, nil).WithRegistry(registry).WithLiquidity(liquidity)
+	code, body := serveRegistry(t, server, "/v1/chains/1/pools/0x"+strings.Repeat("AB", 32)+"/liquidity")
+	if code != http.StatusOK {
+		t.Fatalf("status %d: %s", code, body)
+	}
+	var got liquidityResponse
+	if err := json.Unmarshal([]byte(body), &got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	// The native coin has 18 decimals without a registry row; 0xaa has 6.
+	if len(got.Decimals) != 2 || got.Decimals[0] == nil || *got.Decimals[0] != 18 ||
+		got.Decimals[1] == nil || *got.Decimals[1] != 6 || got.Amounts[0].Value == nil {
+		t.Fatalf("response = %s", body)
 	}
 }
