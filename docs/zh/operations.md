@@ -3,7 +3,7 @@
 ## 本地完整环境
 
 `make up` 构建镜像并用 docker compose 启动全部服务：Kafka、ClickHouse、PostgreSQL、Redis，扫描以太坊写入 `chainstream-eth` 的
-chainstream-evm，本仓库的六个服务，Web 前端，以及 Prometheus 和 Grafana。
+chainstream-evm，本仓库的七个服务，Web 前端，以及 Prometheus 和 Grafana。
 
 前提：
 
@@ -110,6 +110,8 @@ market-engine 基于 kfake 的迟到交易测试同时需要两者。CI 会启�
 | `rpc_requests_total{result}`、`rpc_request_seconds` | holder-indexer 与 market-engine 喂价查询发出的 JSON-RPC 批量请求（每次尝试一条，SDK 最多重试三次） |
 | `rpc_failures_total` | 失败的批量请求，以及单个调用中除 revert 外的节点错误 |
 | `rankings_refresh_seconds`、`rankings_refresh_failures_total` | market-rankings 刷新 |
+| `wallet_height`、`wallet_block_lag_seconds`、`wallet_trades_total`、`wallet_backfills_total` | market-wallet 账本：最后提交的高度、落后墙钟多久、提交的流水笔数、从 ClickHouse 补缺的次数 |
+| `wallet_refresh_seconds`、`wallet_refresh_failures_total`、`wallet_labels{label}` | market-wallet 统计汇总，以及各规则标签的钱包数 |
 | `http_requests_total{route,code}`、`http_request_seconds{route}` | market-api 按路由模式统计的请求 |
 
 `engine_*` 指标来自所有消费者：market-engine、ch-loader、holder-indexer 和 market-registry。chainstream-evm 的指标前缀为 `chainstream_evm_`。

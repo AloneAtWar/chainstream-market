@@ -11,6 +11,7 @@ build:
 	go build -trimpath -ldflags "-X main.Version=$(VERSION)" -o bin/holder-indexer ./cmd/holder-indexer
 	go build -trimpath -ldflags "-X main.Version=$(VERSION)" -o bin/market-registry ./cmd/market-registry
 	go build -trimpath -ldflags "-X main.Version=$(VERSION)" -o bin/market-rankings ./cmd/market-rankings
+	go build -trimpath -ldflags "-X main.Version=$(VERSION)" -o bin/market-wallet ./cmd/market-wallet
 	go build -trimpath -ldflags "-X main.Version=$(VERSION)" -o bin/ch-loader ./cmd/ch-loader
 
 # The local stack in deploy/ runs chainstream-evm from its own checkout,
