@@ -16,5 +16,7 @@ scrape_configs:
     static_configs: [{targets: ["market-registry:9100"]}]
   - job_name: market-rankings
     static_configs: [{targets: ["market-rankings:9100"]}]
+  - job_name: market-wallet
+    static_configs: [{targets: ["market-wallet:9100"]}]
   - job_name: market-api
     static_configs: [{targets: ["market-api:9100"]}]

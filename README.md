@@ -1,6 +1,6 @@
 # chainstream-market
 
-Market data services built on the [chainstream-evm](https://github.com/AloneAtWar/chainstream-evm) block stream: trade orientation, USD pricing, candles, holders and raw transfers for ETH, BSC and Base.
+Market data services built on the [chainstream-evm](https://github.com/AloneAtWar/chainstream-evm) block stream: trade orientation, USD pricing, candles, holders, raw transfers and wallet PnL with smart money labels for ETH, BSC and Base.
 
 中文文档：[docs/zh](docs/zh/README.md)
 
@@ -15,7 +15,8 @@ Market data services built on the [chainstream-evm](https://github.com/AloneAtWa
 | `cmd/ch-loader` | Consumes the same chain topics and copies their raw facts, every ERC-20 transfer among them, into ClickHouse. |
 | `cmd/market-registry` | Consumes the same chain topics and keeps the latest token and pool metadata in PostgreSQL. |
 | `cmd/market-rankings` | Periodically rolls prices, 24h activity, holder counts and metadata into the PostgreSQL token rankings. |
-| `internal/app/<component>` | One component per command, each with its own configuration and layers: `engine` (market-engine), `api` (market-api), `holder` (holder-indexer), `loader` (ch-loader), `registry` (market-registry) and `rankings` (market-rankings). See [Components](#components). |
+| `cmd/market-wallet` | Follows market-engine's live topics and keeps a moving weighted average cost ledger per wallet and token, wallet stats over 7/30/90 days, and smart money and bot labels. See [market-wallet](#market-wallet). |
+| `internal/app/<component>` | One component per command, each with its own configuration and layers: `engine` (market-engine), `api` (market-api), `holder` (holder-indexer), `loader` (ch-loader), `registry` (market-registry), `rankings` (market-rankings) and `wallet` (market-wallet). See [Components](#components). |
 | `internal/pkg/config` | The config loader, and the sections more than one component reads in `common.proto`: the chain source, Kafka, the databases, live push, metrics and the chains. |
 | `internal/pkg/model` | The data the components exchange: block output (oriented trades, token prices, candles), holder balances, token and pool metadata, raw facts and rankings. |
 | `internal/pkg/chdb` | The shared ClickHouse connection, the DDL of every table in it, their retention TTLs, and the row models and writes of the tables more than one component touches. |
@@ -122,6 +123,11 @@ go run ./cmd/market-api -conf configs/market-api.yaml   # needs clickhouse.addr 
 | `GET /v1/chains/{chain}/tokens?sort=volume_24h` | The token list from market-rankings, see [market-rankings](#market-rankings). |
 | `GET /v1/chains/{chain}/tokens/{token}/transfers` | The token's ERC-20 transfers from ch-loader, newest first. `holder` narrows them to one party. |
 | `GET /v1/chains/{chain}/holders/{holder}/transfers` | Transfers to or from the holder across tokens, newest first. `token` narrows them to one token. |
+| `GET /v1/chains/{chain}/wallets/{wallet}` | A wallet's labels and its stats over each window from market-wallet, see [market-wallet](#market-wallet). |
+| `GET /v1/chains/{chain}/wallets/{wallet}/positions` | The wallet's positions, most recently traded first, with average cost, realized and unrealized PnL. `status=open` or `closed` filters them. |
+| `GET /v1/chains/{chain}/wallets/{wallet}/trades` | The wallet's ledger trades, newest first: each trade's event (open, add, reduce, close, untracked) and realized PnL. Accepts `token`, `limit` and `before_height`. |
+| `GET /v1/chains/{chain}/wallets?window=30&label=smart_money` | The wallet leaderboard of one window (days). `sort` is `realized` (default), `winrate`, `roi` or `volume`; `label` narrows it to wallets with that label. |
+| `GET /v1/chains/{chain}/tokens/{token}/traders` | The token's traders by realized PnL, with their labels. |
 | `GET /v1/stream` | WebSocket stream of live trades and candles, see [Live push](#live-push). Served only with `live.enabled`. |
 | `GET /healthz` | 204 when the process is up. |
 
@@ -129,6 +135,7 @@ go run ./cmd/market-api -conf configs/market-api.yaml   # needs clickhouse.addr 
 - Candles accept `from` and `to` (unix seconds, `from <= open_time < to`) and `limit`. `interval` must be one of `api.intervals`, which must be among market-engine's `market.intervals`. Buckets with no trades are omitted, and each returned bucket opens at the previous close.
 - Trades accept `limit` and `before_height` for paging backwards.
 - Transfers accept `limit`, `before_height` and `before_log_index`. A full page returns `next: {before_height, before_log_index}`; pass both back to continue without skipping the rest of a block. Amounts are raw token units in `amount_raw`, and the native pseudo-address is not mapped, since only ERC-20 transfers are stored.
+- Trades carry `trader_labels` and holders `labels` (such as `smart_money` or `bot`) when market-wallet labeled the wallet; market-api reloads the labels every minute.
 - Decimal values are returned as strings.
 
 Queries go straight to ClickHouse, which is fast enough at local scale. Add a Redis hot view only if latency calls for it.
@@ -160,6 +167,8 @@ chain topic -> market-engine -> {topic}-live (Kafka or Redis) -> market-api hub 
 | `trades:<chain>:token:<token>` | Trades with the token as base, like `/tokens/{token}/trades`. |
 | `candles:<chain>:pool:<pool>:<interval>` | Pool candles. `interval` is one of `api.intervals`. |
 | `candles:<chain>:token:<token>:<interval>` | The token's aggregated candles. |
+| `trades:<chain>:wallet:<wallet>` | Trades by one wallet. |
+| `trades:<chain>:label:<label>` | Trades by every wallet with the label, such as `trades:56:label:smart_money`: smart money monitoring. |
 
 Addresses are lowercased and token aliases, such as the native pseudo-address, map to the wrapped token. The `subscribed` reply lists the channels as the server spells them, and messages use that spelling. A connection holds at most `live.max_subscriptions` channels; an invalid request gets an `error` message and changes nothing.
 
@@ -249,6 +258,40 @@ A token is ranked once it has a price or traded in the window. Activity, holders
 - `min_liquidity_usd`, `limit` (default 200, at most 1000) and `offset` (at most 10000).
 
 Name, symbol and decimals come from market-registry. The response includes `refreshed_at`, the unix time of the last refresh.
+
+## market-wallet
+
+```sh
+go run ./cmd/market-wallet -conf configs/market-wallet.yaml   # needs kafka, clickhouse and postgres
+```
+
+market-wallet answers "who is making money on what": a cost ledger per wallet and token, wallet stats over 7, 30 and 90 days, and rule labels such as `smart_money`. It needs market-engine with `live.enabled`, `live.driver: kafka` and the ClickHouse store.
+
+```
+{topic}-live -> market-wallet -> wallet_positions (PostgreSQL) + wallet_trades (ClickHouse)
+                    every 15m -> wallet_token_daily -> wallet_stats -> wallet_labels
+```
+
+**Ledger.** Each priced, non-outlier buy or sell of a `trader` (the transaction sender) moves its position with the moving weighted average cost method. A buy adds its amount and USD value. A sell takes the costed part of its amount at the average cost, so the average does not move: realized PnL is that part's share of the proceeds less its cost. Tokens that came in by transfer or airdrop have no cost; selling them counts as volume but not as PnL (event `untracked`). A sell that leaves less than `wallet.close_ratio` of the position closes it. Win rate is per sell: the share of PnL-counted sells that made money.
+
+**Following the live topic.** market-engine skips blocks older than `live.max_lag` on the live topic, so whenever a block arrives after a gap, market-wallet fills the missing heights from market-engine's `trades` table in ClickHouse, by `revision_height`, before applying it. A first start reads the live topic from its end and replays `wallet.history` (at most 90 days) from ClickHouse the same way. A record of a block already applied is skipped; a missing part of a block stops the follower. Every write records each position's state before the block first changed it in `wallet_undo`, so a `revert` restores the positions and deletes the reverted `wallet_trades`; undo history is pruned below the finalized height and `wallet.history_depth`. Ledger trades are written to ClickHouse before the PostgreSQL transaction that commits the positions and the checkpoint; a restart deletes the trades above the checkpoint. Close to the head every block commits at once; while catching up, blocks are batched up to `wallet.flush_rows` trades or `wallet.flush_interval`.
+
+**Stats and labels.** Every `wallet.stats.refresh_interval`, market-wallet rebuilds the changed days of `wallet_token_daily` from `wallet_trades`, writes `wallet_stats` for each window (counted back from the day of the newest trade, not the clock) as a new version, records the version in `wallet_refreshes`, and recomputes the rule labels:
+
+- `smart_money`: over `smart_money.window_days` (30), realized PnL ≥ $5,000, win rate ≥ 50%, at least 10 tokens traded, at most 30% of them lost by more than half, and not a bot; the top 1,000 by realized PnL.
+- `bot`: over `bot.window_days` (7), at least 2,000 trades, or at least 10 closes of which 30% were opened and closed within `fast_close_seconds`.
+
+Rule labels no longer met are removed; labels with another `source` are left alone. Every threshold is in the config.
+
+| Table | Contents |
+| --- | --- |
+| `wallet_positions` (PostgreSQL) | `(chain_id, wallet, token)`: quantity, remaining cost, realized PnL, volume and counts, first buy and current holding start. |
+| `wallet_undo`, `wallet_checkpoints` (PostgreSQL) | Revert history and the follower's position: live topic offset, height and block part. |
+| `wallet_labels` (PostgreSQL) | `(chain_id, wallet, label)` with `source` (`rule` for market-wallet's) and since when. |
+| `wallet_trades` (ClickHouse) | Every ledger trade with its event, realized PnL and hold time, ordered by wallet and time; aged out after `wallet.trades_days`. |
+| `wallet_token_daily`, `wallet_stats`, `wallet_refreshes` (ClickHouse) | The daily rollup, the versioned stats per window and the refreshes; market-api reads the latest version. |
+
+market-api serves the ledger under `/v1/chains/{chain}/wallets` and `/tokens/{token}/traders`, adds labels to trades and holders, and streams trades by wallet or by label, see [market-api](#market-api) and [Live push](#live-push). Funding-source clustering, KOL lists and watchlists are not built yet.
 
 ## ch-loader
 
@@ -378,7 +421,7 @@ go run ./cmd/market-engine -conf configs/market-engine.yaml
 
 ## Local stack
 
-`make up` builds the images and starts everything with docker compose: Kafka, ClickHouse, PostgreSQL and Redis, chainstream-evm scanning eth into `chainstream-eth`, the six services here, the web frontend, and Prometheus and Grafana. It needs Docker with Compose v2, an eth node, and a chainstream-evm checkout next to this one (`EVM_DIR=...` points elsewhere). Both images read the private oh-my-blockchain module through your SSH agent (`docker build --ssh default`); see chainstream-evm's README.
+`make up` builds the images and starts everything with docker compose: Kafka, ClickHouse, PostgreSQL and Redis, chainstream-evm scanning eth into `chainstream-eth`, the seven services here, the web frontend, and Prometheus and Grafana. It needs Docker with Compose v2, an eth node, and a chainstream-evm checkout next to this one (`EVM_DIR=...` points elsewhere). Both images read the private oh-my-blockchain module through your SSH agent (`docker build --ssh default`); see chainstream-evm's README.
 
 ```sh
 cp deploy/.env.example deploy/.env   # set ETH_RPC_URL
@@ -443,6 +486,8 @@ Every command serves Prometheus metrics at `/metrics` on `metrics.addr`, off by 
 | `rpc_requests_total{result}`, `rpc_request_seconds` | JSON-RPC batches sent by holder-indexer and market-engine's feed lookups, one per attempt: the SDK retries a failed batch up to three times. |
 | `rpc_failures_total` | Failed batches, plus node errors on single calls other than a revert. |
 | `rankings_refresh_seconds`, `rankings_refresh_failures_total` | market-rankings refreshes. |
+| `wallet_height`, `wallet_block_lag_seconds`, `wallet_trades_total`, `wallet_backfills_total` | market-wallet's ledger: last committed height, how far behind the clock, trades committed and gaps filled from ClickHouse. |
+| `wallet_refresh_seconds`, `wallet_refresh_failures_total`, `wallet_labels{label}` | market-wallet's stats refreshes and how many wallets carry each rule label. |
 | `http_requests_total{route,code}`, `http_request_seconds{route}` | market-api requests by matched route pattern. |
 
 The engine metrics come from every consumer: market-engine, ch-loader, holder-indexer and market-registry. chainstream-evm exports its own under `chainstream_evm_`. The Grafana dashboard in `deploy/grafana/dashboards` charts both.
@@ -484,6 +529,6 @@ Most components name their one database directly (`clickhouse:` or `postgres:`).
 
 PostgreSQL and ClickHouse are reached through GORM. The schemas stay hand-written DDL in `internal/pkg/chdb/schema.go` and `internal/pkg/pgdb/schema.go` rather than GORM migrations, since they rely on partial and GIN indexes, ClickHouse engines, sort keys and TTLs that model tags cannot express.
 
-The ClickHouse tests, including ch-loader's end-to-end run over an in-process kfake broker, run only when `CLICKHOUSE_ADDR` is set, for example `CLICKHOUSE_ADDR=127.0.0.1:9000 make test`. The PostgreSQL tests run only when `POSTGRES_DSN` is set, for example `POSTGRES_DSN=postgres://market:market@127.0.0.1:5432/market make test`. market-engine's late-trade run over kfake needs both. CI starts both services.
+The ClickHouse tests, including ch-loader's end-to-end run over an in-process kfake broker, run only when `CLICKHOUSE_ADDR` is set, for example `CLICKHOUSE_ADDR=127.0.0.1:9000 make test`. The PostgreSQL tests run only when `POSTGRES_DSN` is set, for example `POSTGRES_DSN=postgres://market:market@127.0.0.1:5432/market make test`. market-engine's late-trade run and market-wallet's ledger run over kfake need both. CI starts both services.
 
 `proto/stream/v1/event.proto` is copied from chainstream-evm's `api/stream/v1`, with only `go_package` changed. chainstream-evm still publishes from its own copy. The two must stay wire-compatible until chainstream-evm imports this module.

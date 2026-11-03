@@ -63,6 +63,9 @@ type Trade struct {
 	ValueUSD        string `json:"value_usd"`
 	// Outlier marks a swap left out of the token's candles.
 	Outlier bool `json:"outlier"`
+	// TraderLabels 是 market-api 推送时附上的交易者钱包标签（如 smart_money、bot），
+	// market-engine 发布时为空。
+	TraderLabels []string `json:"trader_labels,omitempty"`
 }
 
 // Candle is the whole current value of one bucket. UpdateHeight is the block

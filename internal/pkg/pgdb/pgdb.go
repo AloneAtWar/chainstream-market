@@ -1,6 +1,7 @@
 // Package pgdb opens the PostgreSQL database every component shares and
 // holds the DDL of all its tables: market-engine's checkpoints and state,
-// holder balances, the token and pool registry and the token rankings. Every
+// holder balances, the token and pool registry, the token rankings and the
+// wallet ledger. Every
 // component creates them all, so services can start in any order; each keeps
 // its own queries.
 //
@@ -106,6 +107,7 @@ func Migrate(db *gorm.DB, name string) error {
 		statements = append(statements, holderSchema...)
 		statements = append(statements, registrySchema...)
 		statements = append(statements, rankingSchema...)
+		statements = append(statements, walletSchema...)
 		for _, statement := range statements {
 			if err := tx.Exec(statement).Error; err != nil {
 				return err

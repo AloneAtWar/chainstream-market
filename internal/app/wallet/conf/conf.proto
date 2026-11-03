@@ -1,0 +1,89 @@
+syntax = "proto3";
+
+package app.wallet.conf;
+
+option go_package = "github.com/AloneAtWar/chainstream-market/internal/app/wallet/conf;conf";
+
+import "google/protobuf/duration.proto";
+import "pkg/config/common.proto";
+
+// Bootstrap is market-wallet's configuration; configs/market-wallet.yaml
+// documents every setting. Durations may be written as Go durations such as
+// 500ms or 5m.
+message Bootstrap {
+  // kafka is where market-engine's live topics are read from. market-wallet
+  // needs live.driver kafka on market-engine: Redis Pub/Sub cannot be
+  // replayed.
+  pkg.config.Kafka kafka = 1;
+  // clickhouse holds market-engine's trades, which gaps are filled from, and
+  // the wallet_trades, wallet_token_daily and wallet_stats tables.
+  pkg.config.ClickHouse clickhouse = 2;
+  // postgres holds wallet_positions, wallet_undo, wallet_checkpoints and
+  // wallet_labels.
+  pkg.config.Postgres postgres = 3;
+  pkg.config.Metrics metrics = 4;
+  // chains are followed each on its own; name, chain_id, topic and
+  // live_topic are read.
+  repeated pkg.config.Chain chains = 5;
+  Wallet wallet = 6;
+}
+
+// Wallet tunes the position ledger.
+message Wallet {
+  // history_depth is how many recent blocks stay revertible in addition to
+  // everything above the finalized height.
+  int64 history_depth = 1;
+  // history is how far back a first start replays market-engine's trades
+  // from ClickHouse.
+  google.protobuf.Duration history = 2;
+  // final_age: blocks filled from ClickHouse that are older than this keep
+  // no undo history, since no reorg reaches them.
+  google.protobuf.Duration final_age = 3;
+  // backfill_heights is how many heights one ClickHouse read covers when a
+  // gap is filled.
+  int64 backfill_heights = 4;
+  // Blocks older than batch_lag are buffered and written together, up to
+  // flush_rows wallet trades or flush_interval; newer ones on their own.
+  google.protobuf.Duration batch_lag = 5;
+  int32 flush_rows = 6;
+  google.protobuf.Duration flush_interval = 7;
+  // trades_days ages wallet_trades rows out by block time; zero keeps them.
+  int32 trades_days = 8;
+  // close_ratio: a sell that leaves less than this share of the position
+  // closes it, so dust left by rounding does not keep it open.
+  double close_ratio = 9;
+  Stats stats = 10;
+}
+
+// Stats tunes the periodic rollup and the rule labels.
+message Stats {
+  google.protobuf.Duration refresh_interval = 1;
+  // windows are the stat windows in days.
+  repeated int32 windows = 2;
+  // fast_close_seconds: a close within this long of the open counts as a
+  // fast flip.
+  int64 fast_close_seconds = 3;
+  SmartMoney smart_money = 4;
+  Bot bot = 5;
+}
+
+// SmartMoney is the smart_money rule: the top max_wallets by realized PnL
+// over window_days among wallets that pass every threshold and are not bots.
+message SmartMoney {
+  int32 window_days = 1;
+  double min_realized_usd = 2;
+  double min_win_rate = 3;
+  int64 min_tokens = 4;
+  // max_loss_share caps the share of traded tokens lost by more than 50%.
+  double max_loss_share = 5;
+  int32 max_wallets = 6;
+}
+
+// Bot is the bot rule over window_days: at least min_trades trades, or at
+// least min_closes closes of which min_fast_close_share were fast flips.
+message Bot {
+  int32 window_days = 1;
+  int64 min_trades = 2;
+  int64 min_closes = 3;
+  double min_fast_close_share = 4;
+}

@@ -62,12 +62,22 @@ type Kafka struct {
 
 // NewKafka starts consuming at offset start.
 func NewKafka(options KafkaOptions, start int64) (*Kafka, error) {
+	if start < 0 {
+		return nil, fmt.Errorf("kafka source: invalid start offset %d", start)
+	}
+	return newKafka(options, kgo.NewOffset().At(start))
+}
+
+// NewKafkaAtEnd 从 topic 末尾开始消费，只读到之后写入的记录。market-wallet 首次启动时
+// 用它跟读 live topic，之前的历史从 ClickHouse 回放。
+func NewKafkaAtEnd(options KafkaOptions) (*Kafka, error) {
+	return newKafka(options, kgo.NewOffset().AtEnd())
+}
+
+func newKafka(options KafkaOptions, start kgo.Offset) (*Kafka, error) {
 	topic := strings.TrimSpace(options.Topic)
 	if len(options.Brokers) == 0 || topic == "" {
 		return nil, errors.New("kafka source: brokers and topic are required")
-	}
-	if start < 0 {
-		return nil, fmt.Errorf("kafka source: invalid start offset %d", start)
 	}
 	if options.FetchMaxBytes <= 0 || options.FetchMaxWait <= 0 {
 		return nil, errors.New("kafka source: fetch limits must be positive")
@@ -75,7 +85,7 @@ func NewKafka(options KafkaOptions, start int64) (*Kafka, error) {
 	clientOptions := []kgo.Opt{
 		kgo.SeedBrokers(options.Brokers...),
 		kgo.ConsumePartitions(map[string]map[int32]kgo.Offset{
-			topic: {Partition: kgo.NewOffset().At(start)},
+			topic: {Partition: start},
 		}),
 		// Never silently jump: a checkpoint outside the retained range must
 		// fail rather than skip or replay blocks.
