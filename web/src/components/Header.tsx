@@ -23,11 +23,13 @@ export function Header({ chain }: { chain: Chain }) {
     setQuery("");
   };
 
-  // Switching chains keeps the token list's query string but leaves detail
-  // pages, whose addresses belong to the old chain.
+  // Switching chains keeps the token list or the smart money board with its
+  // query string, but leaves detail pages, whose addresses belong to the
+  // old chain.
+  const onSmartMoney = location.pathname === `/${chain.id}/smart-money`;
   const switchChain = (id: number) => {
-    const onList = location.pathname === `/${chain.id}`;
-    navigate(`/${id}${onList ? location.search : ""}`);
+    if (onSmartMoney) navigate(`/${id}/smart-money${location.search}`);
+    else navigate(`/${id}${location.pathname === `/${chain.id}` ? location.search : ""}`);
   };
 
   return (
@@ -51,6 +53,14 @@ export function Header({ chain }: { chain: Chain }) {
             {item.short}
           </button>
         ))}
+      </nav>
+      <nav className="nav">
+        <Link to={`/${chain.id}`} className={location.pathname === `/${chain.id}` ? "nav-link active" : "nav-link"}>
+          代币
+        </Link>
+        <Link to={`/${chain.id}/smart-money`} className={onSmartMoney ? "nav-link active" : "nav-link"}>
+          🧠 聪明钱
+        </Link>
       </nav>
       <form className="search" onSubmit={search}>
         <input

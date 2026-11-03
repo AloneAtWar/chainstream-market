@@ -113,3 +113,33 @@ export function formatInteger(value: number | null | undefined): string {
   if (value === null || value === undefined) return "—";
   return value.toLocaleString("en-US");
 }
+
+// formatDuration writes a length of time such as a holding period: 45s,
+// 12m, 3.5h or 2.1d.
+export function formatDuration(seconds: number | null | undefined): string {
+  if (seconds === null || seconds === undefined || !Number.isFinite(seconds) || seconds < 0) return "—";
+  if (seconds < 60) return `${Math.round(seconds)}s`;
+  if (seconds < 3600) return `${Math.round(seconds / 60)}m`;
+  const trim = (value: number) => value.toFixed(1).replace(/\.0$/, "");
+  if (seconds < 86400) return `${trim(seconds / 3600)}h`;
+  return `${trim(seconds / 86400)}d`;
+}
+
+// formatPercent formats a ratio such as 0.625 as 62.5%, without a sign.
+export function formatPercent(ratio: string | number | null | undefined, digits = 1): string {
+  const number = toNumber(ratio);
+  if (number === null) return "—";
+  return `${(number * 100).toFixed(digits)}%`;
+}
+
+// pnlClass colors a USD profit or loss.
+export function pnlClass(value: string | number | null | undefined): string {
+  return changeClass(value);
+}
+
+// formatPnl writes a signed USD amount, like +$1.2K or -$350.
+export function formatPnl(value: string | number | null | undefined): string {
+  const number = toNumber(value);
+  if (number === null) return "—";
+  return `${number > 0 ? "+" : ""}${formatUsd(number)}`;
+}

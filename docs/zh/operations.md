@@ -124,9 +124,10 @@ market-engine 基于 kfake 的迟到交易测试同时需要两者。CI 会启�
 | 页面 | 内容 |
 | --- | --- |
 | `/{chain}` | market-rankings 的代币列表，可按 24h 成交量、涨跌幅、流动性、持有人数或创建时间排序，支持流动性过滤和符号 / 地址搜索，每 15 秒刷新 |
-| `/{chain}/token/{address}` | 价格、24h 统计、代币聚合 K 线与实时交易，持有人 / 池子 / 转账标签页，以及 registry 元数据和价格推导过程 |
+| `/{chain}/token/{address}` | 价格、24h 统计、代币聚合 K 线与实时交易，盈利榜（按已实现盈亏排的交易者）/ 持有人 / 池子 / 转账标签页，以及 registry 元数据和价格推导过程 |
 | `/{chain}/pool/{pool}` | 池子自己的 K 线和实时交易、代币和元数据 |
-| `/{chain}/holder/{address}` | 该地址跨代币的 ERC-20 转账 |
+| `/{chain}/smart-money` | market-wallet 的钱包排行：7 / 30 / 90 天窗口，聪明钱或全部钱包，按已实现盈亏、ROI、胜率或成交额排序；旁边是聪明钱实时动向（`trades:<chain>:label:smart_money`） |
+| `/{chain}/wallet/{address}`（也可用 `/holder/`） | 钱包画像：标签、各窗口统计和代币收益分布、当前持仓与已清仓（含盈亏）、交易记录、实时成交和 ERC-20 转账 |
 
 - K 线用 TradingView 的 lightweight-charts 绘制。
 - 实时数据遵循[实时推送](services.md#实时推送live-push)的合并规则：先订阅，收到 `subscribed` 确认后再通过 REST 加载历史，然后应用期间收到的消息。
@@ -145,5 +146,5 @@ npm run build    # 类型检查并构建到 dist/
 make docker-web  # 在仓库根目录：构建 chainstream-web 镜像
 ```
 
-`mock/server.mjs` 提供与 market-api 相同的路由和推送协议，每条链每秒生成一个区块并推送交易、K 线和链头，不需要启动整套环境就能开发 UI；它不模拟重组。
+`mock/server.mjs` 提供与 market-api 相同的路由和推送协议，每条链每秒生成一个区块并推送交易、K 线和链头，还生成钱包统计、持仓、账本流水和标签（部分交易者是带标签的钱包，它们的成交也推到钱包和标签频道），不需要启动整套环境就能开发 UI；它不模拟重组。
 UI 提供的链和 K 线周期在 `web/src/lib/chains.ts` 中，必须与 market-api 的 `chains` 和 `api.intervals` 一致。

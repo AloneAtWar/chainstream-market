@@ -1,5 +1,16 @@
 import { describe, expect, it } from "vitest";
-import { formatAge, formatChange, formatCompact, formatPrice, formatUsd, scaleRaw, shortAddress } from "./format";
+import {
+  formatAge,
+  formatChange,
+  formatCompact,
+  formatDuration,
+  formatPercent,
+  formatPnl,
+  formatPrice,
+  formatUsd,
+  scaleRaw,
+  shortAddress,
+} from "./format";
 
 describe("formatPrice", () => {
   it("keeps four significant digits below one", () => {
@@ -60,5 +71,23 @@ describe("misc", () => {
     expect(formatAge(0, 86400 * 3)).toBe("3d");
     expect(formatAge(null)).toBe("—");
     expect(shortAddress("0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2")).toBe("0xc02a…6cc2");
+  });
+});
+
+describe("wallet stats", () => {
+  it("formats holding periods", () => {
+    expect(formatDuration(42)).toBe("42s");
+    expect(formatDuration(720)).toBe("12m");
+    expect(formatDuration(3 * 3600)).toBe("3h");
+    expect(formatDuration(1.5 * 86400)).toBe("1.5d");
+    expect(formatDuration(-1)).toBe("—");
+  });
+
+  it("formats win rates and signed PnL", () => {
+    expect(formatPercent(0.625)).toBe("62.5%");
+    expect(formatPercent(null)).toBe("—");
+    expect(formatPnl("1234.5")).toBe("+$1.23K");
+    expect(formatPnl("-350")).toBe("-$350");
+    expect(formatPnl("0")).toBe("$0");
   });
 });

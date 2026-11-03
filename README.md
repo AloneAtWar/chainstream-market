@@ -30,7 +30,7 @@ Market data services built on the [chainstream-evm](https://github.com/AloneAtWa
 | `internal/pkg/live` | Realtime push: market-engine's live topic publisher and market-api's WebSocket hub, over a Kafka or Redis Pub/Sub transport. |
 | `internal/pkg/transport` | Kratos servers every command shares: HTTP, and a Runner for long-lived work. |
 | `internal/pkg/metrics` | Prometheus metrics every command serves at `/metrics`. |
-| `web/` | The frontend: token rankings, token and pool pages with live candles and trades, holders and transfers. See [Web frontend](#web-frontend). |
+| `web/` | The frontend: token rankings, token and pool pages with live candles and trades, holders and transfers, the smart money board and wallet profiles. See [Web frontend](#web-frontend). |
 | `deploy/` | docker-compose stack: infrastructure, chainstream-evm, every service, Prometheus and Grafana. |
 
 ## market-engine
@@ -453,9 +453,10 @@ The topics are created by `kafka-init` with one partition and no retention limit
 | Page | Shows |
 | --- | --- |
 | `/{chain}` | The token list from market-rankings, sorted by 24h volume, price change, liquidity, holders or creation, with a liquidity filter and symbol or address search. Refreshed every 15s. |
-| `/{chain}/token/{address}` | Price, 24h stats, the token's aggregated candles and live trades, and tabs for holders, pools and transfers, beside the registry metadata and how the price was derived. |
+| `/{chain}/token/{address}` | Price, 24h stats, the token's aggregated candles and live trades, and tabs for its profit leaderboard (traders by realized PnL), holders, pools and transfers, beside the registry metadata and how the price was derived. |
 | `/{chain}/pool/{pool}` | The pool's own candles and live trades, its tokens and metadata. |
-| `/{chain}/holder/{address}` | The address's ERC-20 transfers across tokens. |
+| `/{chain}/smart-money` | market-wallet's leaderboard over 7, 30 or 90 days, of smart money wallets or of every wallet, sorted by realized PnL, ROI, win rate or volume, beside a live feed of what smart money wallets trade (`trades:<chain>:label:smart_money`). |
+| `/{chain}/wallet/{address}` (also `/holder/`) | A wallet's profile: labels, stats per window with the ROI distribution of its tokens, open and closed positions with PnL, ledger trades, live trades and ERC-20 transfers. |
 
 Candles are drawn with TradingView's lightweight-charts. Live data follows [Live push](#live-push): the page subscribes first, loads history over REST once the hub's `subscribed` reply confirms the channel, then applies what arrived meanwhile; it replaces candle buckets by `open_time` and keys trades by `(block_height, transaction_hash, log_index, operation_index)`. History is loaded again on every confirmation, which follows each reconnect, and after every revert, since REST trades do not carry `revision_height`; older candle pages requested before a reload, revert or reset are dropped. Scrolling the chart left pages back through older candles. Empty buckets are drawn flat at the previous close.
 
@@ -471,7 +472,7 @@ npm run build    # type-check and build into dist/
 make docker-web  # from the repository root: the chainstream-web image
 ```
 
-`mock/server.mjs` serves the same routes and stream protocol as market-api, mints a block per second on each chain, and pushes its trades, candles and head, so the UI can be worked on without the stack. It does not simulate reorgs. The chains and candle intervals the UI offers are in `web/src/lib/chains.ts` and must match market-api's `chains` and `api.intervals`.
+`mock/server.mjs` serves the same routes and stream protocol as market-api, mints a block per second on each chain, and pushes its trades, candles and head, and serves generated wallet stats, positions, ledger trades and labels (some of its traders are labeled wallets, whose trades are also pushed on the wallet and label channels), so the UI can be worked on without the stack. It does not simulate reorgs. The chains and candle intervals the UI offers are in `web/src/lib/chains.ts` and must match market-api's `chains` and `api.intervals`.
 
 ## Metrics
 
