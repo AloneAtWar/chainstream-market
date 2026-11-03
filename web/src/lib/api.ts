@@ -76,6 +76,40 @@ export interface Pool {
   metadata?: unknown;
 }
 
+// TokenAmount is a raw integer amount and, when the token's decimals are
+// known, its value in whole tokens.
+export interface TokenAmount {
+  raw: string;
+  value: string | null;
+}
+
+export interface LiquiditySegment {
+  tick_lower: number;
+  tick_upper: number;
+  liquidity: string;
+  amounts: TokenAmount[];
+}
+
+// PoolLiquidity is a concentrated pool's tick table expanded into price
+// ranges at its current price. Segments ascend by tick and hold only the
+// ranges with liquidity; amounts and decimals follow the pool's token order.
+export interface PoolLiquidity {
+  chain_id: number;
+  pool_id: string;
+  protocol: string;
+  fee: number;
+  snapshot_height: number;
+  sqrt_price_x96: string;
+  tokens: string[] | null;
+  decimals: (number | null)[] | null;
+  usable: boolean;
+  stale: boolean;
+  swap_delta_hooks: boolean;
+  amounts: TokenAmount[];
+  depth: { band_bps: number; amounts: TokenAmount[] };
+  segments: LiquiditySegment[];
+}
+
 export interface Price {
   chain_id: number;
   token: string;
@@ -265,6 +299,9 @@ export const api = {
   tokenPools: (chain: number, token: string, limit = 50) =>
     get<{ pools: Pool[] }>(`${base(chain)}/tokens/${token}/pools`, { limit }).then((body) => body.pools),
   pool: (chain: number, pool: string) => orNull(get<Pool>(`${base(chain)}/pools/${pool}`)),
+  // poolLiquidity is null for pools without a tick table: anything that is
+  // not a concentrated-liquidity (V3/V4-style) pool.
+  poolLiquidity: (chain: number, pool: string) => orNull(get<PoolLiquidity>(`${base(chain)}/pools/${pool}/liquidity`)),
   candles: (chain: number, subject: "token" | "pool", key: string, interval: string, limit: number, to?: number) =>
     get<{ interval: string; candles: Candle[] | null }>(`${base(chain)}/${subject}s/${key}/candles`, {
       interval,
