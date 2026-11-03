@@ -36,6 +36,9 @@ type Options struct {
 	// CandleMinLiquidityUSD is the quote reserve value a pool needs before its
 	// trades join a token's aggregated candles.
 	CandleMinLiquidityUSD decimal.Decimal
+	// CurveMinLiquidityUSD replaces both thresholds above for launchpad
+	// bonding curves, whose quote raised starts near zero.
+	CurveMinLiquidityUSD decimal.Decimal
 	// MaxHops bounds how far from an anchor a price may propagate.
 	MaxHops uint8
 	// Intervals are the candle bucket sizes.
@@ -280,6 +283,7 @@ func (processor *Processor) Apply(ctx context.Context, block *streamv1.BlockEven
 		processor.checkSwap(height, trade, tables)
 		processor.observe(height, trade, touched)
 	}
+	processor.applyLaunchpad(height, block, touched)
 	processor.settleTables(height, tables, touched)
 	processor.applyBalances(height, block, touched)
 	output.Prices = past.prices
@@ -551,7 +555,7 @@ func (processor *Processor) bestQuote(height int64, token string) (tokenPrice, b
 			continue
 		}
 		liquidity := state.Reserves[1-position].Mul(counterpart.USD).Round(precision)
-		if liquidity.LessThan(processor.options.MinLiquidityUSD) {
+		if liquidity.LessThan(processor.minLiquidity(state)) {
 			continue
 		}
 		relative, ok := state.priceOf(position)
@@ -781,7 +785,11 @@ func (processor *Processor) candleSubjects(trade model.Trade, quoteLiquidity dec
 		return nil
 	}
 	subjects := []candleKey{{Subject: model.CandleSubjectPool, Key: trade.PoolID}}
-	if !trade.Outlier && !quoteLiquidity.LessThan(processor.options.CandleMinLiquidityUSD) {
+	threshold := processor.options.CandleMinLiquidityUSD
+	if state, ok := processor.pools.get(trade.PoolID); ok && state.Curve {
+		threshold = processor.options.CurveMinLiquidityUSD
+	}
+	if !trade.Outlier && !quoteLiquidity.LessThan(threshold) {
 		subjects = append(subjects, candleKey{
 			Subject: model.CandleSubjectToken, Key: processor.options.Catalog.Canonical(trade.BaseToken),
 		})

@@ -156,6 +156,11 @@ var RawSchema = []string{
 	ORDER BY (chain_id, block_height, log_index, operation_index)`,
 
 	`ALTER TABLE raw_trades ADD INDEX IF NOT EXISTS raw_trades_pool_id pool_id TYPE bloom_filter GRANULARITY 4`,
+	// Launchpad bonding curve state after the trade; empty for other pools.
+	`ALTER TABLE raw_trades ADD COLUMN IF NOT EXISTS curve_progress String DEFAULT ''`,
+	`ALTER TABLE raw_trades ADD COLUMN IF NOT EXISTS curve_base_remaining String DEFAULT ''`,
+	`ALTER TABLE raw_trades ADD COLUMN IF NOT EXISTS curve_quote_raised String DEFAULT ''`,
+	`ALTER TABLE raw_trades ADD COLUMN IF NOT EXISTS curve_price String DEFAULT ''`,
 	// market-engine reads a token's trades back with hasAny(amount_assets, ...)
 	// when the token's decimals arrive late.
 	`ALTER TABLE raw_trades ADD INDEX IF NOT EXISTS raw_trades_assets amount_assets TYPE bloom_filter GRANULARITY 4`,

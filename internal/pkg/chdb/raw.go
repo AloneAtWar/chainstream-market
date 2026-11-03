@@ -124,6 +124,10 @@ func appendTrades(rows []RawTradeRow, block model.RawBlock) []RawTradeRow {
 		if row.ReservesAfter == nil {
 			row.ReservesAfter = []string{}
 		}
+		if curve := trade.Curve; curve != nil {
+			row.CurveProgress, row.CurveBaseRemaining = curve.Progress, curve.BaseRemaining
+			row.CurveQuoteRaised, row.CurvePrice = curve.QuoteRaised, curve.Price
+		}
 		rows = append(rows, row)
 	}
 	return rows
@@ -224,6 +228,12 @@ type RawTradeRow struct {
 	Liquidity           string
 	Tick                string
 	ActiveBinID         *uint32
+	// The curve columns hold a launchpad bonding curve's state after the
+	// trade; curve_price is empty for every other pool.
+	CurveProgress      string
+	CurveBaseRemaining string
+	CurveQuoteRaised   string
+	CurvePrice         string
 }
 
 func (RawTradeRow) TableName() string { return "raw_trades" }

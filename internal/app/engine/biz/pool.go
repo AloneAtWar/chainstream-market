@@ -35,6 +35,11 @@ type pool struct {
 	// price is tokens[1] per tokens[0].
 	Price    decimal.Decimal
 	HasPrice bool
+	// Curve marks a launchpad bonding curve: tokens[0] is the launched token,
+	// tokens[1] the quote, and the reserves are the quote raised and the
+	// token amount that quote buys at the curve price. Migrated curves keep
+	// their last price but no reserves, so they stop pricing the token.
+	Curve bool `json:",omitempty"`
 }
 
 // tableAmounts returns the raw token amounts a concentrated pool's tick table
@@ -63,6 +68,8 @@ func observePool(prev pool, trade *streamv1.Trade, decimals func(string) (uint32
 	}
 	state := trade.GetPoolState()
 	switch {
+	case state.GetCurve() != nil:
+		return observeCurve(prev, next, state.GetCurve(), d0, d1)
 	case len(state.GetReservesAfter()) == 2:
 		r0, err0 := decimal.NewFromString(state.GetReservesAfter()[0])
 		r1, err1 := decimal.NewFromString(state.GetReservesAfter()[1])
@@ -96,6 +103,34 @@ func observePool(prev pool, trade *streamv1.Trade, decimals func(string) (uint32
 		next.HasPrice = true
 	default:
 		return prev, false
+	}
+	return next, true
+}
+
+// observeCurve takes a launchpad curve's price and quote raised from its
+// trade. The curve price is raw quote units per 1e18 raw token units, so the
+// human price of tokens[0] in tokens[1] is price × 10^(d0 − 18 − d1). The
+// token reserve is what the quote raised buys at that price, which makes the
+// pool's reserve ratio its curve price; the quote raised is its liquidity.
+//
+// observeCurve：发射平台曲线池的价格与已募集量来自交易的 pool_state.curve。曲线价格是每
+// 1e18 最小单位代币对应的计价币最小单位，换成人类单位为 price × 10^(d0 − 18 − d1)。
+// 代币一侧储备取已募集计价币按该价格可换的数量，使储备比等于曲线价格。
+func observeCurve(prev, next pool, curve *streamv1.CurveState, d0, d1 uint32) (pool, bool) {
+	price, okPrice := rawValue(curve.GetPrice(), 0)
+	if !okPrice || !price.IsPositive() {
+		return prev, false
+	}
+	next.Curve = true
+	next.Price = price.Shift(int32(d0) - 18 - int32(d1)).Round(precision)
+	next.HasPrice = next.Price.IsPositive()
+	if !next.HasPrice {
+		return prev, false
+	}
+	next.Reserves, next.HasReserves = [2]decimal.Decimal{}, false
+	if raised, ok := rawValue(curve.GetQuoteRaised(), d1); ok && !raised.IsNegative() {
+		next.Reserves = [2]decimal.Decimal{raised.DivRound(next.Price, precision), raised}
+		next.HasReserves = true
 	}
 	return next, true
 }

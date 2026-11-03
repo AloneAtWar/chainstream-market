@@ -83,6 +83,11 @@ message Market {
   // dynamic_fee_depth_bps is the band of a V4 pool whose hook sets its fee;
   // 0 means 200 (±2%).
   uint32 dynamic_fee_depth_bps = 13;
+  // curve_min_liquidity_usd replaces min_liquidity_usd and
+  // candle_min_liquidity_usd for launchpad bonding curves (four.meme, Flap),
+  // whose quote raised starts near zero; 0 lets every curve trade price its
+  // token and join its candles.
+  double curve_min_liquidity_usd = 14;
 }
 
 message DepthBand {

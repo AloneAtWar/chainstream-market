@@ -92,6 +92,12 @@ func newRawTrade(trade *streamv1.Trade) RawTrade {
 			bin := state.GetActiveBinId()
 			raw.ActiveBinID = &bin
 		}
+		if curve := state.GetCurve(); curve != nil {
+			raw.Curve = &RawCurve{
+				Progress: curve.GetProgress(), BaseRemaining: curve.GetBaseRemaining(),
+				QuoteRaised: curve.GetQuoteRaised(), Price: curve.GetPrice(),
+			}
+		}
 	}
 	return raw
 }
