@@ -15,7 +15,7 @@ import (
 const defaultHistoryDepth = 256
 
 // defaultProtocols are the launchpads chainstream-evm parses.
-var defaultProtocols = []string{"fourmeme", "flap"}
+var defaultProtocols = []string{"fourmeme", "flap", "pons"}
 
 // ProviderSet provides the sections of Bootstrap to the injector.
 //

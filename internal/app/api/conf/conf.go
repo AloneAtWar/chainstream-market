@@ -3,16 +3,25 @@
 package conf
 
 import (
+	"errors"
 	"fmt"
+	"maps"
 	"strings"
 	"time"
 
 	"github.com/AloneAtWar/chainstream-market/internal/pkg/config"
+	"github.com/AloneAtWar/chainstream-market/internal/pkg/model"
 	"github.com/google/wire"
 	"google.golang.org/protobuf/types/known/durationpb"
 )
 
 const defaultAddr = ":8080"
+
+// defaultTargetFDV is a direct launch's default target fully diluted value
+// in USD, and defaultProtocolTargets the protocols whose target differs.
+const defaultTargetFDV = 69_000
+
+var defaultProtocolTargets = map[string]float64{"poolstrade": 50_000}
 
 // DefaultIntervals are the candle sizes served when none are configured,
 // market-engine's default market.intervals.
@@ -82,6 +91,18 @@ func (bootstrap *Bootstrap) ApplyDefaults() {
 			api.Intervals = append(api.Intervals, durationpb.New(interval))
 		}
 	}
+	if api.Launchpad == nil {
+		api.Launchpad = &Launchpad{}
+	}
+	if api.Launchpad.TargetFdvUsd == 0 {
+		api.Launchpad.TargetFdvUsd = defaultTargetFDV
+	}
+	targets := make(map[string]float64, len(defaultProtocolTargets)+len(api.Launchpad.ProtocolTargetFdvUsd))
+	maps.Copy(targets, defaultProtocolTargets)
+	for protocol, target := range api.Launchpad.ProtocolTargetFdvUsd {
+		targets[strings.ToLower(strings.TrimSpace(protocol))] = target
+	}
+	api.Launchpad.ProtocolTargetFdvUsd = targets
 }
 
 // Validate reports the first invalid setting of a defaulted Bootstrap.
@@ -89,6 +110,15 @@ func (bootstrap *Bootstrap) Validate() error {
 	for _, interval := range bootstrap.GetApi().IntervalDurations() {
 		if interval < time.Second || interval%time.Second != 0 {
 			return fmt.Errorf("conf: api interval %s must be whole seconds", interval)
+		}
+	}
+	launchpad := bootstrap.GetApi().GetLaunchpad()
+	if launchpad.GetTargetFdvUsd() <= 0 {
+		return errors.New("conf: api launchpad target_fdv_usd must be positive")
+	}
+	for protocol, target := range launchpad.GetProtocolTargetFdvUsd() {
+		if target <= 0 {
+			return fmt.Errorf("conf: api launchpad protocol_target_fdv_usd %s must be positive", protocol)
 		}
 	}
 	if err := bootstrap.GetClickhouse().Validate(); err != nil {
@@ -105,6 +135,15 @@ func (bootstrap *Bootstrap) Validate() error {
 		return err
 	}
 	return config.ValidateChains(bootstrap.GetChains(), live)
+}
+
+// LaunchpadTargets returns the direct launches' target values.
+//
+// LaunchpadTargets 返回直发代币伪进度用的目标市值。
+func (api *API) LaunchpadTargets() model.LaunchpadTargets {
+	return model.LaunchpadTargets{
+		Default: api.GetLaunchpad().GetTargetFdvUsd(), ByProtocol: maps.Clone(api.GetLaunchpad().GetProtocolTargetFdvUsd()),
+	}
 }
 
 // IntervalDurations returns the candle intervals served.

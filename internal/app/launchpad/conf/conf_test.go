@@ -20,7 +20,7 @@ func TestParseAppliesDefaults(t *testing.T) {
 	if bootstrap.Launchpad.HistoryDepth != defaultHistoryDepth {
 		t.Fatalf("history_depth = %d", bootstrap.Launchpad.HistoryDepth)
 	}
-	if got := bootstrap.Launchpad.Protocols; len(got) != 2 || got[0] != "fourmeme" || got[1] != "flap" {
+	if got := bootstrap.Launchpad.Protocols; len(got) != 3 || got[0] != "fourmeme" || got[1] != "flap" || got[2] != "pons" {
 		t.Fatalf("protocols = %v", got)
 	}
 	if bootstrap.Source.Driver != "kafka" || bootstrap.Kafka.FetchMaxBytes == 0 {

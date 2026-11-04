@@ -276,6 +276,10 @@ function send(response, status, body) {
 }
 
 const routes = [
+  [/^\/v1\/chains\/(\d+)\/launchpad\/protocols$/, (chain) => {
+    const protocols = [...new Set(chain.launchpad.map((token) => token.protocol))].sort();
+    return [200, { chain_id: chain.id, protocols }];
+  }],
   [/^\/v1\/chains\/(\d+)\/launchpad\/tokens$/, (chain, _match, query) => {
     const column = query.get("column");
     const protocol = query.get("protocol") ?? "";
@@ -438,6 +442,10 @@ function launchpadJSON(chain, token) {
     price: String(Math.floor(priceUsd * 1e18 / chain.chain.nativePrice)),
     price_usd: token.trades > 0 ? decimalString(priceUsd) : null,
     volume_24h_usd: token.trades > 0 ? decimalString(token.trades * 37.5) : null,
+    direct: false,
+    trading_pool_id: null,
+    launch_start: null,
+    launch_end: null,
   };
 }
 

@@ -30,6 +30,30 @@ func (repo *launchpadRepo) LoadLaunchpadCheckpoint(ctx context.Context, chainID 
 	return pgdb.LoadCheckpoint(repo.db.WithContext(ctx), pgdb.LaunchpadCheckpoints, chainID)
 }
 
+// LaunchpadTradingPools returns every direct launch by its trading pool.
+func (repo *launchpadRepo) LaunchpadTradingPools(ctx context.Context, chainID uint64) (map[string]model.LaunchpadToken, error) {
+	var rows []struct {
+		TradingPoolID string
+		Token         string
+		Protocol      string
+		PoolID        string
+		Manager       string
+		Quote         string
+	}
+	err := repo.db.WithContext(ctx).Raw(`SELECT trading_pool_id, token, protocol, pool_id, manager, quote
+		FROM launchpad_tokens WHERE chain_id = ? AND trading_pool_id IS NOT NULL`, int64(chainID)).Scan(&rows).Error
+	if err != nil {
+		return nil, fmt.Errorf("postgres store: launchpad trading pools: %w", err)
+	}
+	pools := make(map[string]model.LaunchpadToken, len(rows))
+	for _, row := range rows {
+		pools[row.TradingPoolID] = model.LaunchpadToken{
+			Token: row.Token, Protocol: row.Protocol, PoolID: row.PoolID, Manager: row.Manager, Quote: row.Quote,
+		}
+	}
+	return pools, nil
+}
+
 // CommitLaunchpad applies change and saves checkpoint in one transaction.
 func (repo *launchpadRepo) CommitLaunchpad(ctx context.Context, checkpoint chainsync.Checkpoint, change model.LaunchpadChange) error {
 	if checkpoint.ChainID == 0 {
@@ -83,6 +107,7 @@ func queueRevert(run *pgdb.Runner, chainID, rollbackTo int64) {
 // queueTokens records the touched rows for undo, then merges the block's
 // change into each: launch details fill in once, the status only moves
 // forward, the curve state follows the latest trade and the counts add up.
+// It also lists each token's protocol among the chain's platforms.
 func queueTokens(run *pgdb.Runner, chainID int64, change model.LaunchpadChange) {
 	if len(change.Tokens) == 0 {
 		return
@@ -96,6 +121,8 @@ func queueTokens(run *pgdb.Runner, chainID int64, change model.LaunchpadChange) 
 	progress, remaining, raised, prices := make([]*string, count), make([]*string, count), make([]*string, count), make([]*string, count)
 	trades, buys, sells := make([]int64, count), make([]int64, count), make([]int64, count)
 	lastTrade := make([]*int64, count)
+	direct, tradingPools := make([]bool, count), make([]*string, count)
+	launchStarts, launchEnds := make([]*int64, count), make([]*int64, count)
 	for index, token := range change.Tokens {
 		tokens[index], protocols[index], pools[index] = token.Token, token.Protocol, token.PoolID
 		managers[index], quotes[index], statuses[index] = token.Manager, token.Quote, token.Status
@@ -105,10 +132,9 @@ func queueTokens(run *pgdb.Runner, chainID int64, change model.LaunchpadChange) 
 		progress[index], remaining[index] = bigText(token.Progress), bigText(token.BaseRemaining)
 		raised[index], prices[index] = bigText(token.QuoteRaised), bigText(token.Price)
 		trades[index], buys[index], sells[index] = token.Trades, token.Buys, token.Sells
-		if token.LastTradeTime != 0 {
-			value := token.LastTradeTime
-			lastTrade[index] = &value
-		}
+		lastTrade[index] = optionalTime(token.LastTradeTime)
+		direct[index], tradingPools[index] = token.Direct, optional(token.TradingPoolID)
+		launchStarts[index], launchEnds[index] = optionalTime(token.LaunchStart), optionalTime(token.LaunchEnd)
 	}
 	run.Exec(`INSERT INTO launchpad_undo (chain_id, block_height, token, prev)
 		SELECT @chain, @height, k.token, to_jsonb(t)
@@ -117,10 +143,14 @@ func queueTokens(run *pgdb.Runner, chainID int64, change model.LaunchpadChange) 
 		ON CONFLICT DO NOTHING`, map[string]any{
 		"chain": chainID, "height": change.Height, "tokens": pgdb.Array(slices.Sorted(slices.Values(tokens))),
 	})
+	run.Exec(`INSERT INTO launchpad_protocols (chain_id, protocol)
+		SELECT DISTINCT CAST(@chain AS bigint), p FROM unnest(CAST(@protocols AS text[])) AS p
+		ON CONFLICT DO NOTHING`, map[string]any{"chain": chainID, "protocols": pgdb.Array(protocols)})
 	run.Exec(`INSERT INTO launchpad_tokens AS t (chain_id, token, protocol, pool_id, manager, quote, creator, name,
 			symbol, meta_uri, launch_tx, launch_seen, launch_height, launch_time, status, progress, base_remaining,
 			quote_raised, price, trades, buys, sells, last_trade_time, completed_height, completed_time,
-			migrated_height, migrated_time, target_pool_id, updated_height)
+			migrated_height, migrated_time, target_pool_id, updated_height, direct, trading_pool_id, launch_start,
+			launch_end)
 		SELECT @chain, f.token, f.protocol, f.pool_id, f.manager, f.quote, f.creator, f.name, f.symbol, f.meta_uri,
 			f.launch_tx, f.launched, @height, @time, f.status, f.progress::numeric, f.base_remaining::numeric,
 			f.quote_raised::numeric, f.price::numeric, f.trades, f.buys, f.sells, f.last_trade_time,
@@ -128,15 +158,17 @@ func queueTokens(run *pgdb.Runner, chainID int64, change model.LaunchpadChange) 
 			CASE WHEN f.status <> 'bonding' THEN CAST(@time AS bigint) END,
 			CASE WHEN f.status = 'migrated' THEN CAST(@height AS bigint) END,
 			CASE WHEN f.status = 'migrated' THEN CAST(@time AS bigint) END,
-			f.target_pool_id, @height
+			f.target_pool_id, @height, NULLIF(f.direct, false), f.trading_pool_id, f.launch_start, f.launch_end
 		FROM unnest(CAST(@tokens AS text[]), CAST(@protocols AS text[]), CAST(@pools AS text[]), CAST(@managers AS text[]),
 			CAST(@quotes AS text[]), CAST(@creators AS text[]), CAST(@names AS text[]), CAST(@symbols AS text[]),
 			CAST(@meta_uris AS text[]), CAST(@launch_txs AS text[]), CAST(@launched AS bool[]), CAST(@statuses AS text[]),
 			CAST(@progress AS text[]), CAST(@remaining AS text[]), CAST(@raised AS text[]), CAST(@prices AS text[]),
 			CAST(@trades AS bigint[]), CAST(@buys AS bigint[]), CAST(@sells AS bigint[]), CAST(@last_trade AS bigint[]),
-			CAST(@targets AS text[]))
+			CAST(@targets AS text[]), CAST(@direct AS bool[]), CAST(@trading_pools AS text[]),
+			CAST(@launch_starts AS bigint[]), CAST(@launch_ends AS bigint[]))
 			AS f(token, protocol, pool_id, manager, quote, creator, name, symbol, meta_uri, launch_tx, launched, status,
-				progress, base_remaining, quote_raised, price, trades, buys, sells, last_trade_time, target_pool_id)
+				progress, base_remaining, quote_raised, price, trades, buys, sells, last_trade_time, target_pool_id,
+				direct, trading_pool_id, launch_start, launch_end)
 		ON CONFLICT (chain_id, token) DO UPDATE SET
 			creator = COALESCE(EXCLUDED.creator, t.creator), name = COALESCE(EXCLUDED.name, t.name),
 			symbol = COALESCE(EXCLUDED.symbol, t.symbol), meta_uri = COALESCE(EXCLUDED.meta_uri, t.meta_uri),
@@ -156,7 +188,10 @@ func queueTokens(run *pgdb.Runner, chainID int64, change model.LaunchpadChange) 
 			migrated_height = COALESCE(t.migrated_height, EXCLUDED.migrated_height),
 			migrated_time = COALESCE(t.migrated_time, EXCLUDED.migrated_time),
 			target_pool_id = COALESCE(EXCLUDED.target_pool_id, t.target_pool_id),
-			updated_height = EXCLUDED.updated_height`, map[string]any{
+			updated_height = EXCLUDED.updated_height,
+			direct = COALESCE(EXCLUDED.direct, t.direct), trading_pool_id = COALESCE(EXCLUDED.trading_pool_id, t.trading_pool_id),
+			launch_start = COALESCE(EXCLUDED.launch_start, t.launch_start),
+			launch_end = COALESCE(EXCLUDED.launch_end, t.launch_end)`, map[string]any{
 		"chain": chainID, "height": change.Height, "time": change.Time,
 		"ranks":  pgdb.Array([]string{model.LaunchpadBonding, model.LaunchpadCompleted, model.LaunchpadMigrated}),
 		"tokens": pgdb.Array(tokens), "protocols": pgdb.Array(protocols), "pools": pgdb.Array(pools),
@@ -165,12 +200,21 @@ func queueTokens(run *pgdb.Runner, chainID int64, change model.LaunchpadChange) 
 		"launch_txs": pgdb.Array(launchTxs), "launched": pgdb.Array(launched), "statuses": pgdb.Array(statuses),
 		"progress": pgdb.Array(progress), "remaining": pgdb.Array(remaining), "raised": pgdb.Array(raised),
 		"prices": pgdb.Array(prices), "trades": pgdb.Array(trades), "buys": pgdb.Array(buys), "sells": pgdb.Array(sells),
-		"last_trade": pgdb.Array(lastTrade), "targets": pgdb.Array(targets),
+		"last_trade": pgdb.Array(lastTrade), "targets": pgdb.Array(targets), "direct": pgdb.Array(direct),
+		"trading_pools": pgdb.Array(tradingPools), "launch_starts": pgdb.Array(launchStarts),
+		"launch_ends": pgdb.Array(launchEnds),
 	})
 }
 
 func optional(value string) *string {
 	if value == "" {
+		return nil
+	}
+	return &value
+}
+
+func optionalTime(value int64) *int64 {
+	if value == 0 {
 		return nil
 	}
 	return &value

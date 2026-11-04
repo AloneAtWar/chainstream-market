@@ -5,7 +5,7 @@ import { api, type LaunchpadColumn, type LaunchpadToken } from "../lib/api";
 import type { Chain } from "../lib/chains";
 import { formatAge, formatInteger, formatPrice, formatProgress, formatUsd, shortAddress } from "../lib/format";
 import { useNow } from "../lib/hooks";
-import { formatRaised, LAUNCHPAD_PROTOCOLS, protocolLabel } from "../lib/launchpad";
+import { formatRaised, progressBasis, protocolLabel } from "../lib/launchpad";
 
 const COLUMNS: { value: LaunchpadColumn; title: string; hint: string }[] = [
   { value: "new", title: "🆕 新币", hint: "按发射时间倒序" },
@@ -21,12 +21,17 @@ const POLL = 5_000;
 // channel for them yet, so each column polls.
 export function LaunchpadPage({ chain }: { chain: Chain }) {
   const [params, setParams] = useSearchParams();
-  const protocols = LAUNCHPAD_PROTOCOLS.filter((item) => item.chains.includes(chain.id));
+  const listed = useQuery({
+    queryKey: ["launchpad-protocols", chain.id],
+    queryFn: () => api.launchpadProtocols(chain.id),
+    staleTime: 60_000,
+  });
+  const protocols = listed.data ?? [];
   const requested = params.get("protocol") ?? "";
-  const protocol = protocols.some((item) => item.value === requested) ? requested : "";
+  const protocol = protocols.includes(requested) ? requested : "";
   const now = useNow(1000);
 
-  const options = [{ value: "", label: "全部" }, ...protocols.map((item) => ({ value: item.value, label: item.label }))];
+  const options = [{ value: "", label: "全部" }, ...protocols.map((value) => ({ value, label: protocolLabel(value) }))];
   return (
     <div className="page">
       <div className="toolbar">
@@ -41,7 +46,7 @@ export function LaunchpadPage({ chain }: { chain: Chain }) {
           }}
         />
         <span className="muted toolbar-right">
-          {protocols.length === 0 ? `${chain.name} 上还没有接入发射平台` : "每 5 秒刷新"}
+          {listed.isSuccess && protocols.length === 0 ? `${chain.name} 上还没有发射平台代币` : "每 5 秒刷新"}
         </span>
       </div>
       <div className="launchpad-columns">
@@ -124,6 +129,7 @@ function LaunchpadCard({
             </Link>
             <span className="badge">{protocolLabel(token.protocol)}</span>
             {token.status === "completed" && <span className="badge warn">待迁移</span>}
+            {token.direct && <span className="badge">直发</span>}
           </div>
           <div className="token-sub muted" onClick={(event) => event.stopPropagation()}>
             {token.name && <span className="ellipsis">{token.name}</span>}
@@ -135,7 +141,7 @@ function LaunchpadCard({
           {formatAge(age, now)}
         </span>
       </div>
-      <div className="launchpad-progress">
+      <div className="launchpad-progress" title={progressBasis(token)}>
         <ProgressBar fraction={token.progress} done={token.status !== "bonding"} />
         <span className="mono">{formatProgress(token.progress)}</span>
       </div>
@@ -143,7 +149,7 @@ function LaunchpadCard({
         <span title="曲线已募集">💰 {formatRaised(chain, token)}</span>
         <span title="价格">{token.price_usd === null ? "—" : `$${formatPrice(token.price_usd)}`}</span>
         <span title="24h 成交额">Vol {formatUsd(token.volume_24h_usd)}</span>
-        <span title="曲线成交 买/卖">
+        <span title={token.direct ? "成交 买/卖" : "曲线成交 买/卖"}>
           <span className="up">{formatInteger(token.buys)}</span>/<span className="down">{formatInteger(token.sells)}</span>
         </span>
         {token.holders !== null && <span title="持有人">👥 {formatInteger(token.holders)}</span>}

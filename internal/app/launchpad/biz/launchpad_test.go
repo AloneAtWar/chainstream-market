@@ -15,6 +15,10 @@ func (*recordingRepo) LoadLaunchpadCheckpoint(context.Context, uint64) (chainsyn
 	return chainsync.Checkpoint{}, 0, false, nil
 }
 
+func (*recordingRepo) LaunchpadTradingPools(context.Context, uint64) (map[string]model.LaunchpadToken, error) {
+	return map[string]model.LaunchpadToken{}, nil
+}
+
 func (repo *recordingRepo) CommitLaunchpad(_ context.Context, _ chainsync.Checkpoint, change model.LaunchpadChange) error {
 	repo.changes = append(repo.changes, change)
 	return nil

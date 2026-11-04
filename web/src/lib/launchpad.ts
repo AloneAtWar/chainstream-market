@@ -1,18 +1,33 @@
-// Display helpers for market-launchpad's bonding-curve tokens.
+// Display helpers for market-launchpad's tokens: bonding curves and direct
+// launches.
 
 import type { LaunchpadToken } from "./api";
 import { canonicalToken, type Chain } from "./chains";
 import { formatCompact, scaleRaw } from "./format";
 
-// LAUNCHPAD_PROTOCOLS names the launchpads chainstream-evm parses, with the
-// chains each runs on.
-export const LAUNCHPAD_PROTOCOLS: { value: string; label: string; chains: number[] }[] = [
-  { value: "fourmeme", label: "four.meme", chains: [56] },
-  { value: "flap", label: "Flap", chains: [56, 8453] },
-];
+// PROTOCOL_LABELS names the launchpads chainstream-evm parses. Which of them
+// a chain has comes from market-api; a platform missing here shows its id.
+const PROTOCOL_LABELS: Record<string, string> = {
+  fourmeme: "four.meme",
+  flap: "Flap",
+  pons: "Pons",
+  bankr: "Bankr",
+  longxyz: "Long.xyz",
+  clanker: "Clanker",
+  poolstrade: "pools.trade",
+};
 
 export function protocolLabel(protocol: string): string {
-  return LAUNCHPAD_PROTOCOLS.find((item) => item.value === protocol)?.label ?? protocol;
+  return PROTOCOL_LABELS[protocol] ?? protocol;
+}
+
+// progressBasis says what a token's progress measures: its curve, its
+// launch window, or, for a direct launch without one, its market cap
+// against the platform's target.
+export function progressBasis(token: LaunchpadToken): string {
+  if (!token.direct) return "曲线进度";
+  if (token.launch_start !== null && token.launch_end !== null) return "发射窗口进度";
+  return "市值 / 目标市值";
 }
 
 // isNativeQuote reports a curve raising the chain's coin, given as either
@@ -33,6 +48,7 @@ export function quoteSymbol(chain: Chain, token: LaunchpadToken): string {
 // has not described yet shows its raw amount, marked as such, since guessing
 // its decimals can be off by many orders of magnitude.
 export function formatRaised(chain: Chain, token: LaunchpadToken): string {
+  if (token.direct) return "直发，无曲线";
   if (token.quote_raised === null) return "—";
   const decimals = token.quote_decimals ?? (isNativeQuote(chain, token) ? 18 : null);
   if (decimals === null) return `${formatCompact(token.quote_raised, 2)} ${quoteSymbol(chain, token)} 最小单位（精度未知）`;
