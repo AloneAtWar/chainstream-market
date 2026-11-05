@@ -6,7 +6,7 @@ replace github.com/AloneAtWar/chainstream-market/proto => ./proto
 
 require (
 	github.com/AloneAtWar/chainstream-market/proto v0.0.0-00010101000000-000000000000
-	github.com/AloneAtWar/oh-my-blockchain v0.7.1-0.20261105021805-0cce302e2ac1
+	github.com/AloneAtWar/oh-my-blockchain v0.7.1-0.20261105031444-6197e4f6b8bf
 	github.com/ClickHouse/clickhouse-go/v2 v2.49.0
 	github.com/alicebob/miniredis/v2 v2.37.0
 	github.com/coder/websocket v1.8.14
