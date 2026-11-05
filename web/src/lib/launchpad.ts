@@ -24,6 +24,12 @@ export function protocolLabel(protocol: string): string {
 // progressBasis says what a token's progress measures: its curve, its
 // launch window, or, for a direct launch without one, its market cap
 // against the platform's target.
+// unlistedProtocol reports whether tokens carry a platform missing from
+// protocols, so a page that polls the tokens knows its platform list is stale.
+export function unlistedProtocol(tokens: Pick<LaunchpadToken, "protocol">[], protocols: string[]): boolean {
+  return tokens.some((token) => token.protocol !== "" && !protocols.includes(token.protocol));
+}
+
 export function progressBasis(token: LaunchpadToken): string {
   if (!token.direct) return "曲线进度";
   if (token.launch_start !== null && token.launch_end !== null) return "发射窗口进度";

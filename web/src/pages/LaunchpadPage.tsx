@@ -1,11 +1,12 @@
-import { keepPreviousData, useQuery } from "@tanstack/react-query";
+import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useEffect } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { CopyButton, ProgressBar, Status, Tabs, TokenAvatar } from "../components/common";
 import { api, type LaunchpadColumn, type LaunchpadToken } from "../lib/api";
 import type { Chain } from "../lib/chains";
 import { formatAge, formatInteger, formatPrice, formatProgress, formatUsd, shortAddress } from "../lib/format";
 import { useNow } from "../lib/hooks";
-import { formatRaised, progressBasis, protocolLabel } from "../lib/launchpad";
+import { formatRaised, progressBasis, protocolLabel, unlistedProtocol } from "../lib/launchpad";
 
 const COLUMNS: { value: LaunchpadColumn; title: string; hint: string }[] = [
   { value: "new", title: "🆕 新币", hint: "按发射时间倒序" },
@@ -15,6 +16,10 @@ const COLUMNS: { value: LaunchpadColumn; title: string; hint: string }[] = [
 
 const PAGE = 50;
 const POLL = 5_000;
+// PROTOCOL_POLL refreshes a non-empty platform list; an empty one polls with
+// the columns, and a column holding a token of an unlisted platform refreshes
+// it at once.
+const PROTOCOL_POLL = 60_000;
 
 // LaunchpadPage shows launchpad tokens in three columns: new launches,
 // curves filling up and curves that moved to a DEX. market-api has no live
@@ -24,7 +29,7 @@ export function LaunchpadPage({ chain }: { chain: Chain }) {
   const listed = useQuery({
     queryKey: ["launchpad-protocols", chain.id],
     queryFn: () => api.launchpadProtocols(chain.id),
-    staleTime: 60_000,
+    refetchInterval: (query) => (query.state.data?.length ? PROTOCOL_POLL : POLL),
   });
   const protocols = listed.data ?? [];
   const requested = params.get("protocol") ?? "";
@@ -51,7 +56,14 @@ export function LaunchpadPage({ chain }: { chain: Chain }) {
       </div>
       <div className="launchpad-columns">
         {COLUMNS.map((column) => (
-          <LaunchpadColumnCard key={column.value} chain={chain} column={column} protocol={protocol} now={now} />
+          <LaunchpadColumnCard
+            key={column.value}
+            chain={chain}
+            column={column}
+            protocol={protocol}
+            protocols={listed.isSuccess ? protocols : null}
+            now={now}
+          />
         ))}
       </div>
     </div>
@@ -62,14 +74,17 @@ function LaunchpadColumnCard({
   chain,
   column,
   protocol,
+  protocols,
   now,
 }: {
   chain: Chain;
   column: (typeof COLUMNS)[number];
   protocol: string;
+  protocols: string[] | null;
   now: number;
 }) {
   const navigate = useNavigate();
+  const client = useQueryClient();
   const list = useQuery({
     queryKey: ["launchpad", chain.id, column.value, protocol],
     queryFn: () => api.launchpadList(chain.id, column.value, { protocol, limit: PAGE }),
@@ -77,6 +92,10 @@ function LaunchpadColumnCard({
     refetchInterval: POLL,
   });
   const tokens = list.data?.tokens ?? [];
+  const stale = protocols !== null && unlistedProtocol(tokens, protocols);
+  useEffect(() => {
+    if (stale) void client.invalidateQueries({ queryKey: ["launchpad-protocols", chain.id] });
+  }, [stale, client, chain.id]);
   return (
     <section className="card launchpad-column">
       <div className="card-head">
