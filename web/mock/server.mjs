@@ -29,6 +29,8 @@ const CHAINS = {
   1: { native: "WETH", wrapped: "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2", nativePrice: 3400, usdc: "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48" },
   56: { native: "WBNB", wrapped: "0xbb4cdb9cbd36b01bd1cbaebf2de08d9173bc095c", nativePrice: 610, usdc: "0x8ac76a51cc950d9822d68b83fe1ad97b32cd580d" },
   8453: { native: "WETH", wrapped: "0x4200000000000000000000000000000000000006", nativePrice: 3400, usdc: "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913" },
+  // Robinhood Chain's dollar is USDG.
+  4663: { native: "WETH", wrapped: "0x0bd7d308f8e1639fab988df18a8011f41eacad73", nativePrice: 3400, usdc: "0x5fc5360d0400a0fd4f2af552add042d716f1d168", stable: "USDG" },
 };
 
 const NAMES = [
@@ -46,12 +48,12 @@ const now = () => Math.floor(Date.now() / 1000);
 const state = {};
 for (const [chainId, chain] of Object.entries(CHAINS)) {
   const id = Number(chainId);
-  const height = { 1: 23_650_000, 56: 66_100_000, 8453: 37_400_000 }[id];
+  const height = { 1: 23_650_000, 56: 66_100_000, 8453: 37_400_000, 4663: 106_000_000 }[id];
   const tokens = [];
   const pools = [];
   const quoteTokens = [
     { address: chain.wrapped, symbol: chain.native, name: `Wrapped ${chain.native.slice(1)}`, decimals: 18, price: chain.nativePrice },
-    { address: chain.usdc, symbol: "USDC", name: "USD Coin", decimals: id === 56 ? 18 : 6, price: 1 },
+    { address: chain.usdc, symbol: chain.stable ?? "USDC", name: chain.stable ? "Global Dollar" : "USD Coin", decimals: id === 56 ? 18 : 6, price: 1 },
   ];
   for (const quote of quoteTokens) tokens.push(makeToken(quote, height, true));
   for (const [symbol, name] of NAMES) {
@@ -380,11 +382,12 @@ const routes = [
 
 // --- Launchpad ---
 //
-// four.meme runs on BSC and Flap on BSC and Base; each mock block may launch
+// four.meme runs on BSC, Flap on BSC, Base and Robinhood Chain and Pons on
+// Robinhood Chain; each mock block may launch
 // a curve, and every open curve trades a little, sells out at 100% and
 // migrates a few blocks later.
 
-const LAUNCHPADS = { 56: ["fourmeme", "flap"], 8453: ["flap"] };
+const LAUNCHPADS = { 56: ["fourmeme", "flap"], 8453: ["flap"], 4663: ["flap", "pons"] };
 const LAUNCH_NAMES = ["CAT", "MOON", "FROG", "AI", "PUMP", "BULL", "GEM", "RICH", "DRAGON", "PANDA", "ROCKET", "LUCKY"];
 
 function launchCurve(chain, time) {
@@ -523,7 +526,7 @@ function mineBlock(chain) {
   stepCurves(chain, time);
   const active = chain.tokens.filter(() => random() < 0.08);
   for (const token of active) {
-    if (token.symbol === "USDC") token.price = 1 + (random() - 0.5) * 0.0002;
+    if (token.symbol === "USDC" || token.symbol === "USDG") token.price = 1 + (random() - 0.5) * 0.0002;
     else token.price *= Math.exp((random() - 0.5) * (token.quote ? 0.001 : 0.01));
     const trades = [];
     for (let count = 1 + Math.floor(random() * 3); count > 0; count--) {
