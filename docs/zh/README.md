@@ -2,7 +2,7 @@
 
 `chainstream-market` 是建立在 [chainstream-evm](https://github.com/AloneAtWar/chainstream-evm) 区块流之上的一组
 市场数据服务：给交易定方向（base/quote）、USD 定价、K 线、持有人余额、原始转账、代币排行榜，以及一个 Web 前端。
-目前覆盖 ETH、BSC 和 Base。
+目前覆盖 ETH、BSC、Base 和 Robinhood Chain。
 
 chainstream-evm 只发布链上"事实"（每块的交易、转账、资产、池子、预言机日志……），本仓库负责所有"派生"计算。
 

@@ -45,6 +45,14 @@ type LaunchpadToken struct {
 	LastTradeTime int64
 	// TargetPoolID is the DEX pool a migration moved the liquidity into.
 	TargetPoolID string
+	// Direct marks a token launched straight into a DEX pool with no curve
+	// (Bankr, Long.xyz, Clanker, pools.trade). It stays bonding, and its
+	// trades are those of TradingPoolID. LaunchStart and LaunchEnd are the
+	// platform's launch window in unix seconds, or zero.
+	Direct        bool
+	TradingPoolID string
+	LaunchStart   int64
+	LaunchEnd     int64
 }
 
 // LaunchpadChange is what one record changed in the launchpad tables.
@@ -97,6 +105,21 @@ type LaunchpadQuery struct {
 	MigratedAge int64
 	MinProgress *big.Int
 	Limit       int
+	// Targets give direct launches their pseudo-progress, see
+	// LaunchpadTargets.
+	Targets LaunchpadTargets
+}
+
+// LaunchpadTargets are the fully diluted values, in USD, at which a direct
+// launch without a launch window counts as fully launched: its progress is
+// its market cap over the target of its protocol, or Default. A direct
+// launch with a window progresses with time instead.
+//
+// LaunchpadTargets 是直发代币的目标完全稀释市值（美元）：没有发射窗口的直发代币，进度 =
+// 市值 / 所属平台的目标（未配置时用 Default）；有发射窗口的按时间推进。
+type LaunchpadTargets struct {
+	Default    float64
+	ByProtocol map[string]float64
 }
 
 // LaunchpadListing is a launchpad token as the lists and the token page
@@ -104,20 +127,22 @@ type LaunchpadQuery struct {
 //
 // LaunchpadListing 是列表与代币页展示的发射平台代币，合并了 registry 元数据与行情。
 type LaunchpadListing struct {
-	Token         string
-	Protocol      string
-	PoolID        string
-	Manager       string
-	Quote         string
-	Creator       *string
-	Name          *string
-	Symbol        *string
-	Decimals      *uint8
-	MetaURI       *string
-	Status        string
-	LaunchHeight  int64
-	LaunchTime    int64
-	LaunchSeen    bool
+	Token        string
+	Protocol     string
+	PoolID       string
+	Manager      string
+	Quote        string
+	Creator      *string
+	Name         *string
+	Symbol       *string
+	Decimals     *uint8
+	MetaURI      *string
+	Status       string
+	LaunchHeight int64
+	LaunchTime   int64
+	LaunchSeen   bool
+	// Progress is the curve's progress, or a direct launch's pseudo-progress
+	// (see LaunchpadTargets), as a wad.
 	Progress      *big.Int
 	BaseRemaining *big.Int
 	QuoteRaised   *big.Int
@@ -129,6 +154,10 @@ type LaunchpadListing struct {
 	CompletedTime *int64
 	MigratedTime  *int64
 	TargetPoolID  *string
+	Direct        bool
+	TradingPoolID *string
+	LaunchStart   *int64
+	LaunchEnd     *int64
 	// QuoteSymbol and QuoteDecimals describe the quote token from the
 	// registry.
 	QuoteSymbol   *string

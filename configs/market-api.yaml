@@ -11,6 +11,13 @@ api:
   # Candle sizes served; each must be one of market-engine's
   # market.intervals.
   intervals: [1m, 5m, 15m, 1h, 4h, 24h]
+  # A direct launch (Bankr, Clanker, pools.trade) has no curve; without a
+  # launch window its progress is its fully diluted value in USD over this
+  # target, and it stays in the bonding list past 100%. Long.xyz launches
+  # progress through their launch window instead.
+  launchpad:
+    target_fdv_usd: 69000
+    protocol_target_fdv_usd: {poolstrade: 50000}
 
 # market-engine's and ch-loader's database. Its retention is not read here.
 clickhouse:
@@ -65,3 +72,4 @@ chains:
   - {name: eth, chain_id: 1, topic: chainstream-eth}
   - {name: bsc, chain_id: 56, topic: chainstream-bsc}
   - {name: base, chain_id: 8453, topic: chainstream-base}
+  - {name: robinhood, chain_id: 4663, topic: chainstream-robinhood}

@@ -31,7 +31,7 @@ func NewHandler(
 ) http.Handler {
 	server := New(reader, api.IntervalDurations(), logger).
 		WithTransfers(transfers).WithHolders(holders).WithRegistry(registry).WithRankings(rankings).
-		WithLiquidity(liquidity).WithLaunchpad(launchpad)
+		WithLiquidity(liquidity).WithLaunchpad(launchpad, api.LaunchpadTargets())
 	if hub != nil {
 		server.WithLive(hub)
 	}

@@ -66,3 +66,4 @@ chains:
   - {name: eth, chain_id: 1, topic: chainstream-eth}
   - {name: bsc, chain_id: 56, topic: chainstream-bsc}
   - {name: base, chain_id: 8453, topic: chainstream-base}
+  - {name: robinhood, chain_id: 4663, topic: chainstream-robinhood}

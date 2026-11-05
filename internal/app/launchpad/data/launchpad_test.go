@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math/big"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -135,17 +136,21 @@ func (f *fixture) commit(height int64, hash string) {
 
 func (f *fixture) token(address string) (model.LaunchpadListing, bool) {
 	f.t.Helper()
-	listing, ok, err := pgdb.LaunchpadToken(context.Background(), f.db, 56, address)
+	listing, ok, err := pgdb.LaunchpadToken(context.Background(), f.db, 56, address, testTargets)
 	if err != nil {
 		f.t.Fatalf("LaunchpadToken() error = %v", err)
 	}
 	return listing, ok
 }
 
+// testTargets are the direct launches' targets: $69k, and $34.5k for
+// Clanker.
+var testTargets = model.LaunchpadTargets{Default: 69_000, ByProtocol: map[string]float64{"clanker": 34_500}}
+
 func (f *fixture) list(column model.LaunchpadColumn) []string {
 	f.t.Helper()
 	listings, err := pgdb.LaunchpadList(context.Background(), f.db, model.LaunchpadQuery{
-		ChainID: 56, Column: column, MaxAge: 3600, Stale: 60, MigratedAge: 3600, Limit: 10,
+		ChainID: 56, Column: column, MaxAge: 3600, Stale: 60, MigratedAge: 3600, Limit: 10, Targets: testTargets,
 	})
 	if err != nil {
 		f.t.Fatalf("LaunchpadList(%s) error = %v", column, err)
@@ -298,5 +303,112 @@ func TestLaunchpadCheckpointOnlyCommitsKeepTheHead(t *testing.T) {
 	}
 	if a, ok := f.token(tokenA); !ok || a.Trades != 1 {
 		t.Fatalf("token A = %+v (found %v)", a, ok)
+	}
+}
+
+const (
+	clankerFactory = "0xd3f2cc1731b7fd17f28798835c2e02f0a1839a94"
+	longAirlock    = "0xeb7c034704ef8dcd2d32324c1545f62fb4ad0862"
+	tokenC         = "0xcccc000000000000000000000000000000004444"
+	tokenD         = "0xdddd000000000000000000000000000000004444"
+	poolC          = "0x8a839926747d2e4364f72ca04b054c89344b0a54bfe8b354bd065de318a30d55"
+	poolD          = "0x1d0c09d5a8e6bb6d7ce7da64b5f0d1f8a0c3a1d0e3bdb44a3b4f3de47d7e0a51"
+)
+
+// directLaunch launches token straight into its trading pool.
+func directLaunch(protocol, manager, token, tradingPool string, start, end int64) *streamv1.LaunchpadEvent {
+	return &streamv1.LaunchpadEvent{
+		Type: streamv1.LaunchpadEventType_LAUNCHPAD_EVENT_TYPE_CREATED, Protocol: protocol, PoolId: manager + ":" + token,
+		Manager: manager, Token: token, Quote: wbnb, Creator: "0xC0FFEE", Name: "Direct", Symbol: "DIR",
+		Direct: true, TradingPoolId: tradingPool, LaunchStart: start, LaunchEnd: end,
+	}
+}
+
+// poolSwap is a v4 swap: buys take token out of the pool.
+func poolSwap(pool, token string, buy bool) *streamv1.Trade {
+	tokenRaw, quoteRaw := "-1000", "5"
+	if !buy {
+		tokenRaw, quoteRaw = "1000", "-5"
+	}
+	return &streamv1.Trade{
+		Action: streamv1.TradeAction_TRADE_ACTION_SWAP, Protocol: "uniswap_v4", PoolId: pool,
+		Amounts: []*streamv1.Amount{{Asset: wbnb, Raw: quoteRaw}, {Asset: token, Raw: tokenRaw}},
+	}
+}
+
+func TestLaunchpadFollowsDirectLaunches(t *testing.T) {
+	f := newFixture(t)
+	// The launch block's own swap counts, matched case-insensitively; a
+	// swap of another pool and the pool's liquidity changes do not.
+	addLiquidity := poolSwap(poolC, tokenC, false)
+	addLiquidity.Action = streamv1.TradeAction_TRADE_ACTION_LIQUIDITY_ADDED
+	f.apply(1, []*streamv1.LaunchpadEvent{directLaunch("clanker", clankerFactory, tokenC, strings.ToUpper(poolC), 0, 0)},
+		addLiquidity, poolSwap(strings.ToUpper(poolC), tokenC, true), poolSwap("0xother", tokenC, true))
+	windowStart := int64(baseTime + 6)
+	f.apply(2, []*streamv1.LaunchpadEvent{directLaunch("longxyz", longAirlock, tokenD, poolD, windowStart, windowStart+600)})
+
+	c, ok := f.token(tokenC)
+	if !ok || !c.Direct || *c.TradingPoolID != poolC || c.Status != model.LaunchpadBonding || c.Trades != 1 ||
+		c.Buys != 1 || c.Progress != nil || c.LaunchStart != nil {
+		t.Fatalf("token C = %+v", c)
+	}
+
+	// Without a price or supply, a direct launch has no progress yet; with
+	// them, its progress is its fully diluted value over its target.
+	err := f.db.Exec(`INSERT INTO registry_tokens (chain_id, address, standard, recognition, metadata_complete, decimals,
+			created, source_height, first_height, updated_height)
+		VALUES (56, ?, 'erc20', 'confirmed', true, 18, true, 1, 1, 1)`, tokenC).Error
+	if err == nil {
+		err = f.db.Exec(`INSERT INTO registry_pools (chain_id, pool_id, protocol, dex_address, tokens, created,
+				source_height, source_time, metadata, first_height, updated_height)
+			VALUES (56, ?, 'clanker', ?, ARRAY[?, ?], true, 1, 0, '{"total_supply": "100000000000000000000000000000"}', 1, 1)`,
+			clankerFactory+":"+tokenC, clankerFactory, tokenC, wbnb).Error
+	}
+	if err == nil {
+		// 100B tokens at $0.0000001725 is $17,250, half the $34,500 target.
+		err = f.db.Exec(`INSERT INTO token_rankings (chain_id, token, price_usd) VALUES (56, ?, 0.0000001725)`, tokenC).Error
+	}
+	if err != nil {
+		t.Fatalf("seed registry and rankings: %v", err)
+	}
+	f.apply(3, nil, poolSwap(poolD, tokenD, false))
+	if c, _ = f.token(tokenC); c.Progress.String() != wad(50) {
+		t.Fatalf("token C progress = %v, want %s", c.Progress, wad(50))
+	}
+	// A launch window moves with the head: 3s of 600s.
+	d, _ := f.token(tokenD)
+	if *d.LaunchStart != windowStart || *d.LaunchEnd != windowStart+600 || d.Progress.String() != "5000000000000000" ||
+		d.Trades != 1 || d.Sells != 1 {
+		t.Fatalf("token D = %+v", d)
+	}
+	if got := f.list(model.LaunchpadColumnBonding); fmt.Sprint(got) != fmt.Sprint([]string{tokenC, tokenD}) {
+		t.Fatalf("bonding = %v", got)
+	}
+
+	// A restart reloads the trading pools; the progress is capped at 1 and
+	// the token stays bonding.
+	f.restart()
+	if err = f.db.Exec(`UPDATE token_rankings SET price_usd = 1 WHERE token = ?`, tokenC).Error; err != nil {
+		t.Fatal(err)
+	}
+	f.apply(4, nil, poolSwap(poolC, tokenC, false))
+	if c, _ = f.token(tokenC); c.Trades != 2 || c.Sells != 1 || c.Progress.String() != wad(100) ||
+		c.Status != model.LaunchpadBonding {
+		t.Fatalf("token C after restart = %+v", c)
+	}
+	protocols, err := pgdb.LaunchpadProtocols(context.Background(), f.db, 56)
+	if err != nil || fmt.Sprint(protocols) != "[clanker longxyz]" {
+		t.Fatalf("protocols = %v, %v", protocols, err)
+	}
+
+	// A reverted direct launch takes its columns with it.
+	if err := f.revert(1); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := f.token(tokenD); ok {
+		t.Fatal("token D survived the revert of its launch")
+	}
+	if c, _ = f.token(tokenC); !c.Direct || c.Trades != 1 {
+		t.Fatalf("token C after revert = %+v", c)
 	}
 }

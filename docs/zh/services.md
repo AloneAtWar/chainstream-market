@@ -25,6 +25,7 @@ go run ./cmd/market-api -conf configs/market-api.yaml   # 需要 clickhouse.addr
 | `GET /v1/chains/{chain}/pools/{pool}` | 池子元数据：协议、DEX、代币、原始元数据 JSON |
 | `GET /v1/chains/{chain}/pools/{pool}/liquidity` | 集中流动性池在当前价下各价格区间的币量、合计及 `band_bps` 内的深度（来自 engine 的 tick 表）；表过期或 hook 可能在表外结算时 `usable` 为 false；engine 没有该池的表时返回 404 |
 | `GET /v1/chains/{chain}/tokens?sort=volume_24h` | market-rankings 生成的代币列表 |
+| `GET /v1/chains/{chain}/launchpad/protocols` | market-launchpad 在这条链上见过的发射平台，供平台筛选 |
 | `GET /v1/chains/{chain}/launchpad/tokens?column=new` | market-launchpad 的三栏之一（新币 / 发射中 / 已迁移），见 [market-launchpad](#market-launchpad) |
 | `GET /v1/chains/{chain}/launchpad/tokens/{token}` | 单个发射平台代币的曲线：状态、进度、已募集、成交笔数、发射与迁移信息；不是发射平台代币时返回 404 |
 | `GET /v1/chains/{chain}/tokens/{token}/transfers` | 代币的 ERC-20 转账（来自 ch-loader），`holder` 可限定某一方 |
@@ -168,15 +169,20 @@ go run ./cmd/market-registry -conf configs/market-registry.yaml   # 需要 postg
 go run ./cmd/market-launchpad -conf configs/market-launchpad.yaml   # 需要 postgres.dsn
 ```
 
-代码：`internal/app/launchpad`。它按自己的检查点读每条链的 topic，跟踪发射平台（bonding curve）代币的生命周期，
-支撑 GMGN / OKX 式的三栏：新币、发射中、已迁移。chainstream-evm 目前解析 four.meme（BSC）和 Flap（BSC、Base），
-区块里带有 `launchpad_events`（`CREATED`、`COMPLETED`、`MIGRATED`）和曲线交易：曲线交易就是作用在作用域池 `<manager>:<token>`
-上的普通 swap，其 `pool_state.curve` 是交易后的曲线状态。
+代码：`internal/app/launchpad`。它按自己的检查点读每条链的 topic，跟踪发射平台代币的生命周期，
+支撑 GMGN / OKX 式的三栏：新币、发射中、已迁移。chainstream-evm 解析 four.meme（BSC）、Flap（BSC、Base、Robinhood Chain）
+和 Pons（Robinhood Chain）的 bonding curve，区块里带有 `launchpad_events`（`CREATED`、`COMPLETED`、`MIGRATED`）和曲线交易：
+曲线交易就是作用在作用域池 `<manager>:<token>` 上的普通 swap，其 `pool_state.curve` 是交易后的曲线状态。它还解析直发平台：
+发射即进入 Uniswap v4 池、没有曲线的 Bankr、Long.xyz、Clanker 和 pools.trade（Robinhood Chain）。
 
 - **生命周期**：`bonding`（曲线交易中）→ `completed`（已打满，待迁移）→ `migrated`（已迁移到 DEX）。状态只前进不后退；
   迁移时记录目标 DEX 池。非 `bonding` 状态但没有交易上报进度的代币按 100% 计。
 - **曲线状态**：进度（wad，1e18 = 100%）、剩余可售代币、已募集计价币、价格（每 1e18 最小单位代币对应的计价币最小单位）
   取该代币块内最后一笔曲线交易后的值。`launchpad.protocols` 中协议的交易即使没有曲线状态也计入。买、卖笔数和最后成交时间累加。
+- **直发代币**：带 `direct` 的 `CREATED` 给出代币的交易池，该池的 swap 计为代币的成交（代币流出池子为买入），从发射块开始，
+  重启后同样生效。直发代币不会打满或迁移，一直是 `bonding`。进度在读取时计算：有发射窗口（`launch_start` 到 `launch_end`，
+  即 Long.xyz 的 epoch）时按时间推进；否则为完全稀释市值（market-rankings 的 USD 价格 × 发射池的 `total_supply`）除以
+  market-api `api.launchpad` 中该平台的目标市值（默认 $69k，pools.trade 为 $50k），最多 100%。代币还没有价格、精度或供应量时进度为空。
 - **晚发现的发射**：发射早于 topic 起点、先以交易被看到的代币，以该块作为近似发射时间，`launch_seen` 为 false，不进入新币栏。
 - **时间**：各栏的时间窗口从已应用的最新区块时间（`launchpad_heads`）往回算，而不是墙上时钟，所以重放或消费落后时列表与链头一致。
 - **重组**：一个块首次修改某行之前，先把该行（或其不存在）存入 `launchpad_undo`，回滚方式与 registry 相同；
@@ -186,17 +192,18 @@ go run ./cmd/market-launchpad -conf configs/market-launchpad.yaml   # 需要 pos
 | --- | --- |
 | `launchpad_checkpoints` | 每条链一行：Kafka offset、高度、哈希、已裁剪高度 |
 | `launchpad_heads` | 每条链一行：最新应用区块的高度和时间 |
-| `launchpad_tokens` | `(chain_id, token)` 及协议、作用域池 ID、manager、计价币、创建者、名称、符号、元数据 URI、状态、曲线状态、成交笔数，以及发射 / 打满 / 迁移的高度和时间；每栏一个部分索引 |
+| `launchpad_tokens` | `(chain_id, token)` 及协议、作用域池 ID、manager、计价币、创建者、名称、符号、元数据 URI、状态、曲线状态、成交笔数，以及发射 / 打满 / 迁移的高度和时间；每栏一个部分索引；直发代币另有 `direct`、`trading_pool_id` 和发射窗口 |
+| `launchpad_protocols` | `(chain_id, protocol)`：有代币的每个平台，第一个代币到达时加入 |
 | `launchpad_undo` | 每块每个代币修改前的行（JSONB），该块新建时为 NULL |
 
 `GET /v1/chains/{chain}/launchpad/tokens` 的 `column`：
 
 - `new`（新币）：仍在 `bonding`、`max_age`（默认 24h）内看到发射的代币，按发射时间倒序。
 - `bonding`（发射中）：`bonding` 或 `completed`、`max_age` 内发射、`stale`（默认 1h）内有成交、进度不低于 `min_progress`（小数，默认 0）的代币，
-  按进度倒序。长时间没有成交的代币会退出这一栏。
+  按进度倒序（直发代币按计算出的进度）。长时间没有成交的代币会退出这一栏。
 - `migrated`（已迁移）：`migrated_age`（默认 72h）内迁移的代币，按迁移时间倒序。
 
-时间窗口可写秒数或 Go duration（如 `6h`），最多 720h。`protocol`（`fourmeme`、`flap`）可筛选平台，`limit` 默认 50（最多 1000）。
+时间窗口可写秒数或 Go duration（如 `6h`），最多 720h。`protocol`（`fourmeme`、`flap`、`pons`、`bankr`、`longxyz`、`clanker`、`poolstrade`）可筛选平台，`limit` 默认 50（最多 1000）。
 每个代币带有小数形式的进度、原始曲线数值、计价币的符号和小数位、registry 的名称和符号（兜底），以及被 market-rankings 收录后的 USD 价格、
 24h 成交额和持有人数。`head_time` 是窗口起算的链上时间。目前三栏靠轮询刷新，还没有实时推送频道。
 

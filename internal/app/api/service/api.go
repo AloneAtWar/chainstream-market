@@ -35,10 +35,12 @@ type Server struct {
 	rankings  RankingReader
 	liquidity LiquidityReader
 	launchpad LaunchpadReader
-	live      http.Handler
-	intervals map[string]time.Duration
-	logger    *slog.Logger
-	now       func() time.Time
+	// launchpadTargets set direct launches' pseudo-progress.
+	launchpadTargets model.LaunchpadTargets
+	live             http.Handler
+	intervals        map[string]time.Duration
+	logger           *slog.Logger
+	now              func() time.Time
 }
 
 // New serves the given candle intervals, named like "1m", "4h" or "1d".
@@ -89,6 +91,7 @@ func (server *Server) Handler() http.Handler {
 		mux.HandleFunc("GET /v1/chains/{chain}/pools/{pool}/liquidity", server.poolLiquidity)
 	}
 	if server.launchpad != nil {
+		mux.HandleFunc("GET /v1/chains/{chain}/launchpad/protocols", server.launchpadProtocols)
 		mux.HandleFunc("GET /v1/chains/{chain}/launchpad/tokens", server.launchpadList)
 		mux.HandleFunc("GET /v1/chains/{chain}/launchpad/tokens/{token}", server.launchpadDetail)
 	}

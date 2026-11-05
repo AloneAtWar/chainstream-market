@@ -193,3 +193,48 @@ chains:
       - {proxy: "0x591e79239a7d679378eC8c847e5038150364C78F", token: "0x50c5725949a6f0c72e6c4a641f24049a917db0cb", description: "DAI / USD"}   # DAI
       - {proxy: "0x71041dddad3595F9CEd3DcCFBe3D1F4b0a16Bb70", token: "0x4200000000000000000000000000000000000006", description: "ETH / USD"}   # WETH
       - {proxy: "0x07DA0E54543a844a80ABE69c8A12F22B3aA59f9D", token: "0xcbb7c0000ab88b473b1f5afd9ef808440eed33bf"}                            # cbBTC
+  - name: robinhood
+    chain_id: 4663
+    topic: chainstream-robinhood
+    rpc_url: https://rpc.mainnet.chain.robinhood.com  # Robinhood Chain node for the feed proxies
+    # The stock feeds price one share; a stock token can hold slightly more
+    # than a share as dividends accrue (SGOV about 1% more, most far less),
+    # which the answer fallback leaves out.
+    feeds:
+      - {proxy: "0x78F3556b67E17Df817D51Ef5a990cDaF09E8d3A9", token: "0x0bd7d308f8e1639fab988df18a8011f41eacad73", description: "ETH / USD"}   # WETH
+      - {proxy: "0x61B7e5650328764B076A108EFF5fa7282a1B9aD2", token: "0x5fc5360d0400a0fd4f2af552add042d716f1d168", description: "USDG / USD"}  # USDG
+      - {proxy: "0x6B22A786bAa607d76728168703a39Ea9C99f2cD0", token: "0xaf3d76f1834a1d425780943c99ea8a608f8a93f9", description: "Robinhood AAPL / USD"}  # AAPL
+      - {proxy: "0x943A29E7ae51A4798823ca9eEd2ed533B2A22C72", token: "0x86923f96303d656e4aa86d9d42d1e57ad2023fdc", description: "RHAMD / USD"}  # AMD
+      - {proxy: "0xD5a1508ceD74c084eBf3cBe853e2C968fB2a651C", token: "0x12f190a9f9d7d37a250758b26824b97ce941bf54", description: "Robinhood AMZN / USD"}  # AMZN
+      - {proxy: "0xB4106147E8cce40b7d46124090d373A71b70f87D", token: "0x47f93d52cbec7c6d2cfc080e154002370a60daea", description: "Robinhood ASML / USD"}  # ASML
+      - {proxy: "0x62Cc8F9b5f56a33c9C8A60c8B92779f523c4E984", token: "0xad25ac6c84d497db898fa1e8387bf6af3532a1c4", description: "Robinhood BABA / USD"}  # BABA
+      - {proxy: "0x810c12D3a554Bc47fd39597Fe3b3AAC4941F50eF", token: "0xcbb95bbf36099d34da091dc6fa6f49efa257cee3", description: "Robinhood CLSK / USD"}  # CLSK
+      - {proxy: "0xA3a468A452940B7D6b69991207B508c609a98Ef2", token: "0x6330d8c3178a418788df01a47479c0ce7ccf450b", description: "Robinhood COIN / USD"}  # COIN
+      - {proxy: "0x6652eDf64bA3731C4F2D3ce821A0Fb1f1f6b482a", token: "0xdf0992e440dd0be65bd8439b609d6d4366bf1cb5", description: "Robinhood CRCL / USD"}  # CRCL
+      - {proxy: "0xe1b3aABCAFAd1c94708dc1367dcfF8Aa4407487C", token: "0x5f10a1c971b69e47e059e1dc91901b59b3fb49c3", description: "Robinhood CRWV / USD"}  # CRWV
+      - {proxy: "0x1C6c8cADBe02E19129c39dDB92281cE4c0bf206b", token: "0x941ae714ec6d8130c7b75d67160ca08f1e7d11dd", description: "Robinhood DELL-USD"}  # DELL
+      - {proxy: "0xEFdf54610B62A7753Ec30bDc380847c12D32e1D1", token: "0x7f0abef0c07280f82c6a08ead09ded6bae2c13fc", description: "Robinhood EWY / USD"}  # EWY
+      - {proxy: "0x27C71df6A64fB476468EdF256CF72c038baB5B67", token: "0x1b0e319c6a659f002271b69db8a7df2f911c153e", description: "Robinhood GME / USD"}  # GME
+      - {proxy: "0xF6f373a037c30F0e5010d854385cA89185AE638b", token: "0x2e0847e8910a9732eb3fb1bb4b70a580adad4fe3", description: "Robinhood GOOGL / USD"}  # GOOGL
+      - {proxy: "0x3f390C5C24628Ac7C489515402235FeAD71D1913", token: "0xc72b96e0e48ecd4dc75e1e45396e26300bc39681", description: "RHINTC / USD"}  # INTC
+      - {proxy: "0x22EfeC4919baf55F360E0EDee4AbEB26DE4971eb", token: "0x558378e000d634a36593e338ebacdd6207640efe", description: "Robinhood IONQ / USD"}  # IONQ
+      - {proxy: "0x7C38C00C30BEe9378381E7B6135d7283356D71b1", token: "0xc0d6457c16cc70d6790dd43521c899c87ce02f35", description: "Robinhood META / USD"}  # META
+      - {proxy: "0x45C3C877C15E6BA2EBB19eA114Ea508d14C1Af2E", token: "0xe93237c50d904957cf27e7b1133b510c669c2e74", description: "RHMSFT / USD"}  # MSFT
+      - {proxy: "0x396118bdFB181e6240E74D243F266B061c0edc3D", token: "0xec262a75e413fafd0df80480274532c79d42da09", description: "Robinhood MSTR / USD"}  # MSTR
+      - {proxy: "0x425EEFdCf05ed6526C3cE61Af99429A228a6d596", token: "0xff080c8ce2e5feadaca0da81314ae59d232d4afd", description: "RHMU / USD"}  # MU
+      - {proxy: "0xE1D87B116Ba0fe898998f1D140339D1fA1E09705", token: "0x9d9c6684f596f66a64c030b93a886d51fd4d7931", description: "Robinhood NBIS / USD"}  # NBIS
+      - {proxy: "0x379EC4f7C378F34a1B47E4F3cbeBCbAC3E8E9F15", token: "0xd0601ce157db5bdc3162bbac2a2c8af5320d9eec", description: "RHNVDA / USD"}  # NVDA
+      - {proxy: "0x0e6a64a2B58A6693a531E6c555f3A5d042eEA844", token: "0xb0992820e760d836549ba69bc7598b4af75dee03", description: "Robinhood ORCL / USD"}  # ORCL
+      - {proxy: "0x820ABedFF239034956B7A9d2F0a331f9F075eB4c", token: "0x894e1ec2d74ffe5aef8dc8a9e84686accb964f2a", description: "Robinhood PLTR / USD"}  # PLTR
+      - {proxy: "0x80901d846d5D7B030F26B480776EE3b29374C2ae", token: "0xd5f3879160bc7c32ebb4dc785f8a4f505888de68", description: "Robinhood QQQ / USD"}  # QQQ
+      - {proxy: "0x2A045cF1C49c61c166C036d2f06FA2D2d984f765", token: "0x284358abc07f9359f19f4b5b4ac91901be2597ba", description: "Robinhood RGTI / USD"}  # RGTI
+      - {proxy: "0x045477BF65Aef6f4F2386ad0164579e48381CC74", token: "0x3b14c39e89d60d627b42a1a4ca45b5bb45fc12e2", description: "Robinhood RKLB / USD"}  # RKLB
+      - {proxy: "0xa0DF4ee0fFf975306345875E3548Fcc519577A11", token: "0x92fd66527192e3e61d4ddd13322aa222de86f9b5", description: "Robinhood SGOV-USD"}  # SGOV
+      - {proxy: "0x209b73908e92Ae021826eD79609845451Ecba2ce", token: "0x411efb0e7f985935daec3d4c3ebaea0d0ad7d89f", description: "Robinhood SLV / USD"}  # SLV
+      - {proxy: "0xfb133Fa4B7b385802B693a293606682Df47109A3", token: "0xb90a19ff0af67f7779aff50a882a9cff42446400", description: "RHSNDK / USD"}  # SNDK
+      - {proxy: "0xB265810950ba6c5C0Ff821c9963014a56fD8Bffb", token: "0x4a0e65a3eccec6dbe60ae065f2e7bb85fae35eea", description: "Robinhood SPCX / USD"}  # SPCX
+      - {proxy: "0x319724394D3A0e3669269846abE664Cd621f9f6A", token: "0x117cc2133c37b721f49de2a7a74833232b3b4c0c", description: "RHSPY / USD"}  # SPY
+      - {proxy: "0x4A1166a659A55625345e9515b32adECea5547C38", token: "0x322f0929c4625ed5bad873c95208d54e1c003b2d", description: "RHTSLA / USD"}  # TSLA
+      - {proxy: "0x874cF94aa8eC88Fd9560094dD065f2fB3E41Fc2F", token: "0x58ffe4a942d3885baa22d7520691f611ef09e7aa", description: "Robinhood TSM / USD"}  # TSM
+      - {proxy: "0xA994d3684e8400A6c8078226925779FdeE682DD9", token: "0xd917b029c761d264c6a312bbbcda868658ef86a6", description: "Robinhood USAR-USD"}  # USAR
+      - {proxy: "0x75a9c76Ef439e2C7c2E5a34Ab105EcFe3766431c", token: "0xa30fa36db767ad9ed3f7a60fc79526fb4d56d344", description: "RHUSO / USD"}  # USO

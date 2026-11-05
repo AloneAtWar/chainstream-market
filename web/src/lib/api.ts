@@ -192,6 +192,13 @@ export interface LaunchpadToken {
   price_usd: string | null;
   volume_24h_usd: string | null;
   holders: number | null;
+  // A direct launch opened on a DEX pool, trading_pool_id, with no curve. Its
+  // progress runs through its launch window, or is its fully diluted value
+  // over its platform's target.
+  direct: boolean;
+  trading_pool_id: string | null;
+  launch_start: number | null;
+  launch_end: number | null;
 }
 
 export interface LaunchpadList {
@@ -286,6 +293,8 @@ export const api = {
       migrated_age: query.migratedAge,
       min_progress: query.minProgress,
     }),
+  launchpadProtocols: (chain: number) =>
+    get<{ chain_id: number; protocols: string[] }>(`${base(chain)}/launchpad/protocols`).then((body) => body.protocols ?? []),
   launchpadToken: (chain: number, token: string) =>
     orNull(get<{ chain_id: number; head_time: number; token: LaunchpadToken }>(`${base(chain)}/launchpad/tokens/${token}`)).then(
       (body) => body?.token ?? null,

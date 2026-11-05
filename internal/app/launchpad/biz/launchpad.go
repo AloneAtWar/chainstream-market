@@ -1,6 +1,9 @@
 // Package biz is market-launchpad's business layer: it follows launchpad
-// bonding curves (four.meme, Flap) through their lifecycle from a chain
-// topic's launchpad events and curve trades.
+// tokens through their lifecycle from a chain topic's launchpad events and
+// trades. A bonding-curve token (four.meme, Flap, Pons) trades on its curve
+// until it sells out and moves to a DEX; a direct launch (Bankr, Long.xyz,
+// Clanker, pools.trade) opens straight onto a DEX pool, its trading pool,
+// and stays bonding.
 //
 // Each block becomes one change per token it touched: the launch with its
 // creator, name and symbol; the curve state after the token's last curve trade
@@ -8,10 +11,11 @@
 // store merges the change into the token's row, keeping the furthest status,
 // and records the row as it was before so a reorg restores it.
 //
-// market-launchpad 业务层：根据链 topic 的 launchpad_events 和曲线交易（pool_state.curve）
-// 跟踪发射平台代币的生命周期。每个区块对每个被触及的代币产出一条改动：发射信息、块内最后一笔
-// 曲线交易后的曲线状态与成交笔数、是否打满或迁移。存储层把改动合并进代币行（状态只前进不后退），
-// 并在首次修改前保存旧值，重组时据此恢复。
+// market-launchpad 业务层：根据链 topic 的 launchpad_events 和交易跟踪发射平台代币的生命周期。
+// 曲线类代币（four.meme、Flap、Pons）在曲线上交易直到打满并迁移到 DEX；直发代币（Bankr、
+// Long.xyz、Clanker、pools.trade）发射即进入 DEX 池（交易池），一直处于发射中。每个区块对每个
+// 被触及的代币产出一条改动：发射信息、块内最后一笔曲线交易后的曲线状态与成交笔数、是否打满或迁移。
+// 存储层把改动合并进代币行（状态只前进不后退），并在首次修改前保存旧值，重组时据此恢复。
 package biz
 
 import (
@@ -43,6 +47,10 @@ type LaunchpadRepo interface {
 	// LoadLaunchpadCheckpoint returns the last committed checkpoint and the
 	// highest height whose undo history was pruned.
 	LoadLaunchpadCheckpoint(ctx context.Context, chainID uint64) (chainsync.Checkpoint, int64, bool, error)
+	// LaunchpadTradingPools returns every direct launch by its trading
+	// pool, with the token's identity (token, protocol, pool, manager and
+	// quote) filled in.
+	LaunchpadTradingPools(ctx context.Context, chainID uint64) (map[string]model.LaunchpadToken, error)
 	CommitLaunchpad(ctx context.Context, checkpoint chainsync.Checkpoint, change model.LaunchpadChange) error
 }
 
@@ -71,6 +79,10 @@ type Launchpad struct {
 	logger        *slog.Logger
 	pending       model.LaunchpadChange
 	prunedThrough int64
+	// tradingPools maps each direct launch's trading pool to the token's
+	// identity. A reverted launch keeps its entry; its pool's trades then
+	// recreate the token as seen without its launch, as curve trades do.
+	tradingPools map[string]model.LaunchpadToken
 }
 
 // New returns one chain's handler.
@@ -91,25 +103,33 @@ func New(options Options) (*Launchpad, error) {
 	for _, protocol := range options.Protocols {
 		protocols[strings.ToLower(protocol)] = struct{}{}
 	}
-	return &Launchpad{options: options, protocols: protocols, logger: logger}, nil
+	return &Launchpad{
+		options: options, protocols: protocols, logger: logger, tradingPools: make(map[string]model.LaunchpadToken),
+	}, nil
 }
 
-// Restore loads the last committed checkpoint.
+// Restore loads the last committed checkpoint and the direct launches'
+// trading pools.
 //
-// Restore 读取上次提交的检查点。
+// Restore 读取上次提交的检查点和直发代币的交易池。
 func (launchpad *Launchpad) Restore(ctx context.Context, chainID uint64) (chainsync.Checkpoint, bool, error) {
 	checkpoint, prunedThrough, ok, err := launchpad.options.Repo.LoadLaunchpadCheckpoint(ctx, chainID)
 	if err != nil || !ok {
 		return chainsync.Checkpoint{}, false, err
 	}
+	pools, err := launchpad.options.Repo.LaunchpadTradingPools(ctx, chainID)
+	if err != nil {
+		return chainsync.Checkpoint{}, false, err
+	}
 	launchpad.prunedThrough = prunedThrough
+	launchpad.tradingPools = pools
 	return checkpoint, true, nil
 }
 
-// Apply turns a block's launchpad events and curve trades into one change
-// per token.
+// Apply turns a block's launchpad events, curve trades and trading-pool
+// trades into one change per token.
 //
-// Apply 把区块的 launchpad_events 与曲线交易汇总为每个代币一条改动。
+// Apply 把区块的 launchpad_events、曲线交易与直发代币交易池的交易汇总为每个代币一条改动。
 func (launchpad *Launchpad) Apply(_ context.Context, block *streamv1.BlockEvent) error {
 	height := block.GetBlockHeight()
 	collector := newCollector()
@@ -142,6 +162,9 @@ func (launchpad *Launchpad) applyEvent(collector *collector, event *streamv1.Lau
 		entry.Launched = true
 		entry.Creator, entry.Name, entry.Symbol = normalize(event.GetCreator()), clean(event.GetName()), clean(event.GetSymbol())
 		entry.MetaURI, entry.LaunchTx = clean(event.GetMetaUri()), normalize(event.GetTransactionHash())
+		if event.GetDirect() {
+			launchpad.applyDirectLaunch(entry, event)
+		}
 	case streamv1.LaunchpadEventType_LAUNCHPAD_EVENT_TYPE_COMPLETED:
 		entry.Status = furthest(entry.Status, model.LaunchpadCompleted)
 	case streamv1.LaunchpadEventType_LAUNCHPAD_EVENT_TYPE_MIGRATED:
@@ -152,10 +175,29 @@ func (launchpad *Launchpad) applyEvent(collector *collector, event *streamv1.Lau
 	}
 }
 
+// applyDirectLaunch records a direct launch's trading pool and window, and
+// follows the pool's trades from this block on.
+func (launchpad *Launchpad) applyDirectLaunch(entry *model.LaunchpadToken, event *streamv1.LaunchpadEvent) {
+	entry.Direct, entry.TradingPoolID = true, normalize(event.GetTradingPoolId())
+	if event.GetLaunchEnd() > event.GetLaunchStart() && event.GetLaunchStart() > 0 {
+		entry.LaunchStart, entry.LaunchEnd = event.GetLaunchStart(), event.GetLaunchEnd()
+	}
+	if entry.TradingPoolID != "" {
+		launchpad.tradingPools[entry.TradingPoolID] = model.LaunchpadToken{
+			Token: entry.Token, Protocol: entry.Protocol, PoolID: entry.PoolID, Manager: entry.Manager, Quote: entry.Quote,
+		}
+	}
+}
+
 // applyTrade counts a curve trade: one with a curve state, or any trade of a
 // configured launchpad protocol. Its amounts are [token, quote], so the
-// token leaving the curve is a buy.
+// token leaving the curve is a buy. A trading pool's swaps count for its
+// direct launch.
 func (launchpad *Launchpad) applyTrade(collector *collector, trade *streamv1.Trade, blockTime int64) {
+	if direct, ok := launchpad.tradingPools[normalize(trade.GetPoolId())]; ok {
+		launchpad.applyPoolTrade(collector, direct, trade, blockTime)
+		return
+	}
 	curve := trade.GetPoolState().GetCurve()
 	if _, launchpadProtocol := launchpad.protocols[strings.ToLower(trade.GetProtocol())]; curve == nil && !launchpadProtocol {
 		return
@@ -186,6 +228,28 @@ func (launchpad *Launchpad) applyTrade(collector *collector, trade *streamv1.Tra
 		if value, ok := new(big.Int).SetString(field.raw, 10); ok && value.Sign() >= 0 {
 			*field.target = value
 		}
+	}
+}
+
+// applyPoolTrade counts a swap of a direct launch's trading pool: the token
+// leaving the pool is a buy.
+func (launchpad *Launchpad) applyPoolTrade(collector *collector, direct model.LaunchpadToken, trade *streamv1.Trade, blockTime int64) {
+	if trade.GetAction() != streamv1.TradeAction_TRADE_ACTION_SWAP {
+		return
+	}
+	for _, amount := range trade.GetAmounts() {
+		if normalize(amount.GetAsset()) != direct.Token {
+			continue
+		}
+		entry := collector.get(direct.Token, direct.Protocol, direct.PoolID, direct.Manager, direct.Quote)
+		entry.Trades++
+		if delta, ok := new(big.Int).SetString(amount.GetRaw(), 10); ok && delta.Sign() < 0 {
+			entry.Buys++
+		} else {
+			entry.Sells++
+		}
+		entry.LastTradeTime = blockTime
+		return
 	}
 }
 

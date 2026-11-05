@@ -1,6 +1,8 @@
-# market-launchpad follows launchpad bonding-curve tokens (four.meme, Flap)
-# from launch through curve progress to their DEX migration, in PostgreSQL,
-# where market-api serves the new / bonding / migrated columns. Durations may
+# market-launchpad follows launchpad tokens in PostgreSQL, where market-api
+# serves the new / bonding / migrated columns: bonding-curve tokens (four.meme,
+# Flap, Pons) from launch through curve progress to their DEX migration, and
+# direct launches (Bankr, Long.xyz, Clanker, pools.trade), which open on a
+# DEX pool and count that pool's trades. Durations may
 # be written as Go durations such as 500ms or 5m; any ${NAME} or
 # ${NAME:default} is read from the environment.
 
@@ -35,16 +37,19 @@ launchpad:
   # the finalized height.
   history_depth: 256
   # Launchpad protocols whose trades count as curve trades even when a trade
-  # carries no curve state. chainstream-evm parses fourmeme (BSC) and flap
-  # (BSC, Base).
-  protocols: [fourmeme, flap]
+  # carries no curve state. chainstream-evm parses fourmeme (BSC), flap (BSC,
+  # Base, Robinhood Chain) and pons (Robinhood Chain); direct launches need no
+  # entry.
+  protocols: [fourmeme, flap, pons]
 
 # Prometheus metrics at /metrics on addr; empty turns them off.
 metrics:
   addr: ""
 
 # One chainstream-evm topic per chain, each consumed in order.
-# The launchpads run on BSC and Base; other chains are harmless but idle.
+# The launchpads run on BSC, Base and Robinhood Chain; other chains are
+# harmless but idle.
 chains:
   - {name: bsc, chain_id: 56, topic: chainstream-bsc}
   - {name: base, chain_id: 8453, topic: chainstream-base}
+  - {name: robinhood, chain_id: 4663, topic: chainstream-robinhood}

@@ -67,8 +67,8 @@ func NewCatalog(spec CatalogSpec) Catalog {
 	return catalog
 }
 
-// DefaultCatalog returns the built-in catalog for ETH, BSC and Base, and an
-// empty catalog for other chains.
+// DefaultCatalog returns the built-in catalog for ETH, BSC, Base and
+// Robinhood Chain, and an empty catalog for other chains.
 func DefaultCatalog(chainID uint64) Catalog {
 	switch chainID {
 	case 1:
@@ -112,6 +112,53 @@ func DefaultCatalog(chainID uint64) Catalog {
 			WrappedNative: "0x4200000000000000000000000000000000000006", // WETH
 			References: []string{
 				"0xcbb7c0000ab88b473b1f5afd9ef808440eed33bf", // cbBTC
+			},
+		})
+	case 4663:
+		// Robinhood Chain: USDG is its dollar, and the stock tokens that
+		// have Chainlink feeds are preferred quotes after WETH, since
+		// launches such as Long.xyz pair against them.
+		return NewCatalog(CatalogSpec{
+			Anchors: []string{
+				"0x5fc5360d0400a0fd4f2af552add042d716f1d168", // USDG
+			},
+			WrappedNative: "0x0bd7d308f8e1639fab988df18a8011f41eacad73", // WETH
+			References: []string{
+				"0xaf3d76f1834a1d425780943c99ea8a608f8a93f9", // AAPL
+				"0x86923f96303d656e4aa86d9d42d1e57ad2023fdc", // AMD
+				"0x12f190a9f9d7d37a250758b26824b97ce941bf54", // AMZN
+				"0x47f93d52cbec7c6d2cfc080e154002370a60daea", // ASML
+				"0xad25ac6c84d497db898fa1e8387bf6af3532a1c4", // BABA
+				"0xcbb95bbf36099d34da091dc6fa6f49efa257cee3", // CLSK
+				"0x6330d8c3178a418788df01a47479c0ce7ccf450b", // COIN
+				"0xdf0992e440dd0be65bd8439b609d6d4366bf1cb5", // CRCL
+				"0x5f10a1c971b69e47e059e1dc91901b59b3fb49c3", // CRWV
+				"0x941ae714ec6d8130c7b75d67160ca08f1e7d11dd", // DELL
+				"0x7f0abef0c07280f82c6a08ead09ded6bae2c13fc", // EWY
+				"0x1b0e319c6a659f002271b69db8a7df2f911c153e", // GME
+				"0x2e0847e8910a9732eb3fb1bb4b70a580adad4fe3", // GOOGL
+				"0xc72b96e0e48ecd4dc75e1e45396e26300bc39681", // INTC
+				"0x558378e000d634a36593e338ebacdd6207640efe", // IONQ
+				"0xc0d6457c16cc70d6790dd43521c899c87ce02f35", // META
+				"0xe93237c50d904957cf27e7b1133b510c669c2e74", // MSFT
+				"0xec262a75e413fafd0df80480274532c79d42da09", // MSTR
+				"0xff080c8ce2e5feadaca0da81314ae59d232d4afd", // MU
+				"0x9d9c6684f596f66a64c030b93a886d51fd4d7931", // NBIS
+				"0xd0601ce157db5bdc3162bbac2a2c8af5320d9eec", // NVDA
+				"0xb0992820e760d836549ba69bc7598b4af75dee03", // ORCL
+				"0x894e1ec2d74ffe5aef8dc8a9e84686accb964f2a", // PLTR
+				"0xd5f3879160bc7c32ebb4dc785f8a4f505888de68", // QQQ
+				"0x284358abc07f9359f19f4b5b4ac91901be2597ba", // RGTI
+				"0x3b14c39e89d60d627b42a1a4ca45b5bb45fc12e2", // RKLB
+				"0x92fd66527192e3e61d4ddd13322aa222de86f9b5", // SGOV
+				"0x411efb0e7f985935daec3d4c3ebaea0d0ad7d89f", // SLV
+				"0xb90a19ff0af67f7779aff50a882a9cff42446400", // SNDK
+				"0x4a0e65a3eccec6dbe60ae065f2e7bb85fae35eea", // SPCX
+				"0x117cc2133c37b721f49de2a7a74833232b3b4c0c", // SPY
+				"0x322f0929c4625ed5bad873c95208d54e1c003b2d", // TSLA
+				"0x58ffe4a942d3885baa22d7520691f611ef09e7aa", // TSM
+				"0xd917b029c761d264c6a312bbbcda868658ef86a6", // USAR
+				"0xa30fa36db767ad9ed3f7a60fc79526fb4d56d344", // USO
 			},
 		})
 	default:
