@@ -31,8 +31,9 @@ postgres:
   schema: public
 
 launchpad:
-  # How many recent blocks stay revertible in addition to everything above
-  # the finalized height.
+  # Deepest reorg that can be undone: undo history is pruned through
+  # max(finalized, height - history_depth), so at most this many blocks are
+  # kept. Keep it at or above chainstream-evm's scanner.cache_size.
   history_depth: 256
   # Launchpad protocols whose trades count as curve trades even when a trade
   # carries no curve state. chainstream-evm parses fourmeme (BSC) and flap

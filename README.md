@@ -96,7 +96,7 @@ The PostgreSQL store creates these tables in `state.postgres.schema`:
 | --- | --- |
 | `engine_checkpoints` | One row per chain: Kafka offset, height, hash and the pruned height. |
 | `engine_state` | Current state as `(chain_id, kind, key) -> value JSONB`, where kind is `pools`, `prices`, `orientations`, `candles`, `decimals` or `oracle`. |
-| `engine_state_undo` | For each key a block changed, the value it held before that block. A revert deletes rows above `rollback_to`; pruning deletes rows at or below the finalized height and `history_depth`. |
+| `engine_state_undo` | For each key a block changed, the value it held before that block. A revert deletes rows above `rollback_to`; pruning deletes rows at or below `max(finalized, height - history_depth)`. |
 
 Every service that uses PostgreSQL creates all the tables it might need when it starts, in one transaction that holds an advisory lock keyed by the schema name. Several services can therefore start together on an empty schema: they create the tables one after another instead of failing with a duplicate key error.
 
@@ -214,7 +214,7 @@ market-registry reads each chain topic on its own checkpoint and keeps the lates
 - **Tokens.** One row per address with standard, recognition, `metadata_complete`, the published `asset.Info` JSON, and the name, symbol and decimals read from it. ERC-20 fields only count when chainstream-evm marked them known. A `created` fact, or any fact with a deployment, sets `created` and keeps the deployment.
 - **Pools.** One row per pool ID with protocol, DEX address, tokens, source height and time, and the protocol metadata JSON. A fact without metadata keeps the stored metadata. A GIN index on `tokens` serves the pools of a token.
 - **Newer wins.** A fact replaces stored metadata unless the stored metadata was read at a higher source height, so a late observation of older metadata is ignored. `created` and the deployment are kept regardless.
-- **Reorgs.** Before a block first changes a row, the row (or its absence) is saved in `registry_undo`. A revert restores the oldest saved image above `rollback_to`. Undo history is pruned at the finalized height and `registry.history_depth`.
+- **Reorgs.** Before a block first changes a row, the row (or its absence) is saved in `registry_undo`. A revert restores the oldest saved image above `rollback_to`. Undo history is pruned through `max(finalized, height - registry.history_depth)`, so at most `history_depth` blocks are kept.
 - **Cleaning.** Metadata that is not valid JSON is dropped. NUL characters, which PostgreSQL rejects and token names can contain, are stripped.
 
 | Table | Contents |
@@ -265,7 +265,7 @@ market-launchpad reads each chain topic on its own checkpoint and follows launch
 - **Curve state.** Progress (a wad, 1e18 = 100%), base remaining, quote raised and price (raw quote units per 1e18 raw token units) follow the token's last curve trade in each block. Trades of the protocols in `launchpad.protocols` count even without a curve state. Buys, sells and the last trade time accumulate.
 - **Launches seen late.** A token first seen trading, because its launch predates the topic, gets that block as an approximate launch with `launch_seen` false, and never enters the new list.
 - **Time.** The list windows count back from the newest block time applied (`launchpad_heads`), not the wall clock, so a replay or a lagging consumer lists what the chain showed at its head.
-- **Reorgs.** Before a block first changes a row, the row (or its absence) is saved in `launchpad_undo`, restored like registry rows. Undo history keeps the latest `launchpad.history_depth` blocks and every block above the finalized height, whichever reaches further back; with no finalized height it keeps the depth. A commit that only moves the checkpoint (a block chainsync skipped as already handled) leaves the rows and the head alone.
+- **Reorgs.** Before a block first changes a row, the row (or its absence) is saved in `launchpad_undo`, restored like registry rows. Undo history is pruned through `max(finalized, height - launchpad.history_depth)` like the other services, so at most `history_depth` blocks are kept. A commit that only moves the checkpoint (a block chainsync skipped as already handled) leaves the rows and the head alone.
 
 | Table | Contents |
 | --- | --- |
@@ -406,7 +406,7 @@ The output is the same as for held trades: rows keep their own block height, bel
 | `market.backfill_blocks` | How far back a backfill reads (default 50400, about a week on Ethereum). `-1` replays only held trades. Ignored without ClickHouse. |
 | `market.backfill_wait` | How long a backfill waits for ch-loader (default 30s). |
 
-All state is journaled by height. A revert undoes it exactly, as long as the reorg stays above the finalized height and within `history_depth` blocks. A deeper reorg stops the engine. State is computed in memory and persisted per block when `state.driver` is `postgres`; see [State](#state).
+All state is journaled by height. A revert undoes it exactly, as long as the reorg stays above the finalized height and within `history_depth` blocks: undo history is pruned through `max(finalized, height - history_depth)`. A deeper reorg stops the engine, so keep `history_depth` at or above chainstream-evm's `scanner.cache_size`. State is computed in memory and persisted per block when `state.driver` is `postgres`; see [State](#state).
 
 ```sh
 go run ./cmd/market-engine -conf configs/market-engine.yaml

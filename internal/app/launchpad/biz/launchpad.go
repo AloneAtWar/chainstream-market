@@ -55,8 +55,11 @@ type Options struct {
 	// Protocols are the launchpad protocols whose trades count as curve
 	// trades even when they carry no curve state.
 	Protocols []string
-	// HistoryDepth is how many blocks of undo history to keep in addition
-	// to everything above the finalized height.
+	// HistoryDepth is the deepest reorg that can be undone: undo history is
+	// pruned through chainsync.PruneThrough, max(finalized, height-depth).
+	//
+	// HistoryDepth 是可撤销的最大重组深度：撤销历史按 chainsync.PruneThrough
+	// 即 max(finalized, height−depth) 裁剪，最多保留 depth 个区块。
 	HistoryDepth int64
 	Logger       *slog.Logger
 }
@@ -126,7 +129,7 @@ func (launchpad *Launchpad) Apply(_ context.Context, block *streamv1.BlockEvent)
 			token.Progress = new(big.Int).Set(progressOne)
 		}
 	}
-	launchpad.prunedThrough = max(launchpad.prunedThrough, pruneBound(height, block.GetFinalizedHeight(), launchpad.options.HistoryDepth))
+	launchpad.prunedThrough = max(launchpad.prunedThrough, chainsync.PruneThrough(height, block.GetFinalizedHeight(), launchpad.options.HistoryDepth))
 	launchpad.pending = change
 	return nil
 }
@@ -187,20 +190,6 @@ func (launchpad *Launchpad) applyTrade(collector *collector, trade *streamv1.Tra
 			*field.target = value
 		}
 	}
-}
-
-// pruneBound is the highest height whose undo history can go: it keeps the
-// latest depth blocks and every block above the finalized height, whichever
-// reaches further back. An unknown finalized height (0) leaves only the depth.
-//
-// pruneBound：可丢弃撤销历史的最高高度，同时保留最近 depth 个区块和 finalized 以上的全部区块，
-// 取两者中更保守的一个；finalized 未知（0）时只按 depth 保留。
-func pruneBound(height, finalized, depth int64) int64 {
-	through := height - depth
-	if finalized > 0 && finalized < through {
-		through = finalized
-	}
-	return through
 }
 
 // Revert discards the pending change; the store restores rows on commit.
