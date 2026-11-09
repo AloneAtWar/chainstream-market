@@ -152,7 +152,7 @@ go run ./cmd/market-registry -conf configs/market-registry.yaml   # 需要 postg
   `tokens` 上的 GIN 索引用于查询代币的池子。
 - **新的覆盖旧的**：除非已存储的元数据读自更高的来源高度，否则新事实覆盖旧元数据，迟到的旧观察会被忽略。`created` 和部署信息始终保留。
 - **重组**：区块第一次修改某行之前，把该行（或"不存在"）存入 `registry_undo`；回滚时恢复 `rollback_to` 之上最早保存的镜像。
-  撤销历史按最终确定高度和 `registry.history_depth` 裁剪。
+  撤销历史裁剪到 `max(finalized, height − registry.history_depth)`，最多保留 `history_depth` 个区块。
 - **清洗**：不是合法 JSON 的元数据丢弃；去掉 PostgreSQL 不接受、而代币名里可能出现的 NUL 字符。
 
 | 表 | 内容 |
@@ -180,7 +180,7 @@ go run ./cmd/market-launchpad -conf configs/market-launchpad.yaml   # 需要 pos
 - **晚发现的发射**：发射早于 topic 起点、先以交易被看到的代币，以该块作为近似发射时间，`launch_seen` 为 false，不进入新币栏。
 - **时间**：各栏的时间窗口从已应用的最新区块时间（`launchpad_heads`）往回算，而不是墙上时钟，所以重放或消费落后时列表与链头一致。
 - **重组**：一个块首次修改某行之前，先把该行（或其不存在）存入 `launchpad_undo`，回滚方式与 registry 相同；
-  撤销记录同时保留最近 `launchpad.history_depth` 个区块和最终确认高度以上的全部区块（取更早的边界），没有最终确认高度时只按深度保留；只推进检查点的提交（chainsync 跳过的已处理区块）不改动代币行和 head。
+  撤销记录与其他服务一样裁剪到 `max(finalized, height − launchpad.history_depth)`，最多保留 `history_depth` 个区块；只推进检查点的提交（chainsync 跳过的已处理区块）不改动代币行和 head。
 
 | 表 | 内容 |
 | --- | --- |

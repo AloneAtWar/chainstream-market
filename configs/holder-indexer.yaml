@@ -30,8 +30,9 @@ postgres:
   schema: public
 
 holders:
-  # How many recent blocks stay revertible in addition to everything above
-  # the finalized height.
+  # Deepest reorg that can be undone: undo history is pruned through
+  # max(finalized, height - history_depth), so at most this many blocks are
+  # kept. Keep it at or above chainstream-evm's scanner.cache_size.
   history_depth: 256
   # Every this many blocks, the least recently verified holdings are checked
   # against balanceOf to catch rebasing and fee-on-transfer drift. -1 disables.
