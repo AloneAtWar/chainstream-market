@@ -67,11 +67,16 @@ market-engine 每条链一个进程，按 offset 顺序读该链的 topic，把 
 活跃流动性推出来的"虚拟储备"会高估集中流动性池；Uniswap V4 是单例合约，所有池子的币都在同一个合约里。
 因此无论是活跃流动性还是合约余额都说不清一个池子到底持有多少币。market-engine 为每个池子维护完整的 **tick 表**：
 
-1. **快照**：chainstream-evm 开启 `chain.tick_seeding.enabled` 后，会在池子首次交易的区块里附上它在父区块读到的完整 tick 表，
-   之后每隔 `reseed_interval_blocks` 再附一次。engine 收到后直接替换该池子的表。
-2. **增量**：每次 mint / burn 带有 `liquidity_range`，在下界 tick 加上流动性变化量，在上界 tick 减去。
+1. **快照**：chainstream-evm 开启 `chain.tick_seeding.enabled` 后，会在池子首次交易的区块里附上它的完整 tick 表，
+   之后每隔 `reseed_interval_blocks` 再附一次。engine 收到后直接替换该池子的表。快照已包含 `snapshot_height` 及以下的
+   全部事件：chainstream-evm 的 `exact` 模式是父区块，`latest` 模式（默认）是读取时的链头，可能等于或高于携带它的区块。
+   高度低于父区块的快照会漏掉已处理的事件，直接忽略。
+2. **增量**：每次 mint / burn 带有 `liquidity_range`，在下界 tick 加上流动性变化量，在上界 tick 减去；
+   高度不超过快照高度的已经在表里，跳过。
 3. **校验**：每次 swap 会移动价格并报告活跃流动性，它必须等于表中到当前 tick 为止 `liquidityNet` 的累加值。
-   不相等，或整张表累加不为零，就把表标记为**过期（stale）**，直到下一次快照。
+   不相等，或整张表累加不为零，就把表标记为**过期（stale）**，直到下一次快照。高度不超过快照高度的 swap 跳过。
+4. **重组**：回滚到 R 后，读取高度高于 R 的表（latest 模式下由保留区块带来、却读自被回滚区块）标记为过期；
+   读取高度高于 R 的 Curve / Balancer 余额记录直接删除，等下一次快照。
 
 **储备计算**：在当前价格下，价格之上的区间只持有 token0，之下的只持有 token1，包含当前价的区间两者都有；
 每段都按池子付款方向向下取整。累加得到池子本金（不含未领取手续费），作为储备，

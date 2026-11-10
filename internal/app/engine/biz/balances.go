@@ -108,6 +108,20 @@ func (processor *Processor) indexBalancePool(id string, record model.BalancePool
 	}
 }
 
+// dropRevertedBalances removes the balance records read above rollbackTo: a
+// latest-mode snapshot carried by a kept block can reflect a reverted one.
+// The pools are priced again from their next snapshot.
+//
+// dropRevertedBalances：回滚后删除读取高度高于 rollbackTo 的余额记录（latest 模式下由保留区块带来、
+// 却读自被回滚区块的快照），池子等下一次快照再参与定价。
+func (processor *Processor) dropRevertedBalances(rollbackTo int64) {
+	for _, id := range slices.Sorted(maps.Keys(processor.balances.values)) {
+		if processor.balances.values[id].SnapshotHeight > rollbackTo {
+			processor.balances.remove(rollbackTo, id)
+		}
+	}
+}
+
 // rebuildBalances indexes the balance journal after a restore or revert.
 //
 // rebuildBalances 在恢复或回滚后从日志重建索引，并清空边缓存。

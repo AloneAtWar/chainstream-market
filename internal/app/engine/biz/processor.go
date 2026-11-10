@@ -338,6 +338,8 @@ func (processor *Processor) Revert(_ context.Context, rollbackTo int64) error {
 	processor.ticks.revert(rollbackTo)
 	processor.clamm.revert(rollbackTo)
 	processor.balances.revert(rollbackTo)
+	processor.staleRevertedSnapshots(rollbackTo)
+	processor.dropRevertedBalances(rollbackTo)
 	processor.rebuildLate()
 	processor.rebuildTicks()
 	processor.rebuildBalances()

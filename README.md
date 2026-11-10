@@ -328,9 +328,10 @@ Each block goes through market-engine's processor (`internal/app/engine/biz`) in
 
 Virtual reserves at the active liquidity overstate a concentrated pool, and a V4 singleton holds every pool's tokens in one contract, so neither the active liquidity nor the contract's balances tell what one pool holds. market-engine instead keeps each pool's tick table:
 
-- chainstream-evm (with `chain.tick_seeding.enabled`) attaches a pool's complete table, read at the parent block, to the block in which the pool first trades, and again every `reseed_interval_blocks`. The engine replaces the pool's table with it.
-- Every mint and burn carries its `liquidity_range`, which adds the liquidity delta at the lower tick and subtracts it at the upper one.
-- Every swap moves the pool's price and reports the active liquidity, which must equal the table's sum of `liquidityNet` up to the swap's tick. A mismatch, or a table that does not net to zero, marks the table stale until the next snapshot.
+- chainstream-evm (with `chain.tick_seeding.enabled`) attaches a pool's complete table to the block in which the pool first trades, and again every `reseed_interval_blocks`. The engine replaces the pool's table with it. A snapshot includes every event at or below its `snapshot_height`: the parent block in chainstream-evm's exact mode, the node head (this block or a later one) in its default latest mode. A snapshot older than the parent block is ignored.
+- Every mint and burn above the snapshot height carries its `liquidity_range`, which adds the liquidity delta at the lower tick and subtracts it at the upper one.
+- Every swap above the snapshot height moves the pool's price and reports the active liquidity, which must equal the table's sum of `liquidityNet` up to the swap's tick. A mismatch, or a table that does not net to zero, marks the table stale until the next snapshot.
+- A rollback below a table's snapshot height marks it stale, and drops Curve and Balancer balance records read above it, until their next snapshot.
 
 At the price, the ranges above it hold only token0, those below only token1, and the one containing it is split, each rounded down as the pool pays out. Their sum is the pool's principal, uncollected fees excluded, and becomes its reserves, so `liquidity_usd` is the real balance of the counterpart token in the pricing pool. Pools whose V4 hook may return swap deltas settle swaps outside the table and get no reserves.
 

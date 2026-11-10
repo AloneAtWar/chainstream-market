@@ -188,6 +188,26 @@ func TestUnknownBalancePoolUsesLatestSwapPrice(t *testing.T) {
 	assertDecimal(t, "USDX liquidity", price.LiquidityUSD, "2000000")
 }
 
+// TestBalanceRecordReadAboveRollbackIsDropped latest 模式的余额快照可能读自高于携带区块的链头；
+// 回滚到读取高度以下时，这条记录来自被回滚的分支，删除，等下一次快照。
+func TestBalanceRecordReadAboveRollbackIsDropped(t *testing.T) {
+	processor := newTestProcessor(t)
+	teach(processor, map[string]uint32{usdc: 6, usdx: 18})
+	block := testBlock(100, 0)
+	snapshot := stableSnapshot("1000000000000", "1000000000000000000000000")
+	snapshot.SnapshotHeight = 103
+	block.PoolBalances = []*streamv1.PoolBalanceSnapshot{snapshot}
+	if _, err := processor.Apply(context.Background(), block); err != nil {
+		t.Fatalf("Apply() error = %v", err)
+	}
+	if err := processor.Revert(context.Background(), 102); err != nil {
+		t.Fatalf("Revert(102) error = %v", err)
+	}
+	if record, ok := processor.balances.get(stablePool); ok {
+		t.Fatalf("record read at 103 survived a rollback to 102: %+v", record)
+	}
+}
+
 func TestBalancePoolRevertAndRestore(t *testing.T) {
 	processor := newTestProcessor(t)
 	teach(processor, map[string]uint32{usdc: 6, usdx: 18})
