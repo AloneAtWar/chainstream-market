@@ -1,7 +1,7 @@
 dario.cat/mergo v1.0.2 h1:85+piFYR1tMbRrLcDwR18y4UKJ3aH1Tbzi24VRW1TK8=
 dario.cat/mergo v1.0.2/go.mod h1:E/hbnu0NxMFBjpMIE34DRGLWqDy0g5FuKDhCb31ngxA=
-github.com/AloneAtWar/oh-my-blockchain v0.7.1-0.20261110074926-831c03794366 h1:xq1jany7424lz4bIHn6pWs+BqvEnlL+pcysCipNp7RA=
-github.com/AloneAtWar/oh-my-blockchain v0.7.1-0.20261110074926-831c03794366/go.mod h1:7djedlfi2iJCv+VN/0Y1c8ckulYNlIHlg40Ge/ifI/c=
+github.com/AloneAtWar/oh-my-blockchain v0.7.1-0.20261110075418-ddaa0726b3f5 h1:qlrJ4+KxMouWuqrv40ZJH+Yls+YSXnzccPe8GgStifw=
+github.com/AloneAtWar/oh-my-blockchain v0.7.1-0.20261110075418-ddaa0726b3f5/go.mod h1:7djedlfi2iJCv+VN/0Y1c8ckulYNlIHlg40Ge/ifI/c=
 github.com/ClickHouse/ch-go v0.74.0 h1:uYs2m4wIt0ZHSM1E72rg0maCfzhR2V3xWb/vZEgpeWE=
 github.com/ClickHouse/ch-go v0.74.0/go.mod h1:sZ/r+8ttZMjyrP9PuFbgoVbth1ywIu2LIQNA2vgko6M=
 github.com/ClickHouse/clickhouse-go/v2 v2.49.0 h1:HgiLTraLGgMe8kYivQ6RzMHDUkU/uFUpsWEAuhVk34Q=
