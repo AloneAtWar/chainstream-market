@@ -33,14 +33,12 @@ postgres:
   schema: public
 
 wallet:
-  # How many recent blocks stay revertible in addition to everything above
-  # the finalized height.
+  # Deepest reorg that can be undone: undo history is pruned through
+  # max(finalized, height - history_depth), so at most this many blocks are
+  # kept. Keep it at or above chainstream-evm's scanner.cache_size.
   history_depth: 256
   # How far back a first start replays trades from ClickHouse; at most 90d.
   history: 2160h
-  # While the finalized height is unknown, blocks filled from ClickHouse
-  # older than this keep no undo history.
-  final_age: 1h
   # Heights per ClickHouse read when a gap is filled.
   backfill_heights: 2000
   # Blocks older than batch_lag are written in batches of up to flush_rows

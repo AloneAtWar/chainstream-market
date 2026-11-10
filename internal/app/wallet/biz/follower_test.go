@@ -3,6 +3,7 @@ package biz
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"maps"
 	"slices"
 	"strings"
@@ -100,25 +101,10 @@ func (repo *memoryRepo) RevertWallet(_ context.Context, to int64, checkpoint Che
 	return nil
 }
 
-// memoryTrades 是 ClickHouse trades 和 blocks 表的替身。区块 h 的时间默认是 t0 + h 秒，
-// times 可以覆盖。
+// memoryTrades 是 ClickHouse trades 和 blocks 表的替身。
 type memoryTrades struct {
 	trades []Trade
 	first  int64
-	times  map[int64]time.Time
-}
-
-func (trades *memoryTrades) LastHeightBefore(_ context.Context, _ uint64, upTo int64, before time.Time) (int64, bool, error) {
-	for height := upTo; height > 0; height-- {
-		at, ok := trades.times[height]
-		if !ok {
-			at = t0.Add(time.Duration(height) * time.Second)
-		}
-		if at.Before(before) {
-			return height, true, nil
-		}
-	}
-	return 0, false, nil
 }
 
 func (trades *memoryTrades) FirstHeightSince(context.Context, uint64, time.Time) (int64, bool, error) {
@@ -147,7 +133,7 @@ func newHarness(t *testing.T, repo *memoryRepo, trades *memoryTrades) *harness {
 	t.Helper()
 	follower, err := New(Options{
 		ChainID: 1, Chain: "eth", Open: func(int64) (source.Source, error) { return nil, nil },
-		Repo: repo, Trades: trades, HistoryDepth: 256, History: 24 * time.Hour, FinalAge: 1000 * time.Hour,
+		Repo: repo, Trades: trades, HistoryDepth: 256, History: 24 * time.Hour,
 		BackfillHeights: 3, CloseRatio: 0.001, Now: func() time.Time { return t0.Add(time.Hour) },
 	})
 	if err != nil {
@@ -266,14 +252,14 @@ func TestFollowerFillsGapsAndSkipsDuplicates(t *testing.T) {
 
 func TestFollowerKeepsUndoOfRecentRevisionBlocks(t *testing.T) {
 	for _, finalized := range []int64{0, 7} {
-		// 第 5 块的成交等到第 9 块才写出：成交时间早，但第 9 块是刚出的。
+		// 第 5 块的成交等到第 9 块才写出：undo 记在 revision 高度 9 上，按它裁剪，不按成交自己的高度。
 		late := trade(5, model.SideBuy, "10", "10")
 		late.RevisionHeight = 9
-		trades := &memoryTrades{trades: []Trade{late}, times: map[int64]time.Time{9: t0.Add(time.Hour), 10: t0.Add(time.Hour)}}
+		trades := &memoryTrades{trades: []Trade{late}}
 		repo := newMemoryRepo()
 		follower, err := New(Options{
 			ChainID: 1, Open: func(int64) (source.Source, error) { return nil, nil }, Repo: repo, Trades: trades,
-			HistoryDepth: 256, FinalAge: 30 * time.Minute, BackfillHeights: 10, CloseRatio: 0.001,
+			HistoryDepth: 256, BackfillHeights: 10, CloseRatio: 0.001,
 			Now: func() time.Time { return t0.Add(time.Hour) },
 		})
 		if err != nil {
@@ -420,22 +406,23 @@ func TestFollowerBatchesWhileCatchingUp(t *testing.T) {
 	if repo.commits != 1 || repo.checkpoint.Height != 13 || len(repo.trades) != 3 {
 		t.Fatalf("commits %d checkpoint %+v trades %d", repo.commits, repo.checkpoint, len(repo.trades))
 	}
-	// finalized 为零时不裁剪 undo；之后的区块带上 finalized，undo 裁到 min(finalized, 高度 − depth)。
-	if len(repo.undo) != 3 {
-		t.Fatalf("undo %v", slices.Collect(maps.Keys(repo.undo)))
+	// undo 按 chainsync.PruneThrough 即 max(finalized, 高度 − depth) 裁剪：finalized 未知时只按
+	// depth，裁到 13 − 2 = 11；finalized 更接近链头时按 finalized。
+	if repo.checkpoint.PrunedThrough != 11 || len(repo.undo) != 2 {
+		t.Fatalf("pruned through %d undo %v", repo.checkpoint.PrunedThrough, slices.Collect(maps.Keys(repo.undo)))
 	}
-	if err := h.send(live.Update{Height: 14, FinalizedHeight: 20, Trades: []live.Trade{liveTrade(trade(14, model.SideBuy, "1", "1"))},
+	if err := h.send(live.Update{Height: 14, FinalizedHeight: 13, Trades: []live.Trade{liveTrade(trade(14, model.SideBuy, "1", "1"))},
 		BlockTime: t0.Add(24 * time.Hour).Unix()}); err != nil {
 		t.Fatal(err)
 	}
-	if repo.checkpoint.PrunedThrough != 12 || len(repo.undo) != 2 {
+	if repo.checkpoint.PrunedThrough != 13 || len(repo.undo) != 1 {
 		t.Fatalf("pruned through %d undo %d", repo.checkpoint.PrunedThrough, len(repo.undo))
 	}
-	// 回滚到裁剪线以下没法还原：报错停下。
-	if err := h.send(live.Update{Type: live.UpdateRevert, Height: 11}); err == nil || !strings.Contains(err.Error(), "pruned") {
+	// 回滚到裁剪线以下没法还原：报 ErrReorgTooDeep 停下。
+	if err := h.send(live.Update{Type: live.UpdateRevert, Height: 12}); !errors.Is(err, ErrReorgTooDeep) {
 		t.Fatalf("deep revert: %v", err)
 	}
-	if err := h.send(live.Update{Type: live.UpdateRevert, Height: 12}); err != nil || repo.checkpoint.Height != 12 {
+	if err := h.send(live.Update{Type: live.UpdateRevert, Height: 13}); err != nil || repo.checkpoint.Height != 13 {
 		t.Fatalf("revert to the pruned height: %v, checkpoint %+v", err, repo.checkpoint)
 	}
 }

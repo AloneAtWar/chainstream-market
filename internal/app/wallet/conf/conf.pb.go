@@ -122,16 +122,16 @@ func (x *Bootstrap) GetWallet() *Wallet {
 // Wallet tunes the position ledger.
 type Wallet struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// history_depth is how many recent blocks stay revertible in addition to
-	// everything above the finalized height.
+	// history_depth is the deepest reorg that can be undone: undo history is
+	// pruned through max(finalized, height - history_depth), so at most this
+	// many blocks are kept. It should not be below chainstream-evm's
+	// scanner.cache_size.
+	// history_depth 是可撤销的最大重组深度，撤销历史按 max(finalized, height−history_depth)
+	// 裁剪，最多保留这么多个区块；不应小于上游 chainstream-evm 的 scanner.cache_size。
 	HistoryDepth int64 `protobuf:"varint,1,opt,name=history_depth,json=historyDepth,proto3" json:"history_depth,omitempty"`
 	// history is how far back a first start replays market-engine's trades
 	// from ClickHouse.
 	History *durationpb.Duration `protobuf:"bytes,2,opt,name=history,proto3" json:"history,omitempty"`
-	// final_age: while the finalized height is unknown, blocks filled from
-	// ClickHouse whose own block time is older than this keep no undo history.
-	// Once it is known, every unfinalized block keeps its undo history.
-	FinalAge *durationpb.Duration `protobuf:"bytes,3,opt,name=final_age,json=finalAge,proto3" json:"final_age,omitempty"`
 	// backfill_heights is how many heights one ClickHouse read covers when a
 	// gap is filled.
 	BackfillHeights int64 `protobuf:"varint,4,opt,name=backfill_heights,json=backfillHeights,proto3" json:"backfill_heights,omitempty"`
@@ -190,13 +190,6 @@ func (x *Wallet) GetHistoryDepth() int64 {
 func (x *Wallet) GetHistory() *durationpb.Duration {
 	if x != nil {
 		return x.History
-	}
-	return nil
-}
-
-func (x *Wallet) GetFinalAge() *durationpb.Duration {
-	if x != nil {
-		return x.FinalAge
 	}
 	return nil
 }
@@ -500,11 +493,10 @@ const file_app_wallet_conf_conf_proto_rawDesc = "" +
 	"\bpostgres\x18\x03 \x01(\v2\x14.pkg.config.PostgresR\bpostgres\x12-\n" +
 	"\ametrics\x18\x04 \x01(\v2\x13.pkg.config.MetricsR\ametrics\x12)\n" +
 	"\x06chains\x18\x05 \x03(\v2\x11.pkg.config.ChainR\x06chains\x12/\n" +
-	"\x06wallet\x18\x06 \x01(\v2\x17.app.wallet.conf.WalletR\x06wallet\"\xce\x03\n" +
+	"\x06wallet\x18\x06 \x01(\v2\x17.app.wallet.conf.WalletR\x06wallet\"\xa7\x03\n" +
 	"\x06Wallet\x12#\n" +
 	"\rhistory_depth\x18\x01 \x01(\x03R\fhistoryDepth\x123\n" +
-	"\ahistory\x18\x02 \x01(\v2\x19.google.protobuf.DurationR\ahistory\x126\n" +
-	"\tfinal_age\x18\x03 \x01(\v2\x19.google.protobuf.DurationR\bfinalAge\x12)\n" +
+	"\ahistory\x18\x02 \x01(\v2\x19.google.protobuf.DurationR\ahistory\x12)\n" +
 	"\x10backfill_heights\x18\x04 \x01(\x03R\x0fbackfillHeights\x126\n" +
 	"\tbatch_lag\x18\x05 \x01(\v2\x19.google.protobuf.DurationR\bbatchLag\x12\x1d\n" +
 	"\n" +
@@ -515,7 +507,7 @@ const file_app_wallet_conf_conf_proto_rawDesc = "" +
 	"\vclose_ratio\x18\t \x01(\x01R\n" +
 	"closeRatio\x12,\n" +
 	"\x05stats\x18\n" +
-	" \x01(\v2\x16.app.wallet.conf.StatsR\x05stats\"\xfb\x01\n" +
+	" \x01(\v2\x16.app.wallet.conf.StatsR\x05statsJ\x04\b\x03\x10\x04R\tfinal_age\"\xfb\x01\n" +
 	"\x05Stats\x12D\n" +
 	"\x10refresh_interval\x18\x01 \x01(\v2\x19.google.protobuf.DurationR\x0frefreshInterval\x12\x18\n" +
 	"\awindows\x18\x02 \x03(\x05R\awindows\x12,\n" +
@@ -578,18 +570,17 @@ var file_app_wallet_conf_conf_proto_depIdxs = []int32{
 	9,  // 4: app.wallet.conf.Bootstrap.chains:type_name -> pkg.config.Chain
 	1,  // 5: app.wallet.conf.Bootstrap.wallet:type_name -> app.wallet.conf.Wallet
 	10, // 6: app.wallet.conf.Wallet.history:type_name -> google.protobuf.Duration
-	10, // 7: app.wallet.conf.Wallet.final_age:type_name -> google.protobuf.Duration
-	10, // 8: app.wallet.conf.Wallet.batch_lag:type_name -> google.protobuf.Duration
-	10, // 9: app.wallet.conf.Wallet.flush_interval:type_name -> google.protobuf.Duration
-	2,  // 10: app.wallet.conf.Wallet.stats:type_name -> app.wallet.conf.Stats
-	10, // 11: app.wallet.conf.Stats.refresh_interval:type_name -> google.protobuf.Duration
-	3,  // 12: app.wallet.conf.Stats.smart_money:type_name -> app.wallet.conf.SmartMoney
-	4,  // 13: app.wallet.conf.Stats.bot:type_name -> app.wallet.conf.Bot
-	14, // [14:14] is the sub-list for method output_type
-	14, // [14:14] is the sub-list for method input_type
-	14, // [14:14] is the sub-list for extension type_name
-	14, // [14:14] is the sub-list for extension extendee
-	0,  // [0:14] is the sub-list for field type_name
+	10, // 7: app.wallet.conf.Wallet.batch_lag:type_name -> google.protobuf.Duration
+	10, // 8: app.wallet.conf.Wallet.flush_interval:type_name -> google.protobuf.Duration
+	2,  // 9: app.wallet.conf.Wallet.stats:type_name -> app.wallet.conf.Stats
+	10, // 10: app.wallet.conf.Stats.refresh_interval:type_name -> google.protobuf.Duration
+	3,  // 11: app.wallet.conf.Stats.smart_money:type_name -> app.wallet.conf.SmartMoney
+	4,  // 12: app.wallet.conf.Stats.bot:type_name -> app.wallet.conf.Bot
+	13, // [13:13] is the sub-list for method output_type
+	13, // [13:13] is the sub-list for method input_type
+	13, // [13:13] is the sub-list for extension type_name
+	13, // [13:13] is the sub-list for extension extendee
+	0,  // [0:13] is the sub-list for field type_name
 }
 
 func init() { file_app_wallet_conf_conf_proto_init() }
