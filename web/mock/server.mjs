@@ -456,6 +456,121 @@ function send(response, status, body) {
   response.end(JSON.stringify(body));
 }
 
+// --- Concentrated liquidity ---
+//
+// V3/V4-style pools get a made-up tick table: a thin full-range position and
+// a few dozen ranges around the price they opened at. Each request values
+// the table at the base token's current price, as market-api does.
+
+const CONCENTRATED = new Set(["uniswap_v3", "uniswap_v4", "pancakeswap_v3"]);
+const SPACING = { 100: 1, 500: 10, 3000: 60, 10000: 200 };
+const LOG_TICK = Math.log(1.0001);
+
+// poolOrder returns the pool's tokens as token0 and token1, sorted by
+// address like the contracts sort them.
+function poolOrder(pool) {
+  return pool.base.address < pool.quote.address ? [pool.base, pool.quote] : [pool.quote, pool.base];
+}
+
+// rawPrice is token0 in token1, in raw units.
+function rawPrice(pool) {
+  const [token0, token1] = poolOrder(pool);
+  return (token0.price / token1.price) * 10 ** (token1.decimals - token0.decimals);
+}
+
+function tickTable(pool) {
+  if (pool.ticks) return pool.ticks;
+  const spacing = SPACING[pool.metadata.fee] ?? 60;
+  const align = (tick) => Math.round(tick / spacing) * spacing;
+  const center = Math.log(rawPrice(pool)) / LOG_TICK;
+  const [, token1] = poolOrder(pool);
+  // Size L so about half the pool's USD liquidity sits as token1 within 10%.
+  const target1 = ((pool.base.liquidity / 2) / token1.price) * 10 ** token1.decimals;
+  const unit = target1 / (0.05 * Math.sqrt(rawPrice(pool)));
+  const net = new Map();
+  const add = (lower, upper, liquidity) => {
+    if (upper <= lower) return;
+    net.set(lower, (net.get(lower) ?? 0) + liquidity);
+    net.set(upper, (net.get(upper) ?? 0) - liquidity);
+  };
+  const edge = Math.floor(887272 / spacing) * spacing;
+  add(-edge, edge, unit * 0.05);
+  const stable = pool.metadata.fee <= 100;
+  for (let index = 0; index < 40; index++) {
+    const spread = stable ? 2 + random() * 10 : 50 + random() * 4000;
+    const middle = center + (random() - 0.5) * spread * 1.5;
+    const width = Math.max(spacing, spread * (0.2 + random()));
+    add(align(middle - width / 2), align(middle + width / 2), unit * random() ** 2 * (stable ? 3 : 1));
+  }
+  pool.ticks = [...net.entries()].filter(([, value]) => value !== 0).sort((a, b) => a[0] - b[0]);
+  return pool.ticks;
+}
+
+const bigString = (value) => BigInt(Math.max(0, Math.floor(value))).toString();
+
+function amount(raw, decimals) {
+  return { raw: bigString(raw), value: decimalString(Math.max(0, Math.floor(raw)) / 10 ** decimals) };
+}
+
+function liquidityJSON(chain, pool) {
+  const [token0, token1] = poolOrder(pool);
+  const price = Math.sqrt(rawPrice(pool));
+  const sqrtAt = (tick) => Math.exp((tick * LOG_TICK) / 2);
+  const segments = [];
+  let liquidity = 0;
+  const totals = [0, 0];
+  const depth = [0, 0];
+  const band = pool.metadata.fee <= 100 ? 50 : pool.metadata.fee <= 500 ? 100 : pool.metadata.fee <= 3000 ? 200 : 500;
+  const bandLow = price * Math.sqrt(1 - band / 10000);
+  const bandHigh = price * Math.sqrt(1 + band / 10000);
+  const table = tickTable(pool);
+  table.forEach(([tick, net], index) => {
+    if (index > 0 && liquidity > 1) {
+      const lower = table[index - 1][0];
+      const a = sqrtAt(lower);
+      const b = sqrtAt(tick);
+      let amount0 = 0;
+      let amount1 = 0;
+      if (price <= a) amount0 = (liquidity * (b - a)) / (a * b);
+      else if (price < b) {
+        amount0 = (liquidity * (b - price)) / (price * b);
+        amount1 = liquidity * (price - a);
+      } else amount1 = liquidity * (b - a);
+      totals[0] += amount0;
+      totals[1] += amount1;
+      const low = Math.max(a, bandLow);
+      const high = Math.min(b, price);
+      if (low < high) depth[1] += liquidity * (high - low);
+      const low0 = Math.max(a, price);
+      const high0 = Math.min(b, bandHigh);
+      if (low0 < high0) depth[0] += (liquidity * (high0 - low0)) / (low0 * high0);
+      segments.push({
+        tick_lower: lower,
+        tick_upper: tick,
+        liquidity: bigString(liquidity),
+        amounts: [amount(amount0, token0.decimals), amount(amount1, token1.decimals)],
+      });
+    }
+    liquidity += net;
+  });
+  return {
+    chain_id: chain.id,
+    pool_id: pool.pool_id,
+    protocol: pool.protocol,
+    fee: pool.metadata.fee,
+    snapshot_height: pool.first_height,
+    sqrt_price_x96: bigString(price * 2 ** 96),
+    tokens: [token0.address, token1.address],
+    decimals: [token0.decimals, token1.decimals],
+    usable: true,
+    stale: false,
+    swap_delta_hooks: false,
+    amounts: [amount(totals[0], token0.decimals), amount(totals[1], token1.decimals)],
+    depth: { band_bps: band, amounts: [amount(depth[0], token0.decimals), amount(depth[1], token1.decimals)] },
+    segments,
+  };
+}
+
 const routes = [
   [/^\/v1\/chains\/(\d+)\/launchpad\/protocols$/, (chain) => {
     const protocols = [...new Set(chain.launchpad.map((token) => token.protocol))].sort();
@@ -542,6 +657,11 @@ const routes = [
   [/^\/v1\/chains\/(\d+)\/tokens\/(0x[0-9a-f]+)\/pools$/, (chain, match) => {
     const pools = chain.pools.filter((pool) => pool.tokens.includes(match[2])).slice(0, 50);
     return [200, { pools: pools.map((pool) => poolJSON(chain, pool)) }];
+  }],
+  [/^\/v1\/chains\/(\d+)\/pools\/(0x[0-9a-f]+)\/liquidity$/, (chain, match) => {
+    const pool = findPool(chain, match[2]);
+    if (!pool || !CONCENTRATED.has(pool.protocol)) return [404, { error: "no tick table for pool" }];
+    return [200, liquidityJSON(chain, pool)];
   }],
   [/^\/v1\/chains\/(\d+)\/pools\/(0x[0-9a-f]+)$/, (chain, match) => {
     const pool = findPool(chain, match[2]);

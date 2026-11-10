@@ -126,7 +126,7 @@ market-engine 基于 kfake 的迟到交易测试同时需要两者。CI 会启�
 | `/{chain}` | market-rankings 的代币列表，可按 24h 成交量、涨跌幅、流动性、持有人数或创建时间排序，支持流动性过滤和符号 / 地址搜索，每 15 秒刷新 |
 | `/{chain}/launchpad` | market-launchpad 的三栏并排：新币、按进度排序的发射中、已迁移，可按平台筛选，每栏每 5 秒轮询 |
 | `/{chain}/token/{address}` | 价格、24h 统计、代币聚合 K 线与实时交易，盈利榜（按已实现盈亏排的交易者）/ 持有人 / 池子 / 转账标签页，以及 registry 元数据和价格推导过程；发射平台代币还会显示曲线进度、已募集和迁移信息 |
-| `/{chain}/pool/{pool}` | 池子自己的 K 线和实时交易、代币和元数据 |
+| `/{chain}/pool/{pool}` | 池子自己的 K 线和实时交易、代币和元数据；集中流动性池（Uniswap V3/V4、PancakeSwap V3/Infinity）另有流动性分布图：当前价附近各价格区间的活跃流动性，可缩放、切换计价方向，悬停看区间币量，附最近区间明细表，每 15 秒刷新 |
 | `/{chain}/smart-money` | market-wallet 的钱包排行：7 / 30 / 90 天窗口，聪明钱或全部钱包，按已实现盈亏、ROI、胜率或成交额排序；旁边是聪明钱实时动向（`trades:<chain>:label:smart_money`） |
 | `/{chain}/wallet/{address}`（也可用 `/holder/`） | 钱包画像：标签、各窗口统计和代币收益分布、当前持仓与已清仓（含盈亏）、交易记录、实时成交和 ERC-20 转账 |
 

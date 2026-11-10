@@ -23,7 +23,7 @@ go run ./cmd/market-api -conf configs/market-api.yaml   # 需要 clickhouse.addr
 | `GET /v1/chains/{chain}/tokens/{token}` | registry 中的代币元数据：标准、识别状态、名称、符号、小数位、部署信息、原始元数据 JSON |
 | `GET /v1/chains/{chain}/tokens/{token}/pools` | 交易该代币的池子，最近观察到的在前，支持 `limit` |
 | `GET /v1/chains/{chain}/pools/{pool}` | 池子元数据：协议、DEX、代币、原始元数据 JSON |
-| `GET /v1/chains/{chain}/pools/{pool}/liquidity` | 集中流动性池在当前价下各价格区间的币量、合计及 `band_bps` 内的深度（来自 engine 的 tick 表）；表过期或 hook 可能在表外结算时 `usable` 为 false；engine 没有该池的表时返回 404 |
+| `GET /v1/chains/{chain}/pools/{pool}/liquidity` | 集中流动性池在当前价下各价格区间的币量、合计及 `band_bps` 内的深度（来自 engine 的 tick 表）；`decimals` 按池子顺序给出两个代币的精度（未知为 null，V4 原生币为 18），前端用它把 tick 换算成价格；表过期或 hook 可能在表外结算时 `usable` 为 false；engine 没有该池的表时返回 404 |
 | `GET /v1/chains/{chain}/tokens?sort=volume_24h` | market-rankings 生成的代币列表 |
 | `GET /v1/chains/{chain}/launchpad/protocols` | market-launchpad 在这条链上见过的发射平台，供平台筛选 |
 | `GET /v1/chains/{chain}/launchpad/tokens?column=new` | market-launchpad 的三栏之一（新币 / 发射中 / 已迁移），见 [market-launchpad](#market-launchpad) |

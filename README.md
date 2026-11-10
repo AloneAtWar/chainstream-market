@@ -120,7 +120,7 @@ go run ./cmd/market-api -conf configs/market-api.yaml   # needs clickhouse.addr 
 | `GET /v1/chains/{chain}/tokens/{token}` | Token metadata from market-registry: standard, recognition, name, symbol, decimals, deployment and the raw metadata JSON. |
 | `GET /v1/chains/{chain}/tokens/{token}/pools` | Pools that trade the token, most recently observed first. Accepts `limit`. |
 | `GET /v1/chains/{chain}/pools/{pool}` | Pool metadata: protocol, DEX, tokens and the raw metadata JSON. |
-| `GET /v1/chains/{chain}/pools/{pool}/liquidity` | A concentrated pool's tokens per price range at its current price, their totals and its depth within `band_bps` (default: the fee tier's band), from market-engine's tick table. Amounts are raw, with `value` added when market-registry knows the token's decimals. `usable` is false when the table is stale or the pool's hook may settle swaps outside it. 404 when the engine keeps no table for the pool. |
+| `GET /v1/chains/{chain}/pools/{pool}/liquidity` | A concentrated pool's tokens per price range at its current price, their totals and its depth within `band_bps` (default: the fee tier's band), from market-engine's tick table. Amounts are raw, with `value` added when market-registry knows the token's decimals; `decimals` lists them in pool order (null when unknown, 18 for a V4 pool's native coin). `usable` is false when the table is stale or the pool's hook may settle swaps outside it. 404 when the engine keeps no table for the pool. |
 | `GET /v1/chains/{chain}/tokens?sort=volume_24h` | The token list from market-rankings, see [market-rankings](#market-rankings). |
 | `GET /v1/chains/{chain}/launchpad/protocols` | The launchpad platforms market-launchpad has seen on the chain, for a platform filter. |
 | `GET /v1/chains/{chain}/launchpad/tokens?column=new` | One of the three launchpad lists from market-launchpad, see [market-launchpad](#market-launchpad). |
@@ -494,7 +494,7 @@ The topics are created by `kafka-init` with one partition and no retention limit
 | `/{chain}` | The token list from market-rankings, sorted by 24h volume, price change, liquidity, holders or creation, with a liquidity filter and symbol or address search. Refreshed every 15s. |
 | `/{chain}/launchpad` | The three launchpad lists from market-launchpad side by side: new launches, curves by progress, and migrations, with a protocol filter. Each column polls every 5s. |
 | `/{chain}/token/{address}` | Price, 24h stats, the token's aggregated candles and live trades, and tabs for its profit leaderboard (traders by realized PnL), holders, pools and transfers, beside the registry metadata and how the price was derived. A launchpad token also shows its curve's progress, quote raised and migration. |
-| `/{chain}/pool/{pool}` | The pool's own candles and live trades, its tokens and metadata. |
+| `/{chain}/pool/{pool}` | The pool's own candles and live trades, its tokens and metadata. A concentrated-liquidity pool (Uniswap V3/V4, PancakeSwap V3/Infinity) also shows its liquidity distribution: active liquidity per price range around the current price, from `/pools/{pool}/liquidity`, with zoom levels, a switch for which token is priced, the amounts each range holds on hover, and a table of the nearest ranges. Refreshed every 15s. |
 | `/{chain}/smart-money` | market-wallet's leaderboard over 7, 30 or 90 days, of smart money wallets or of every wallet, sorted by realized PnL, ROI, win rate or volume, beside a live feed of what smart money wallets trade (`trades:<chain>:label:smart_money`). |
 | `/{chain}/wallet/{address}` (also `/holder/`) | A wallet's profile: labels, stats per window with the ROI distribution of its tokens, open and closed positions with PnL, ledger trades, live trades and ERC-20 transfers. |
 
@@ -507,7 +507,7 @@ cd web
 npm ci
 npm run mock     # optional: a fake market-api with generated data and live pushes on :8080
 npm run dev      # http://localhost:5173
-npm test         # unit tests: formatting, candle and trade merging, the WebSocket client
+npm test         # unit tests: formatting, candle and trade merging, the WebSocket client, liquidity chart layout
 npm run build    # type-check and build into dist/
 make docker-web  # from the repository root: the chainstream-web image
 ```
