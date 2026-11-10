@@ -14,7 +14,6 @@ import (
 const (
 	defaultHistoryDepth    = 256
 	defaultHistory         = 90 * 24 * time.Hour
-	defaultFinalAge        = time.Hour
 	defaultBackfillHeights = 2000
 	defaultBatchLag        = time.Minute
 	defaultFlushRows       = 20000
@@ -94,7 +93,6 @@ func (bootstrap *Bootstrap) ApplyDefaults() {
 		wallet.HistoryDepth = defaultHistoryDepth
 	}
 	config.DefaultDuration(&wallet.History, defaultHistory)
-	config.DefaultDuration(&wallet.FinalAge, defaultFinalAge)
 	if wallet.BackfillHeights == 0 {
 		wallet.BackfillHeights = defaultBackfillHeights
 	}
@@ -183,7 +181,7 @@ func (bootstrap *Bootstrap) Validate() error {
 		return errors.New("conf: wallet history_depth, backfill_heights, flush_rows and trades_days must be positive")
 	}
 	for _, duration := range []time.Duration{
-		wallet.GetHistory().AsDuration(), wallet.GetFinalAge().AsDuration(), wallet.GetBatchLag().AsDuration(),
+		wallet.GetHistory().AsDuration(), wallet.GetBatchLag().AsDuration(),
 		wallet.GetFlushInterval().AsDuration(), wallet.GetStats().GetRefreshInterval().AsDuration(),
 	} {
 		if duration < 0 {

@@ -46,10 +46,9 @@ func NewServers(
 			ChainID: chain.GetChainId(), Chain: chain.GetName(), Open: openers[chain.GetChainId()],
 			Repo: repo, Trades: trades,
 			HistoryDepth: wallet.GetHistoryDepth(), History: wallet.GetHistory().AsDuration(),
-			FinalAge: wallet.GetFinalAge().AsDuration(), BackfillHeights: wallet.GetBackfillHeights(),
-			BatchLag: wallet.GetBatchLag().AsDuration(), FlushRows: int(wallet.GetFlushRows()),
-			FlushInterval: wallet.GetFlushInterval().AsDuration(), CloseRatio: wallet.GetCloseRatio(),
-			Logger: chainLogger,
+			BackfillHeights: wallet.GetBackfillHeights(), BatchLag: wallet.GetBatchLag().AsDuration(),
+			FlushRows: int(wallet.GetFlushRows()), FlushInterval: wallet.GetFlushInterval().AsDuration(),
+			CloseRatio: wallet.GetCloseRatio(), Logger: chainLogger,
 		})
 		if err != nil {
 			return nil, fmt.Errorf("chain %s: %w", chain.GetName(), err)

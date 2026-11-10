@@ -275,19 +275,6 @@ func (trades *tradeSource) FirstHeightSince(ctx context.Context, chainID uint64,
 	return row.Height, row.Found > 0, nil
 }
 
-func (trades *tradeSource) LastHeightBefore(ctx context.Context, chainID uint64, upTo int64, before time.Time) (int64, bool, error) {
-	var row struct {
-		Height int64
-		Found  uint64
-	}
-	err := trades.db.WithContext(ctx).Raw(`SELECT max(block_height) AS height, count() AS found FROM blocks
-		WHERE chain_id = ? AND block_height <= ? AND block_time < ?`, chainID, upTo, before.UTC()).Scan(&row).Error
-	if err != nil {
-		return 0, false, fmt.Errorf("clickhouse store: last height before: %w", err)
-	}
-	return row.Height, row.Found > 0, nil
-}
-
 func (trades *tradeSource) TradesBetween(ctx context.Context, chainID uint64, from, to int64) ([]biz.Trade, error) {
 	var rows []chdb.TradeRow
 	err := trades.db.WithContext(ctx).

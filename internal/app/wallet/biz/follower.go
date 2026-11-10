@@ -23,6 +23,7 @@ import (
 	"slices"
 	"time"
 
+	"github.com/AloneAtWar/chainstream-market/internal/pkg/chainsync"
 	"github.com/AloneAtWar/chainstream-market/internal/pkg/live"
 	"github.com/AloneAtWar/chainstream-market/internal/pkg/metrics"
 	"github.com/AloneAtWar/chainstream-market/internal/pkg/model"
@@ -81,6 +82,10 @@ type WalletRepo interface {
 	RevertWallet(ctx context.Context, to int64, checkpoint Checkpoint) error
 }
 
+// ErrReorgTooDeep 表示回滚高度低于已裁剪的 undo 历史（终局高度与 history_depth），
+// 无法还原持仓，Follower 会停止。
+var ErrReorgTooDeep = errors.New("wallet: reorg deeper than retained history")
+
 // TradeSource 读 market-engine 写在 ClickHouse 里的成交，用来补 live topic 缺的高度。
 type TradeSource interface {
 	// FirstHeightSince 返回 block_time 不早于 since 的最低已存区块高度。
@@ -88,8 +93,6 @@ type TradeSource interface {
 	// TradesBetween 返回 revision_height 在 [from, to] 之间的买卖成交，按 revision_height、
 	// block_height、log_index、operation_index 升序。
 	TradesBetween(ctx context.Context, chainID uint64, from, to int64) ([]Trade, error)
-	// LastHeightBefore 返回不高于 upTo、block_time 早于 before 的最高已存区块高度。
-	LastHeightBefore(ctx context.Context, chainID uint64, upTo int64, before time.Time) (int64, bool, error)
 }
 
 // Opener 打开链的 live topic：start 小于 0 时从末尾开始读，否则从 offset start 开始。
@@ -102,13 +105,11 @@ type Options struct {
 	Open    Opener
 	Repo    WalletRepo
 	Trades  TradeSource
-	// HistoryDepth 是除了终局高度以上的区块之外，还保留可回滚的最近区块数。
+	// HistoryDepth 是可撤销的最大重组深度：undo 按 chainsync.PruneThrough 即
+	// max(finalized, height−depth) 裁剪，最多保留 depth 个区块，和其他服务一致。
 	HistoryDepth int64
 	// History 是首次启动从 ClickHouse 回放的时长。
 	History time.Duration
-	// FinalAge：还不知道终局高度时，从 ClickHouse 补的区块（按 revision 区块自己的时间）比它
-	// 更旧就不留 undo。
-	FinalAge time.Duration
 	// BackfillHeights 是补缺时一次读多少个高度。
 	BackfillHeights int64
 	// BatchLag、FlushRows、FlushInterval 控制追块时的批量提交：区块比 BatchLag 新时每条
@@ -142,8 +143,6 @@ type Follower struct {
 	trades    []model.WalletTrade
 	dirty     bool
 	lastFlush time.Time
-	// pruneAge 是补缺时 revision 区块比 FinalAge 更旧的最高高度；只在终局高度未知时用来裁剪。
-	pruneAge int64
 	// blockTime 是最后应用的区块时间，用于 metrics。
 	blockTime time.Time
 }
@@ -159,7 +158,7 @@ func New(options Options) (*Follower, error) {
 		return nil, errors.New("wallet: chain id, opener, repo and trade source are required")
 	}
 	if options.HistoryDepth < 0 || options.BackfillHeights <= 0 || options.FlushRows < 0 ||
-		options.BatchLag < 0 || options.FlushInterval < 0 || options.History < 0 || options.FinalAge < 0 {
+		options.BatchLag < 0 || options.FlushInterval < 0 || options.History < 0 {
 		return nil, errors.New("wallet: invalid ledger settings")
 	}
 	if options.CloseRatio < 0 || options.CloseRatio >= 1 {
@@ -355,14 +354,6 @@ func (follower *Follower) backfill(ctx context.Context, offset, from, to int64) 
 			follower.blockTime = trades[next-1].BlockTime
 			index = next
 		}
-		// 年龄按 revision 区块的时间算：延迟成交自己的 block_time 早，但写出它的区块可能还没终局。
-		old, found, err := options.Trades.LastHeightBefore(ctx, options.ChainID, end, follower.now().Add(-options.FinalAge))
-		if err != nil {
-			return fmt.Errorf("find old heights: %w", err)
-		}
-		if found {
-			follower.pruneAge = max(follower.pruneAge, old)
-		}
 		follower.checkpoint.Offset = max(follower.checkpoint.Offset, offset-1)
 		follower.checkpoint.Height, follower.checkpoint.Part, follower.checkpoint.Parts = end, WholeBlock, 0
 		follower.dirty = true
@@ -458,7 +449,8 @@ func (follower *Follower) flush(ctx context.Context) error {
 	checkpoint := follower.checkpoint
 	checkpoint.ChainID = follower.options.ChainID
 	checkpoint.UpdatedAt = follower.now().UTC()
-	checkpoint.PrunedThrough = max(checkpoint.PrunedThrough, follower.prunable(checkpoint.Height))
+	through := chainsync.PruneThrough(checkpoint.Height, follower.finalized, follower.options.HistoryDepth)
+	checkpoint.PrunedThrough = max(checkpoint.PrunedThrough, through)
 	commit := Commit{Checkpoint: checkpoint, Trades: follower.trades}
 	for _, key := range slices.SortedFunc(maps.Keys(follower.positions), compareKeys) {
 		if position := follower.positions[key]; position != nil {
@@ -482,15 +474,6 @@ func (follower *Follower) flush(ctx context.Context) error {
 	follower.checkpoint = checkpoint
 	follower.reset()
 	return nil
-}
-
-// prunable 返回可以裁剪 undo 的高度。终局高度已知时取 height − HistoryDepth 和终局高度中
-// 较低的那个，未终局的区块都留着；未知时只裁剪补缺时 revision 区块已经足够旧的高度。
-func (follower *Follower) prunable(height int64) int64 {
-	if follower.finalized > 0 {
-		return min(height-follower.options.HistoryDepth, follower.finalized)
-	}
-	return min(follower.pruneAge, height)
 }
 
 func (follower *Follower) reset() {
@@ -523,7 +506,7 @@ func (follower *Follower) rollback(ctx context.Context, offset, to int64) error 
 	}
 	// undo 已经裁剪到 PrunedThrough：更深的回滚无法还原持仓，停下来而不是带着错误的账本继续。
 	if to < follower.checkpoint.PrunedThrough {
-		return fmt.Errorf("revert to %d is below the pruned undo history (%d)", to, follower.checkpoint.PrunedThrough)
+		return fmt.Errorf("%w: revert to %d, history starts after %d", ErrReorgTooDeep, to, follower.checkpoint.PrunedThrough)
 	}
 	checkpoint := follower.checkpoint
 	checkpoint.Offset, checkpoint.Height, checkpoint.Part, checkpoint.Parts = offset, to, WholeBlock, 0
@@ -533,7 +516,6 @@ func (follower *Follower) rollback(ctx context.Context, offset, to int64) error 
 	}
 	follower.logger.Warn("wallet ledger reverted", "from", follower.checkpoint.Height, "to", to)
 	follower.checkpoint = checkpoint
-	follower.pruneAge = min(follower.pruneAge, to)
 	return nil
 }
 

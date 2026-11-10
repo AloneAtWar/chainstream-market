@@ -156,7 +156,7 @@ func (chain *smokeChain) follow(until func(biz.Checkpoint) bool, whileWaiting fu
 	repo := NewWalletRepo(chain.data)
 	follower, err := biz.New(biz.Options{
 		ChainID: 1, Chain: "eth", Open: openers[1], Repo: repo, Trades: NewTradeSource(chain.data),
-		HistoryDepth: 16, History: 90 * 24 * time.Hour, FinalAge: time.Hour, BackfillHeights: 2, CloseRatio: 0.001,
+		HistoryDepth: 16, History: 90 * 24 * time.Hour, BackfillHeights: 2, CloseRatio: 0.001,
 		Now: func() time.Time { return chain.at(1000) },
 	})
 	if err != nil {
@@ -439,14 +439,6 @@ func TestTradeSourceFindsTradesHeldLongerThanAnyWindow(t *testing.T) {
 	trades, err := NewTradeSource(data).TradesBetween(context.Background(), 1, 60000, 61999)
 	if err != nil || len(trades) != 2 || trades[0].BlockHeight != 9600 || trades[0].RevisionHeight != 60000 {
 		t.Fatalf("trades %+v %v", trades, err)
-	}
-	blocks := []chdb.BlockRow{{ChainID: 1, BlockHeight: 59999, BlockTime: at}, {ChainID: 1, BlockHeight: 60000, BlockTime: at.Add(time.Hour)}}
-	if err = chdb.Insert(context.Background(), data.market, &blocks); err != nil {
-		t.Fatal(err)
-	}
-	height, ok, err := NewTradeSource(data).LastHeightBefore(context.Background(), 1, 60000, at.Add(time.Minute))
-	if err != nil || !ok || height != 59999 {
-		t.Fatalf("last height before %d %v %v", height, ok, err)
 	}
 }
 

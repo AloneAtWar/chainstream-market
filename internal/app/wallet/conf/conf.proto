@@ -30,16 +30,19 @@ message Bootstrap {
 
 // Wallet tunes the position ledger.
 message Wallet {
-  // history_depth is how many recent blocks stay revertible in addition to
-  // everything above the finalized height.
+  // history_depth is the deepest reorg that can be undone: undo history is
+  // pruned through max(finalized, height - history_depth), so at most this
+  // many blocks are kept. It should not be below chainstream-evm's
+  // scanner.cache_size.
+  // history_depth 是可撤销的最大重组深度，撤销历史按 max(finalized, height−history_depth)
+  // 裁剪，最多保留这么多个区块；不应小于上游 chainstream-evm 的 scanner.cache_size。
   int64 history_depth = 1;
   // history is how far back a first start replays market-engine's trades
   // from ClickHouse.
   google.protobuf.Duration history = 2;
-  // final_age: while the finalized height is unknown, blocks filled from
-  // ClickHouse whose own block time is older than this keep no undo history.
-  // Once it is known, every unfinalized block keeps its undo history.
-  google.protobuf.Duration final_age = 3;
+  // final_age was removed: undo history is pruned like every other service.
+  reserved 3;
+  reserved "final_age";
   // backfill_heights is how many heights one ClickHouse read covers when a
   // gap is filled.
   int64 backfill_heights = 4;

@@ -265,7 +265,7 @@ go run ./cmd/market-wallet -conf configs/market-wallet.yaml   # 需要 kafka、c
 market-wallet 先从 ClickHouse 的 `trades` 表按 `revision_height` 补上缺的高度再应用。首次启动从 live topic 末尾开始读，
 同样从 ClickHouse 回放 `wallet.history`（最长 90 天）。已应用的区块重复投递会跳过；同一区块缺了分片则停止。每条区块记录都带 `parts`（该区块的记录总数）：下一个区块到达时，如果上一个区块的分片还没收齐（market-engine 发布到一半崩溃，之后又因为太旧跳过了它），先回滚这个区块，再从 ClickHouse 补齐。
 每次写入都在 `wallet_undo` 记下每个持仓在该块第一次改动之前的状态，`revert` 时恢复持仓并删掉被回滚的 `wallet_trades`；
-未终局的区块和最近 `wallet.history_depth` 个区块的 undo 都保留；终局高度未知时，只裁剪补缺时 revision 区块自身时间早于 `wallet.final_age` 的高度。回滚到已裁剪的高度以下会报错停止。流水先写 ClickHouse，再在一个 PostgreSQL 事务里提交持仓和检查点；
+undo 与其他服务一样裁剪到 `max(finalized, height − wallet.history_depth)`，最多保留 `history_depth` 个区块；这里的高度是 revision 高度，延迟写出的成交随写出它的区块一起回滚。回滚到已裁剪的高度以下会报 `ErrReorgTooDeep` 停止，所以 `wallet.history_depth` 不应小于上游 chainstream-evm 的 `scanner.cache_size`。流水先写 ClickHouse，再在一个 PostgreSQL 事务里提交持仓和检查点；
 重启时删掉检查点之后的流水。接近链头时每块提交，追块时按 `wallet.flush_rows` 或 `wallet.flush_interval` 攒批。
 
 **统计与标签**：每隔 `wallet.stats.refresh_interval`，从 `wallet_trades` 重算变化过的日子的 `wallet_token_daily`（上次汇总最新成交的前一天、上次汇总开始后被删掉的流水里最早的那天、上次汇总最高 apply_height 及以上写入的流水里最早的那天，后者能覆盖同一区块后到的分片），
