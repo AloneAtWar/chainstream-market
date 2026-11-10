@@ -81,3 +81,55 @@ func TestNewKafkaValidatesOptions(t *testing.T) {
 		})
 	}
 }
+
+func TestKafkaAtEndSkipsEarlierRecords(t *testing.T) {
+	cluster, err := kfake.NewCluster(kfake.NumBrokers(1), kfake.SeedTopics(1, "chainstream-eth-live"))
+	if err != nil {
+		t.Fatalf("NewCluster() error = %v", err)
+	}
+	defer cluster.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	producer, err := kgo.NewClient(kgo.SeedBrokers(cluster.ListenAddrs()...), kgo.RecordPartitioner(kgo.ManualPartitioner()))
+	if err != nil {
+		t.Fatalf("producer error = %v", err)
+	}
+	defer producer.Close()
+	produce := func(value string) {
+		record := &kgo.Record{Topic: "chainstream-eth-live", Partition: 0, Value: []byte(value)}
+		if produceErr := producer.ProduceSync(ctx, record).FirstErr(); produceErr != nil {
+			t.Fatalf("ProduceSync() error = %v", produceErr)
+		}
+	}
+	for range 3 {
+		produce("old")
+	}
+	source, err := NewKafkaAtEnd(KafkaOptions{
+		Brokers: cluster.ListenAddrs(), Topic: "chainstream-eth-live",
+		FetchMaxBytes: 1 << 20, FetchMaxWait: 50 * time.Millisecond,
+	})
+	if err != nil {
+		t.Fatalf("NewKafkaAtEnd() error = %v", err)
+	}
+	defer source.Close()
+	// 末尾在第一次 fetch 时才确定，所以一直写新记录，直到读到一条为止。
+	fetched := make(chan []Message, 1)
+	go func() {
+		messages, fetchErr := source.Fetch(ctx)
+		if fetchErr != nil {
+			t.Errorf("Fetch() error = %v", fetchErr)
+		}
+		fetched <- messages
+	}()
+	for {
+		produce("new")
+		select {
+		case messages := <-fetched:
+			if len(messages) == 0 || messages[0].Offset < 3 || string(messages[0].Value) != "new" {
+				t.Fatalf("first message %+v, want one written after the source opened", messages)
+			}
+			return
+		case <-time.After(50 * time.Millisecond):
+		}
+	}
+}

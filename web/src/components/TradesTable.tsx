@@ -5,6 +5,7 @@ import { formatAge, formatCompact, formatPrice, formatUsd, shortAddress } from "
 import { useNow, useTokenSymbol } from "../lib/hooks";
 import { tradeKey } from "../lib/series";
 import { Address, Status } from "./common";
+import { WalletLabels } from "./wallets";
 
 const SIDE_TEXT: Record<Trade["side"], string> = {
   buy: "买入",
@@ -84,6 +85,7 @@ export function TradesTable({
                 )}
                 <td>
                   <Address chain={chain} value={trade.trader} kind="holder" label={shortAddress(trade.trader, 4, 4)} />
+                  <WalletLabels labels={trade.trader_labels} compact />
                 </td>
                 <td>
                   <Address chain={chain} value={trade.transaction_hash} kind="tx" label={`${trade.transaction_hash.slice(0, 10)}…`} />

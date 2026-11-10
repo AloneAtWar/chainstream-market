@@ -1,6 +1,7 @@
 // Package data is market-api's data layer: the ClickHouse tables of
-// market-engine and ch-loader, the PostgreSQL tables of holder-indexer,
-// market-registry, market-rankings and market-launchpad, and the live feed from market-engine.
+// market-engine, ch-loader and market-wallet, the PostgreSQL tables of
+// holder-indexer, market-registry, market-rankings, market-wallet and
+// market-launchpad, and the live feed from market-engine.
 package data
 
 import (
@@ -20,7 +21,8 @@ import (
 // ProviderSet is the data-layer provider set.
 var ProviderSet = wire.NewSet(
 	NewData, NewMarketReader, NewTransferReader, NewHolderReader, NewRegistryReader, NewRankingReader, NewLiquidityReader,
-	NewLaunchpadReader, NewHub,
+	NewHub, NewWalletReader, NewLabelCache, wire.Bind(new(live.LabelSource), new(*LabelCache)),
+	NewLaunchpadReader,
 )
 
 // Data holds market-api's two databases.
@@ -38,7 +40,7 @@ func NewData(ctx context.Context, clickhouse *config.ClickHouse, postgres *confi
 	if err != nil {
 		return nil, nil, err
 	}
-	for _, schema := range [][]string{chdb.MarketSchema, chdb.RawSchema} {
+	for _, schema := range [][]string{chdb.MarketSchema, chdb.RawSchema, chdb.WalletSchema} {
 		if err = chdb.Migrate(ctx, market, schema); err != nil {
 			closeMarket()
 			return nil, nil, fmt.Errorf("clickhouse: migrate: %w", err)
@@ -57,7 +59,7 @@ func NewData(ctx context.Context, clickhouse *config.ClickHouse, postgres *confi
 
 // NewHub returns the WebSocket hub of the live stream, or nil when live push
 // is off.
-func NewHub(bootstrap *conf.Bootstrap, logger *slog.Logger) (*live.Hub, error) {
+func NewHub(bootstrap *conf.Bootstrap, labels live.LabelSource, logger *slog.Logger) (*live.Hub, error) {
 	liveConfig := bootstrap.GetLive()
 	if !liveConfig.GetEnabled() {
 		return nil, nil
@@ -70,6 +72,6 @@ func NewHub(bootstrap *conf.Bootstrap, logger *slog.Logger) (*live.Hub, error) {
 		Feed: feed, Topics: config.LiveTopics(liveConfig, bootstrap.GetChains()),
 		Intervals: bootstrap.GetApi().IntervalDurations(), Throttle: liveConfig.GetCandleThrottle().AsDuration(),
 		ClientBuffer: int(liveConfig.GetClientBuffer()), MaxSubscriptions: int(liveConfig.GetMaxSubscriptions()),
-		OriginPatterns: liveConfig.GetAllowedOrigins(), Logger: logger,
+		OriginPatterns: liveConfig.GetAllowedOrigins(), Labels: labels, Logger: logger,
 	})
 }

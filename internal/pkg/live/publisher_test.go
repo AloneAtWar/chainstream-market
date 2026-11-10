@@ -23,7 +23,7 @@ func TestBlockUpdatesSplitLargeBlocks(t *testing.T) {
 	}
 	trades, candles := 0, 0
 	for index, update := range updates {
-		if update.Part != index || update.Height != 100 || update.FinalizedHeight != 90 || update.BlockTime != 1_700_000_000 {
+		if update.Part != index || update.Parts != 3 || update.Height != 100 || update.FinalizedHeight != 90 || update.BlockTime != 1_700_000_000 {
 			t.Fatalf("update %d header = %+v", index, update)
 		}
 		if items := len(update.Trades) + len(update.Candles); items > maxItemsPerRecord {
@@ -41,7 +41,7 @@ func TestBlockUpdatesSplitLargeBlocks(t *testing.T) {
 		t.Fatalf("trades = %d, candles = %d", trades, candles)
 	}
 
-	if empty := BlockUpdates(model.BlockOutput{ChainID: 1, Height: 101}, 90); len(empty) != 1 || empty[0].Type != UpdateBlock {
+	if empty := BlockUpdates(model.BlockOutput{ChainID: 1, Height: 101}, 90); len(empty) != 1 || empty[0].Type != UpdateBlock || empty[0].Parts != 1 {
 		t.Fatalf("empty block updates = %+v", empty)
 	}
 }

@@ -1,0 +1,89 @@
+# market-wallet follows market-engine's live topics and keeps a moving
+# weighted average cost ledger per wallet and token in PostgreSQL, writes
+# every trade's ledger result to ClickHouse, rolls them up into 7/30/90 day
+# wallet stats, and labels smart money and bots, which market-api serves.
+# Durations may be written as Go durations such as 500ms or 5m; any ${NAME}
+# or ${NAME:default} is read from the environment.
+#
+# market-engine must run with live.enabled true and live.driver kafka, and
+# storage.driver clickhouse: blocks the live topic skipped (older than
+# live.max_lag) and the first start's history are filled from its trades.
+
+kafka:
+  brokers:
+    - 127.0.0.1:9092
+  client_id: market-wallet
+  fetch_max_bytes: 104857600
+  fetch_max_wait: 500ms
+
+# market-engine's output database (trades and blocks, read only) and the
+# wallet_trades, wallet_token_daily, wallet_stats and wallet_refreshes tables.
+clickhouse:
+  addr:
+    - 127.0.0.1:9000
+  database: market
+  username: default
+  password: ""
+  dial_timeout: 5s
+
+# wallet_positions, wallet_undo, wallet_checkpoints and wallet_labels. Every
+# service creates all of the shared tables, so they can start in any order.
+postgres:
+  dsn: postgres://market:market@127.0.0.1:5432/market
+  schema: public
+
+wallet:
+  # How many recent blocks stay revertible in addition to everything above
+  # the finalized height.
+  history_depth: 256
+  # How far back a first start replays trades from ClickHouse; at most 90d.
+  history: 2160h
+  # While the finalized height is unknown, blocks filled from ClickHouse
+  # older than this keep no undo history.
+  final_age: 1h
+  # Heights per ClickHouse read when a gap is filled.
+  backfill_heights: 2000
+  # Blocks older than batch_lag are written in batches of up to flush_rows
+  # wallet trades or flush_interval; newer ones on their own.
+  batch_lag: 1m
+  flush_rows: 20000
+  flush_interval: 5s
+  # wallet_trades rows age out this many days after the trade; 0 keeps them.
+  # Keep it above the longest stat window.
+  trades_days: 120
+  # A sell leaving less than this share of the position closes it.
+  close_ratio: 0.001
+  stats:
+    refresh_interval: 15m
+    # Stat windows in days, each within 1..90.
+    windows: [7, 30, 90]
+    # A close within this many seconds of the open is a fast flip.
+    fast_close_seconds: 5
+    # smart_money: the top max_wallets by realized PnL over window_days
+    # among wallets with realized PnL >= min_realized_usd, per-sell win rate
+    # >= min_win_rate, >= min_tokens tokens traded, at most max_loss_share
+    # of them lost by more than 50%, and not a bot.
+    smart_money:
+      window_days: 30
+      min_realized_usd: 5000
+      min_win_rate: 0.5
+      min_tokens: 10
+      max_loss_share: 0.3
+      max_wallets: 1000
+    # bot: over window_days, at least min_trades trades, or at least
+    # min_closes closes of which min_fast_close_share were fast flips.
+    bot:
+      window_days: 7
+      min_trades: 2000
+      min_closes: 10
+      min_fast_close_share: 0.3
+
+# Prometheus metrics at /metrics on addr; empty turns them off.
+metrics:
+  addr: ""
+
+# Each chain is followed on its own; name, chain_id, topic and live_topic
+# (default "<topic>-live") are read.
+chains:
+  - {name: eth, chain_id: 1, topic: chainstream-eth}
+  - {name: bsc, chain_id: 56, topic: chainstream-bsc}

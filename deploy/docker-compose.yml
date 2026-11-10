@@ -142,6 +142,10 @@ services:
     <<: *market
     command: ["/usr/local/bin/market-rankings", "-conf", "/etc/chainstream-market/market-rankings.yaml"]
 
+  market-wallet:
+    <<: *market
+    command: ["/usr/local/bin/market-wallet", "-conf", "/etc/chainstream-market/market-wallet.yaml"]
+
   market-api:
     <<: *market
     command: ["/usr/local/bin/market-api", "-conf", "/etc/chainstream-market/market-api.yaml"]

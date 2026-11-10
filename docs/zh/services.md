@@ -1,6 +1,6 @@
 # 其它服务
 
-本页介绍 market-engine 之外的六个组件：market-api（含实时推送）、holder-indexer、market-registry、market-launchpad、market-rankings 和 ch-loader。
+本页介绍 market-engine 之外的七个组件：market-api（含实时推送）、holder-indexer、market-registry、market-launchpad、market-rankings、market-wallet 和 ch-loader。
 除 market-api 和 market-rankings 外，它们都通过 [chainsync](architecture.md) 各自按 offset 顺序读链 topic、维护自己的检查点。
 
 ## market-api
@@ -29,6 +29,11 @@ go run ./cmd/market-api -conf configs/market-api.yaml   # 需要 clickhouse.addr
 | `GET /v1/chains/{chain}/launchpad/tokens/{token}` | 单个发射平台代币的曲线：状态、进度、已募集、成交笔数、发射与迁移信息；不是发射平台代币时返回 404 |
 | `GET /v1/chains/{chain}/tokens/{token}/transfers` | 代币的 ERC-20 转账（来自 ch-loader），`holder` 可限定某一方 |
 | `GET /v1/chains/{chain}/holders/{holder}/transfers` | 某地址跨代币的转入转出，`token` 可限定代币 |
+| `GET /v1/chains/{chain}/wallets/{wallet}` | 钱包的标签和各窗口统计（来自 market-wallet） |
+| `GET /v1/chains/{chain}/wallets/{wallet}/positions` | 钱包持仓，最近交易的在前，带均价、已实现和未实现盈亏；`status=open` / `closed` 过滤 |
+| `GET /v1/chains/{chain}/wallets/{wallet}/trades` | 钱包的账本流水，新的在前，每笔带事件（建仓/加仓/减仓/清仓/untracked）和已实现盈亏；支持 `token`、`limit`；整页返回时带 `next: {before_height, before_log_index, before_operation_index}`，原样传回可以在同一区块里接着翻 |
+| `GET /v1/chains/{chain}/wallets?window=30&label=smart_money` | 一个窗口（天）的钱包排行；`sort` 为 `realized`（默认）、`winrate`、`roi`、`volume`，`label` 只看带该标签的钱包 |
+| `GET /v1/chains/{chain}/tokens/{token}/traders` | 代币的交易者按已实现盈亏排序（盈利榜），带标签 |
 | `GET /v1/stream` | 实时交易与 K 线的 WebSocket，需开启 `live.enabled` |
 | `GET /healthz` | 进程存活时返回 204 |
 
@@ -40,6 +45,7 @@ go run ./cmd/market-api -conf configs/market-api.yaml   # 需要 clickhouse.addr
 - 交易支持 `limit` 和 `before_height` 向前翻页。
 - 转账支持 `limit`、`before_height`、`before_log_index`；整页返回时带 `next: {before_height, before_log_index}`，原样传回即可继续，
   不会跳过同一块剩余的转账。金额为原始单位 `amount_raw`；只存 ERC-20 转账，所以原生币伪地址不做映射。
+- market-wallet 给钱包打过标签时，交易带 `trader_labels`、持有人带 `labels`（如 `smart_money`、`bot`）；market-api 每分钟重读一次标签。
 - 所有小数值以字符串返回。
 
 ## 实时推送（Live push）
@@ -83,6 +89,8 @@ go run ./cmd/market-api -conf configs/market-api.yaml   # 需要 clickhouse.addr
 | `trades:<chain>:token:<token>` | 以该代币为 base 的交易，同 `/tokens/{token}/trades` |
 | `candles:<chain>:pool:<pool>:<interval>` | 池子 K 线，`interval` 取自 `api.intervals` |
 | `candles:<chain>:token:<token>:<interval>` | 代币聚合 K 线 |
+| `trades:<chain>:wallet:<wallet>` | 某个钱包的交易 |
+| `trades:<chain>:label:<label>` | 带某个标签的全部钱包的交易，如 `trades:56:label:smart_money`，用于聪明钱监控 |
 
 地址统一小写，代币别名（如原生币伪地址）映射为包装代币。`subscribed` 回复列出服务端规范化后的频道名，之后的消息都用这个写法。
 每个连接最多订阅 `live.max_subscriptions` 个频道；非法请求收到 `error` 消息，且不改变任何订阅。
@@ -233,6 +241,53 @@ go run ./cmd/market-rankings -conf configs/market-rankings.yaml   # 需要 click
 - `min_liquidity_usd`、`limit`（默认 200，最多 1000）、`offset`（最多 10000）。
 
 名称、符号、小数位来自 market-registry；响应中的 `refreshed_at` 是上次刷新的 unix 时间。
+
+## market-wallet
+
+```sh
+go run ./cmd/market-wallet -conf configs/market-wallet.yaml   # 需要 kafka、clickhouse 和 postgres
+```
+
+代码：`internal/app/wallet`。它回答"谁在什么币上赚钱"：每个钱包每个代币的成本账本、7/30/90 天的钱包统计，
+以及 `smart_money`、`bot` 这样的规则标签。需要 market-engine 开启 `live.enabled`、`live.driver: kafka` 并使用 ClickHouse 存储。
+
+```text
+{topic}-live → market-wallet → wallet_positions（PostgreSQL）+ wallet_trades（ClickHouse）
+                 每 15 分钟 → wallet_token_daily → wallet_stats → wallet_labels
+```
+
+**账本**：每笔有 USD 金额、不是异常价的买卖，按交易发起地址（`trader`，即 tx.from）用移动加权平均成本记账。
+买入把数量和金额加进持仓；卖出按均价取走有成本的部分，均价不变，已实现盈亏 = 这部分对应的收入 − 成本。
+转入或空投来的代币没有成本，卖出只计成交额、不计盈亏（事件 `untracked`）。卖出后剩余不到 `wallet.close_ratio` 视为清仓。
+胜率按笔算：计入盈亏的卖出里盈利的比例。
+
+**跟读 live topic**：market-engine 在 live topic 上跳过比 `live.max_lag` 更旧的区块，所以区块到达时如果高度不连续，
+market-wallet 先从 ClickHouse 的 `trades` 表按 `revision_height` 补上缺的高度再应用。首次启动从 live topic 末尾开始读，
+同样从 ClickHouse 回放 `wallet.history`（最长 90 天）。已应用的区块重复投递会跳过；同一区块缺了分片则停止。每条区块记录都带 `parts`（该区块的记录总数）：下一个区块到达时，如果上一个区块的分片还没收齐（market-engine 发布到一半崩溃，之后又因为太旧跳过了它），先回滚这个区块，再从 ClickHouse 补齐。
+每次写入都在 `wallet_undo` 记下每个持仓在该块第一次改动之前的状态，`revert` 时恢复持仓并删掉被回滚的 `wallet_trades`；
+未终局的区块和最近 `wallet.history_depth` 个区块的 undo 都保留；终局高度未知时，只裁剪补缺时 revision 区块自身时间早于 `wallet.final_age` 的高度。回滚到已裁剪的高度以下会报错停止。流水先写 ClickHouse，再在一个 PostgreSQL 事务里提交持仓和检查点；
+重启时删掉检查点之后的流水。接近链头时每块提交，追块时按 `wallet.flush_rows` 或 `wallet.flush_interval` 攒批。
+
+**统计与标签**：每隔 `wallet.stats.refresh_interval`，从 `wallet_trades` 重算变化过的日子的 `wallet_token_daily`（上次汇总最新成交的前一天、上次汇总开始后被删掉的流水里最早的那天、上次汇总最高 apply_height 及以上写入的流水里最早的那天，后者能覆盖同一区块后到的分片），
+按每个窗口（从最新成交所在的日子往前数，不按墙钟）写一个新版本的 `wallet_stats`，记进 `wallet_refreshes`，再重算规则标签：
+
+- `smart_money`：`smart_money.window_days`（30 天）内已实现盈亏 ≥ 5000 美元、胜率 ≥ 50%、交易代币 ≥ 10 个、
+  亏损超过一半的代币不超过 30%、不是机器人，按已实现盈亏取前 1000。
+- `bot`：`bot.window_days`（7 天）内交易 ≥ 2000 笔，或清仓 ≥ 10 次且其中 30% 在 `fast_close_seconds` 内建仓又清仓。
+
+不再符合的规则标签会删除，其它来源（`source`）的标签不动。所有门槛都在配置里。
+
+| 表 | 内容 |
+| --- | --- |
+| `wallet_positions`（PostgreSQL） | `(chain_id, wallet, token)`：持仓数量、剩余成本、已实现盈亏、成交额和笔数、首次买入、本轮建仓时间 |
+| `wallet_undo`、`wallet_checkpoints`（PostgreSQL） | 回滚历史和跟读位置：live topic offset、高度、区块分片和分片总数 |
+| `wallet_pending_invalidations`（PostgreSQL） | 将要删除的流水范围，写进 `wallet_invalidations` 之后才清掉；两步之间崩溃，下次启动补写 |
+| `wallet_labels`（PostgreSQL） | `(chain_id, wallet, label)`，带 `source`（market-wallet 写的是 `rule`）和生效时间 |
+| `wallet_trades`（ClickHouse） | 每笔账本流水：事件、已实现盈亏、持仓时长，按钱包和时间排序；`wallet.trades_days` 后过期 |
+| `wallet_token_daily`、`wallet_stats`、`wallet_refreshes`（ClickHouse） | 日汇总、按窗口的统计（每个版本一个分区）、每次汇总；market-api 只读最新版本，market-wallet 发布新版本后只留它和上一个版本 |
+| `wallet_invalidations`（ClickHouse） | 回滚或重启删掉流水之后记下受影响的最早成交日，下次汇总从那天重算 |
+
+资金来源聚类、KOL 名单和关注列表还没有做。
 
 ## ch-loader
 

@@ -697,6 +697,145 @@ main {
   background: var(--panel-2);
 }
 
+/* Wallets and smart money */
+
+.wallet-cell {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.wallet-labels {
+  display: inline-flex;
+  gap: 4px;
+  margin-left: 4px;
+  vertical-align: middle;
+}
+
+.label {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 16px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  color: var(--muted);
+}
+
+.label.smart {
+  color: var(--accent);
+  border-color: rgba(240, 185, 11, 0.45);
+  background: rgba(240, 185, 11, 0.08);
+}
+
+.label.bot {
+  color: #93a4c3;
+  border-color: rgba(147, 164, 195, 0.4);
+}
+
+.wallet-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.wallet-title .label {
+  font-size: 12px;
+}
+
+.wallet-stats {
+  margin: 0;
+  padding: 14px 16px 12px;
+  gap: 18px 32px;
+}
+
+.stat-sub {
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.roi-block {
+  padding: 0 16px 16px;
+}
+
+.roi-title {
+  font-size: 12px;
+  margin-bottom: 6px;
+}
+
+.roi-bar {
+  display: flex;
+  height: 8px;
+  min-width: 90px;
+  border-radius: 4px;
+  overflow: hidden;
+  background: var(--panel-2);
+  gap: 1px;
+}
+
+.roi-bar span {
+  flex-basis: 0;
+}
+
+.roi-empty {
+  flex-grow: 1;
+}
+
+.roi-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.roi-legend i {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  margin-right: 5px;
+}
+
+.roi-legend b {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.roi-5x {
+  background: #0ea371;
+}
+
+.roi-2x {
+  background: #16c784;
+}
+
+.roi-0x {
+  background: #7fdcb5;
+}
+
+.roi-loss {
+  background: #f08a91;
+}
+
+.roi-loss50 {
+  background: var(--down);
+}
+
+.table .roi-col {
+  width: 120px;
+}
+
+.smart-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 320px;
+  gap: 12px;
+  align-items: start;
+}
+
 /* Launchpad */
 
 .launchpad-columns {
@@ -704,6 +843,45 @@ main {
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 12px;
   align-items: start;
+}
+
+.feed {
+  position: sticky;
+  top: 64px;
+  max-height: calc(100vh - 84px);
+  display: flex;
+  flex-direction: column;
+}
+
+.feed-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+}
+
+.feed-item {
+  padding: 8px 14px;
+  border-top: 1px solid var(--border);
+}
+
+.feed-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.feed-token {
+  font-weight: 600;
+}
+
+.feed-line .num {
+  margin-left: auto;
+}
+
+.feed-meta {
+  font-size: 12px;
+  margin-top: 2px;
 }
 
 .launchpad-column .card-head h3 {
@@ -800,6 +978,7 @@ main {
   background: var(--up);
 }
 
+
 @media (max-width: 1100px) {
   .launchpad-columns {
     grid-template-columns: 1fr;
@@ -807,8 +986,13 @@ main {
   .launchpad-list {
     max-height: 480px;
   }
-  .token-grid {
+  .token-grid,
+  .smart-grid {
     grid-template-columns: 1fr;
+  }
+  .feed {
+    position: static;
+    max-height: 480px;
   }
   .stats {
     margin-left: 0;
@@ -831,4 +1015,8 @@ main {
   .chart {
     height: 340px;
   }
+}
+
+.smart-page .table-scroll {
+  max-height: none;
 }

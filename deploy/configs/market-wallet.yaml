@@ -1,0 +1,21 @@
+# market-wallet for the docker-compose stack; configs/market-wallet.yaml
+# documents each setting.
+kafka:
+  brokers: [kafka:9092]
+  client_id: market-wallet
+  fetch_max_bytes: 104857600
+
+clickhouse:
+  addr: [clickhouse:9000]
+  database: market
+  username: default
+  password: ""
+
+postgres:
+  dsn: postgres://market:market@postgres:5432/market
+
+metrics:
+  addr: ":9100"
+
+chains:
+  - {name: eth, chain_id: 1, topic: chainstream-eth}
