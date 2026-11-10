@@ -75,8 +75,11 @@ type Options struct {
 	ChainID  uint64
 	Repo     HolderRepo
 	Balances Balances
-	// HistoryDepth is how many blocks of undo history to keep in addition
-	// to everything above the finalized height.
+	// HistoryDepth is the deepest reorg that can be undone: undo history is
+	// pruned through chainsync.PruneThrough, max(finalized, height-depth).
+	//
+	// HistoryDepth 是可撤销的最大重组深度：撤销历史按 chainsync.PruneThrough
+	// 即 max(finalized, height−depth) 裁剪，最多保留 depth 个区块。
 	HistoryDepth int64
 	// ReconcileEvery is how often, in blocks, stale holdings are checked
 	// against balanceOf. Zero disables reconciliation.
@@ -202,10 +205,7 @@ func (indexer *Indexer) Apply(ctx context.Context, block *streamv1.BlockEvent) e
 		change.Deltas = append(change.Deltas, corrections...)
 	}
 
-	through := block.GetFinalizedHeight()
-	if byDepth := height - indexer.options.HistoryDepth; byDepth > through {
-		through = byDepth
-	}
+	through := chainsync.PruneThrough(height, block.GetFinalizedHeight(), indexer.options.HistoryDepth)
 	indexer.prunedThrough = max(indexer.prunedThrough, through)
 	indexer.pending = change
 	return nil

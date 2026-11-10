@@ -30,8 +30,12 @@ type Update struct {
 	ChainID uint64 `json:"chain_id"`
 	// Height is the block for UpdateBlock, and the height rolled back to for
 	// UpdateRevert.
-	Height          int64    `json:"height"`
-	Part            int      `json:"part,omitempty"`
+	Height int64 `json:"height"`
+	Part   int   `json:"part,omitempty"`
+	// Parts is how many records the block's output spans, on every record of
+	// an UpdateBlock, so a consumer can tell a block it got only part of; 0
+	// means unknown (records from before the field existed).
+	Parts           int      `json:"parts,omitempty"`
 	BlockTime       int64    `json:"block_time,omitempty"`
 	FinalizedHeight int64    `json:"finalized_height,omitempty"`
 	Trades          []Trade  `json:"trades,omitempty"`
@@ -63,6 +67,9 @@ type Trade struct {
 	ValueUSD        string `json:"value_usd"`
 	// Outlier marks a swap left out of the token's candles.
 	Outlier bool `json:"outlier"`
+	// TraderLabels 是 market-api 推送时附上的交易者钱包标签（如 smart_money、bot），
+	// market-engine 发布时为空。
+	TraderLabels []string `json:"trader_labels,omitempty"`
 }
 
 // Candle is the whole current value of one bucket. UpdateHeight is the block

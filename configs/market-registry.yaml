@@ -30,8 +30,9 @@ postgres:
   schema: public
 
 registry:
-  # How many recent blocks stay revertible in addition to everything above
-  # the finalized height.
+  # Deepest reorg that can be undone: undo history is pruned through
+  # max(finalized, height - history_depth), so at most this many blocks are
+  # kept. Keep it at or above chainstream-evm's scanner.cache_size.
   history_depth: 256
 
 # Prometheus metrics at /metrics on addr; empty turns them off.

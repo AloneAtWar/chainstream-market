@@ -61,6 +61,22 @@ var (
 	// RankingsRefreshFailures counts failed rankings refreshes.
 	RankingsRefreshFailures = counterVec("rankings_refresh_failures_total", "Failed rankings refreshes.", "chain")
 
+	// WalletHeight 是 market-wallet 账本最后提交的高度。
+	WalletHeight = gaugeVec("wallet_height", "Last committed wallet ledger height.", "chain")
+	// WalletBlockLag 是墙钟减去账本最后提交的区块时间。
+	WalletBlockLag = gaugeVec("wallet_block_lag_seconds", "Clock time minus the last committed ledger block's time.", "chain")
+	// WalletTrades 统计账本提交的流水笔数。
+	WalletTrades = counterVec("wallet_trades_total", "Wallet ledger trades committed.", "chain")
+	// WalletBackfills 统计从 ClickHouse 补缺的次数。
+	WalletBackfills = counterVec("wallet_backfills_total", "Gaps in the live topic filled from ClickHouse.", "chain")
+	// WalletRefreshSeconds 是一次钱包统计汇总的耗时。
+	WalletRefreshSeconds = histogramVec("wallet_refresh_seconds", "Time to refresh one chain's wallet stats.",
+		prometheus.ExponentialBuckets(0.1, 2, 12), "chain")
+	// WalletRefreshFailures 统计失败的钱包统计汇总。
+	WalletRefreshFailures = counterVec("wallet_refresh_failures_total", "Failed wallet stats refreshes.", "chain")
+	// WalletLabels 是最近一次汇总后各规则标签的钱包数。
+	WalletLabels = gaugeVec("wallet_labels", "Wallets carrying each rule label after the last refresh.", "chain", "label")
+
 	// HTTPRequests counts market-api requests by route pattern and status.
 	HTTPRequests = counterVec("http_requests_total", "market-api requests, by route and status code.", "route", "code")
 	// HTTPSeconds is market-api request latency by route pattern.

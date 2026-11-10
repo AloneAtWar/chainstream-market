@@ -156,6 +156,9 @@ export interface Trade {
   price_usd: string;
   value_usd: string;
   outlier: boolean;
+  // trader_labels are market-wallet's labels of the trader, such as
+  // smart_money or bot, when it has any.
+  trader_labels?: string[];
 }
 
 export interface Holders {
@@ -163,7 +166,7 @@ export interface Holders {
   token: string;
   decimals?: number;
   holder_count: number;
-  holders: { holder: string; balance_raw: string; balance?: string }[];
+  holders: { holder: string; balance_raw: string; balance?: string; labels?: string[] }[];
 }
 
 export interface Transfer {
@@ -187,6 +190,133 @@ export interface Transfers {
   chain_id: number;
   transfers: Transfer[];
   next?: TransferCursor;
+}
+
+// Wallet stats, positions and ledger trades come from market-wallet. Every
+// stat covers one window of days counted back from the newest trade.
+
+export interface RoiDistribution {
+  over_5x: number;
+  from_2x_to_5x: number;
+  from_0_to_2x: number;
+  loss_0_to_50: number;
+  loss_over_50: number;
+}
+
+export interface WalletStats {
+  window_days: number;
+  realized_usd: string;
+  bought_usd: string;
+  sold_usd: string;
+  roi: string;
+  buys: number;
+  sells: number;
+  // win_rate is the share of PnL-counted sells that made money.
+  win_rate: number;
+  wins: number;
+  counted_sells: number;
+  tokens: number;
+  roi_distribution: RoiDistribution;
+  closes: number;
+  average_hold_seconds: number;
+  fast_closes: number;
+}
+
+export interface RankedWallet extends WalletStats {
+  wallet: string;
+  labels: string[];
+}
+
+export type WalletSort = "realized" | "winrate" | "roi" | "volume";
+
+export interface WalletList {
+  chain_id: number;
+  window_days: number;
+  sort: WalletSort;
+  label: string;
+  refreshed_at: number | null;
+  wallets: RankedWallet[];
+}
+
+export interface WalletProfile {
+  chain_id: number;
+  wallet: string;
+  labels: string[];
+  refreshed_at: number | null;
+  stats: WalletStats[];
+}
+
+export interface Position {
+  wallet: string;
+  token: string;
+  symbol: string | null;
+  status: "open" | "closed";
+  quantity: string;
+  average_cost_usd: string;
+  cost_usd: string;
+  price_usd: string | null;
+  realized_usd: string;
+  unrealized_usd: string | null;
+  bought_quantity: string;
+  sold_quantity: string;
+  bought_usd: string;
+  sold_usd: string;
+  buys: number;
+  sells: number;
+  wins: number;
+  losses: number;
+  first_buy_height: number | null;
+  first_buy_time: number | null;
+  opened_at: number | null;
+  last_trade_time: number;
+}
+
+export interface Trader extends Position {
+  labels: string[];
+}
+
+export type WalletEvent = "open" | "add" | "reduce" | "close" | "untracked" | "unknown";
+
+export interface WalletTrade {
+  block_height: number;
+  block_time: number;
+  transaction_hash: string;
+  log_index: number;
+  operation_index: number;
+  pool_id: string;
+  token: string;
+  quote_token: string;
+  side: Side;
+  event: WalletEvent;
+  amount: string;
+  value_usd: string;
+  price_usd: string;
+  realized_usd: string;
+  // counted marks a sell that counts toward realized PnL and win rate.
+  counted: boolean;
+  hold_seconds: number;
+  quantity_after: string;
+  cost_after_usd: string;
+}
+
+export interface WalletTradeCursor {
+  before_height: number;
+  before_log_index: number;
+  before_operation_index: number;
+}
+
+export interface WalletTrades {
+  chain_id: number;
+  wallet: string;
+  trades: WalletTrade[];
+  next?: WalletTradeCursor;
+}
+
+export interface WalletListQuery {
+  window?: number;
+  sort?: WalletSort;
+  label?: string;
+  limit?: number;
 }
 
 export type LaunchpadColumn = "new" | "bonding" | "migrated";
@@ -342,4 +472,26 @@ export const api = {
       token: options.token,
       holder: options.holder,
     }),
+  walletList: (chain: number, query: WalletListQuery) =>
+    get<WalletList>(`${base(chain)}/wallets`, {
+      window: query.window,
+      sort: query.sort,
+      label: query.label,
+      limit: query.limit,
+    }),
+  wallet: (chain: number, wallet: string) => get<WalletProfile>(`${base(chain)}/wallets/${wallet}`),
+  walletPositions: (chain: number, wallet: string, status?: "open" | "closed", limit = 100) =>
+    get<{ positions: Position[] }>(`${base(chain)}/wallets/${wallet}/positions`, { status, limit }).then(
+      (body) => body.positions,
+    ),
+  walletTrades: (chain: number, wallet: string, options: { limit?: number; token?: string; cursor?: WalletTradeCursor } = {}) =>
+    get<WalletTrades>(`${base(chain)}/wallets/${wallet}/trades`, {
+      limit: options.limit ?? 50,
+      token: options.token,
+      before_height: options.cursor?.before_height,
+      before_log_index: options.cursor?.before_log_index,
+      before_operation_index: options.cursor?.before_operation_index,
+    }),
+  tokenTraders: (chain: number, token: string, limit = 100) =>
+    get<{ traders: Trader[] }>(`${base(chain)}/tokens/${token}/traders`, { limit }).then((body) => body.traders),
 };

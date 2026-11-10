@@ -210,3 +210,48 @@ func TestHubChannels(t *testing.T) {
 		t.Fatalf("closed client still subscribed: %v %v", hub.channels, hub.chains)
 	}
 }
+
+// staticLabels 是固定的钱包标签。
+type staticLabels map[string][]string
+
+func (labels staticLabels) WalletLabels(_ uint64, wallet string) []string { return labels[wallet] }
+
+func TestHubWalletAndLabelChannels(t *testing.T) {
+	smart := "0x" + strings.Repeat("a", 40)
+	hub := newTestHub(t, 64)
+	// 没有标签来源时不能订阅标签频道，钱包频道可以。
+	client := hub.Connect()
+	if err := client.Subscribe([]string{"trades:1:label:smart_money"}); err == nil {
+		t.Fatal("label channels need a label source")
+	}
+	if err := client.Subscribe([]string{"candles:1:wallet:" + smart + ":1m"}); err == nil {
+		t.Fatal("wallets have no candles")
+	}
+
+	hub.options.Labels = staticLabels{smart: {"smart_money"}}
+	wallet, label := hub.Connect(), hub.Connect()
+	if err := wallet.Subscribe([]string{"trades:1:wallet:0x" + strings.ToUpper(smart[2:])}); err != nil {
+		t.Fatalf("Subscribe() error = %v", err)
+	}
+	if err := label.Subscribe([]string{"trades:1:label:smart_money"}); err != nil {
+		t.Fatalf("Subscribe() error = %v", err)
+	}
+	received(t, wallet)
+	expect(t, label, "subscribed")
+
+	hub.dispatch(Update{Type: UpdateBlock, ChainID: 1, Height: 100, Trades: []Trade{
+		{PoolID: pool, BaseToken: token, Trader: smart},
+		{PoolID: pool, BaseToken: token, Trader: "0xother"},
+		{PoolID: pool, BaseToken: weth, Trader: smart},
+	}})
+	expect(t, wallet, "trades trades:1:wallet:"+smart+" 2")
+	payload := <-label.send
+	var message tradesMessage
+	if err := json.Unmarshal(payload, &message); err != nil {
+		t.Fatal(err)
+	}
+	if message.Channel != "trades:1:label:smart_money" || len(message.Trades) != 2 ||
+		len(message.Trades[0].TraderLabels) != 1 || message.Trades[0].TraderLabels[0] != "smart_money" {
+		t.Fatalf("label message %+v", message)
+	}
+}

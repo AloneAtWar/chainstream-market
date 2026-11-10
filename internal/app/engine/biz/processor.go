@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/AloneAtWar/chainstream-market/internal/pkg/asset"
+	"github.com/AloneAtWar/chainstream-market/internal/pkg/chainsync"
 	"github.com/AloneAtWar/chainstream-market/internal/pkg/model"
 	streamv1 "github.com/AloneAtWar/chainstream-market/proto/stream/v1"
 	"github.com/shopspring/decimal"
@@ -43,8 +44,11 @@ type Options struct {
 	MaxHops uint8
 	// Intervals are the candle bucket sizes.
 	Intervals []time.Duration
-	// HistoryDepth is how many blocks of undo history to keep in addition to
-	// everything above the finalized height.
+	// HistoryDepth is the deepest reorg that can be undone: undo history is
+	// pruned through chainsync.PruneThrough, max(finalized, height-depth).
+	//
+	// HistoryDepth 是可撤销的最大重组深度：撤销历史按 chainsync.PruneThrough
+	// 即 max(finalized, height−depth) 裁剪，最多保留 depth 个区块。
 	HistoryDepth int64
 	// Feeds are the oracle aggregators trusted for USD prices. Updates from
 	// any other address are ignored.
@@ -364,10 +368,7 @@ func (processor *Processor) RevertedCandles(rollbackTo int64) []model.CandleRese
 }
 
 func (processor *Processor) prune(block *streamv1.BlockEvent) {
-	through := block.GetFinalizedHeight()
-	if byDepth := block.GetBlockHeight() - processor.options.HistoryDepth; byDepth > through {
-		through = byDepth
-	}
+	through := chainsync.PruneThrough(block.GetBlockHeight(), block.GetFinalizedHeight(), processor.options.HistoryDepth)
 	if through <= processor.prunedThrough {
 		return
 	}

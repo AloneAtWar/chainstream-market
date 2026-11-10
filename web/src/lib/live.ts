@@ -27,6 +27,9 @@ export const channels = {
   trades: (chain: number, subject: "token" | "pool", key: string) => `trades:${chain}:${subject}:${key.toLowerCase()}`,
   candles: (chain: number, subject: "token" | "pool", key: string, interval: string) =>
     `candles:${chain}:${subject}:${key.toLowerCase()}:${interval}`,
+  // Trades by one wallet, or by every wallet market-wallet gave the label.
+  walletTrades: (chain: number, wallet: string) => `trades:${chain}:wallet:${wallet.toLowerCase()}`,
+  labelTrades: (chain: number, label: string) => `trades:${chain}:label:${label}`,
 };
 
 export function chainOfChannel(channel: string): number {
