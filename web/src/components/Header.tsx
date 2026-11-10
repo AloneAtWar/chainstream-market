@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from "react";
-import { Link, useLocation, useNavigate } from "react-router-dom";
+import { Link, NavLink, useLocation, useNavigate } from "react-router-dom";
 import { CHAINS, type Chain } from "../lib/chains";
 import { formatInteger } from "../lib/format";
 import { useHead, useLiveStatus } from "../lib/hooks";
@@ -23,13 +23,15 @@ export function Header({ chain }: { chain: Chain }) {
     setQuery("");
   };
 
-  // Switching chains keeps the token list or the smart money board with its
-  // query string, but leaves detail pages, whose addresses belong to the
-  // old chain.
+  // Switching chains keeps the token list's query string, the launchpad
+  // page and the smart money board, but leaves detail pages, whose
+  // addresses belong to the old chain.
   const onSmartMoney = location.pathname === `/${chain.id}/smart-money`;
   const switchChain = (id: number) => {
+    const onList = location.pathname === `/${chain.id}`;
+    const onLaunchpad = location.pathname === `/${chain.id}/launchpad`;
     if (onSmartMoney) navigate(`/${id}/smart-money${location.search}`);
-    else navigate(`/${id}${location.pathname === `/${chain.id}` ? location.search : ""}`);
+    else navigate(`/${id}${onList ? location.search : onLaunchpad ? "/launchpad" : ""}`);
   };
 
   return (
@@ -54,13 +56,16 @@ export function Header({ chain }: { chain: Chain }) {
           </button>
         ))}
       </nav>
-      <nav className="nav">
-        <Link to={`/${chain.id}`} className={location.pathname === `/${chain.id}` ? "nav-link active" : "nav-link"}>
-          代币
-        </Link>
-        <Link to={`/${chain.id}/smart-money`} className={onSmartMoney ? "nav-link active" : "nav-link"}>
+      <nav className="sections">
+        <NavLink to={`/${chain.id}`} end className="section">
+          行情
+        </NavLink>
+        <NavLink to={`/${chain.id}/launchpad`} className="section">
+          发射台
+        </NavLink>
+        <NavLink to={`/${chain.id}/smart-money`} className="section">
           🧠 聪明钱
-        </Link>
+        </NavLink>
       </nav>
       <form className="search" onSubmit={search}>
         <input

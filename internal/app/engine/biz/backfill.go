@@ -223,6 +223,12 @@ func streamTrade(raw model.RawTrade) *streamv1.Trade {
 			Liquidity: raw.Liquidity, Tick: raw.Tick, ActiveBinId: raw.ActiveBinID,
 		}
 	}
+	if curve := raw.Curve; curve != nil {
+		trade.PoolState = &streamv1.PoolState{Curve: &streamv1.CurveState{
+			Progress: curve.Progress, BaseRemaining: curve.BaseRemaining,
+			QuoteRaised: curve.QuoteRaised, Price: curve.Price,
+		}}
+	}
 	return trade
 }
 
@@ -348,7 +354,7 @@ func (processor *Processor) pastQuote(token string, pools []string, states map[s
 			continue
 		}
 		liquidity := state.Reserves[1-position].Mul(counterpart.usd).Round(precision)
-		if liquidity.LessThan(processor.options.MinLiquidityUSD) {
+		if liquidity.LessThan(processor.minLiquidity(state)) {
 			continue
 		}
 		relative, ok := state.priceOf(position)

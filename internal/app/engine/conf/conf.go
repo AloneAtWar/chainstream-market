@@ -178,7 +178,7 @@ func (bootstrap *Bootstrap) Validate() error {
 }
 
 func (market *Market) validate() error {
-	if market.GetMinLiquidityUsd() < 0 || market.GetCandleMinLiquidityUsd() < 0 {
+	if market.GetMinLiquidityUsd() < 0 || market.GetCandleMinLiquidityUsd() < 0 || market.GetCurveMinLiquidityUsd() < 0 {
 		return errors.New("conf: market liquidity thresholds must not be negative")
 	}
 	if market.GetMaxHops() > 255 {

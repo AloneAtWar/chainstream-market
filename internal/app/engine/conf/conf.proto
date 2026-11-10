@@ -51,8 +51,12 @@ message Market {
   double candle_min_liquidity_usd = 2;
   uint32 max_hops = 3;
   repeated google.protobuf.Duration intervals = 4;
-  // history_depth is how many recent blocks stay revertible in addition to
-  // everything above the finalized height.
+  // history_depth is the deepest reorg that can be undone: undo history is
+  // pruned through max(finalized, height - history_depth), so at most this
+  // many blocks are kept. It should not be below chainstream-evm's
+  // scanner.cache_size.
+  // history_depth 是可撤销的最大重组深度，撤销历史按 max(finalized, height−history_depth)
+  // 裁剪，最多保留这么多个区块；不应小于上游 chainstream-evm 的 scanner.cache_size。
   int64 history_depth = 5;
   // oracle_deviation is the largest relative gap between a feed-backed
   // token's graph price and its oracle answer before the answer wins.
@@ -83,6 +87,11 @@ message Market {
   // dynamic_fee_depth_bps is the band of a V4 pool whose hook sets its fee;
   // 0 means 200 (±2%).
   uint32 dynamic_fee_depth_bps = 13;
+  // curve_min_liquidity_usd replaces min_liquidity_usd and
+  // candle_min_liquidity_usd for launchpad bonding curves (four.meme, Flap),
+  // whose quote raised starts near zero; 0 lets every curve trade price its
+  // token and join its candles.
+  double curve_min_liquidity_usd = 14;
 }
 
 message DepthBand {

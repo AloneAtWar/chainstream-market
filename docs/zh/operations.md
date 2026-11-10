@@ -3,7 +3,7 @@
 ## 本地完整环境
 
 `make up` 构建镜像并用 docker compose 启动全部服务：Kafka、ClickHouse、PostgreSQL、Redis，扫描以太坊写入 `chainstream-eth` 的
-chainstream-evm，本仓库的七个服务，Web 前端，以及 Prometheus 和 Grafana。
+chainstream-evm，本仓库的八个服务，Web 前端，以及 Prometheus 和 Grafana。
 
 前提：
 
@@ -114,7 +114,7 @@ market-engine 基于 kfake 的迟到交易测试同时需要两者。CI 会启�
 | `wallet_refresh_seconds`、`wallet_refresh_failures_total`、`wallet_labels{label}` | market-wallet 统计汇总，以及各规则标签的钱包数 |
 | `http_requests_total{route,code}`、`http_request_seconds{route}` | market-api 按路由模式统计的请求 |
 
-`engine_*` 指标来自所有消费者：market-engine、ch-loader、holder-indexer 和 market-registry。chainstream-evm 的指标前缀为 `chainstream_evm_`。
+`engine_*` 指标来自所有消费者：market-engine、ch-loader、holder-indexer、market-registry 和 market-launchpad。chainstream-evm 的指标前缀为 `chainstream_evm_`。
 `deploy/grafana/dashboards` 中的 Grafana 看板同时展示两者。
 
 ## Web 前端
@@ -124,7 +124,8 @@ market-engine 基于 kfake 的迟到交易测试同时需要两者。CI 会启�
 | 页面 | 内容 |
 | --- | --- |
 | `/{chain}` | market-rankings 的代币列表，可按 24h 成交量、涨跌幅、流动性、持有人数或创建时间排序，支持流动性过滤和符号 / 地址搜索，每 15 秒刷新 |
-| `/{chain}/token/{address}` | 价格、24h 统计、代币聚合 K 线与实时交易，盈利榜（按已实现盈亏排的交易者）/ 持有人 / 池子 / 转账标签页，以及 registry 元数据和价格推导过程 |
+| `/{chain}/launchpad` | market-launchpad 的三栏并排：新币、按进度排序的发射中、已迁移，可按平台筛选，每栏每 5 秒轮询 |
+| `/{chain}/token/{address}` | 价格、24h 统计、代币聚合 K 线与实时交易，盈利榜（按已实现盈亏排的交易者）/ 持有人 / 池子 / 转账标签页，以及 registry 元数据和价格推导过程；发射平台代币还会显示曲线进度、已募集和迁移信息 |
 | `/{chain}/pool/{pool}` | 池子自己的 K 线和实时交易、代币和元数据 |
 | `/{chain}/smart-money` | market-wallet 的钱包排行：7 / 30 / 90 天窗口，聪明钱或全部钱包，按已实现盈亏、ROI、胜率或成交额排序；旁边是聪明钱实时动向（`trades:<chain>:label:smart_money`） |
 | `/{chain}/wallet/{address}`（也可用 `/holder/`） | 钱包画像：标签、各窗口统计和代币收益分布、当前持仓与已清仓（含盈亏）、交易记录、实时成交和 ERC-20 转账 |

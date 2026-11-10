@@ -251,8 +251,12 @@ type Market struct {
 	CandleMinLiquidityUsd float64                `protobuf:"fixed64,2,opt,name=candle_min_liquidity_usd,json=candleMinLiquidityUsd,proto3" json:"candle_min_liquidity_usd,omitempty"`
 	MaxHops               uint32                 `protobuf:"varint,3,opt,name=max_hops,json=maxHops,proto3" json:"max_hops,omitempty"`
 	Intervals             []*durationpb.Duration `protobuf:"bytes,4,rep,name=intervals,proto3" json:"intervals,omitempty"`
-	// history_depth is how many recent blocks stay revertible in addition to
-	// everything above the finalized height.
+	// history_depth is the deepest reorg that can be undone: undo history is
+	// pruned through max(finalized, height - history_depth), so at most this
+	// many blocks are kept. It should not be below chainstream-evm's
+	// scanner.cache_size.
+	// history_depth 是可撤销的最大重组深度，撤销历史按 max(finalized, height−history_depth)
+	// 裁剪，最多保留这么多个区块；不应小于上游 chainstream-evm 的 scanner.cache_size。
 	HistoryDepth int64 `protobuf:"varint,5,opt,name=history_depth,json=historyDepth,proto3" json:"history_depth,omitempty"`
 	// oracle_deviation is the largest relative gap between a feed-backed
 	// token's graph price and its oracle answer before the answer wins.
@@ -283,8 +287,13 @@ type Market struct {
 	// dynamic_fee_depth_bps is the band of a V4 pool whose hook sets its fee;
 	// 0 means 200 (±2%).
 	DynamicFeeDepthBps uint32 `protobuf:"varint,13,opt,name=dynamic_fee_depth_bps,json=dynamicFeeDepthBps,proto3" json:"dynamic_fee_depth_bps,omitempty"`
-	unknownFields      protoimpl.UnknownFields
-	sizeCache          protoimpl.SizeCache
+	// curve_min_liquidity_usd replaces min_liquidity_usd and
+	// candle_min_liquidity_usd for launchpad bonding curves (four.meme, Flap),
+	// whose quote raised starts near zero; 0 lets every curve trade price its
+	// token and join its candles.
+	CurveMinLiquidityUsd float64 `protobuf:"fixed64,14,opt,name=curve_min_liquidity_usd,json=curveMinLiquidityUsd,proto3" json:"curve_min_liquidity_usd,omitempty"`
+	unknownFields        protoimpl.UnknownFields
+	sizeCache            protoimpl.SizeCache
 }
 
 func (x *Market) Reset() {
@@ -408,6 +417,13 @@ func (x *Market) GetDynamicFeeDepthBps() uint32 {
 	return 0
 }
 
+func (x *Market) GetCurveMinLiquidityUsd() float64 {
+	if x != nil {
+		return x.CurveMinLiquidityUsd
+	}
+	return 0
+}
+
 type DepthBand struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	MaxFee        uint32                 `protobuf:"varint,1,opt,name=max_fee,json=maxFee,proto3" json:"max_fee,omitempty"`
@@ -481,7 +497,7 @@ const file_app_engine_conf_conf_proto_rawDesc = "" +
 	"clickhouse\"Q\n" +
 	"\x05State\x12\x16\n" +
 	"\x06driver\x18\x01 \x01(\tR\x06driver\x120\n" +
-	"\bpostgres\x18\x02 \x01(\v2\x14.pkg.config.PostgresR\bpostgres\"\xf6\x04\n" +
+	"\bpostgres\x18\x02 \x01(\v2\x14.pkg.config.PostgresR\bpostgres\"\xad\x05\n" +
 	"\x06Market\x12*\n" +
 	"\x11min_liquidity_usd\x18\x01 \x01(\x01R\x0fminLiquidityUsd\x127\n" +
 	"\x18candle_min_liquidity_usd\x18\x02 \x01(\x01R\x15candleMinLiquidityUsd\x12\x19\n" +
@@ -497,7 +513,8 @@ const file_app_engine_conf_conf_proto_rawDesc = "" +
 	"\rbackfill_wait\x18\v \x01(\v2\x19.google.protobuf.DurationR\fbackfillWait\x12;\n" +
 	"\vdepth_bands\x18\f \x03(\v2\x1a.app.engine.conf.DepthBandR\n" +
 	"depthBands\x121\n" +
-	"\x15dynamic_fee_depth_bps\x18\r \x01(\rR\x12dynamicFeeDepthBps\"6\n" +
+	"\x15dynamic_fee_depth_bps\x18\r \x01(\rR\x12dynamicFeeDepthBps\x125\n" +
+	"\x17curve_min_liquidity_usd\x18\x0e \x01(\x01R\x14curveMinLiquidityUsd\"6\n" +
 	"\tDepthBand\x12\x17\n" +
 	"\amax_fee\x18\x01 \x01(\rR\x06maxFee\x12\x10\n" +
 	"\x03bps\x18\x02 \x01(\rR\x03bpsBHZFgithub.com/AloneAtWar/chainstream-market/internal/app/engine/conf;confb\x06proto3"

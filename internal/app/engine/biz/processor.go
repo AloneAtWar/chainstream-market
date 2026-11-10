@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/AloneAtWar/chainstream-market/internal/pkg/asset"
+	"github.com/AloneAtWar/chainstream-market/internal/pkg/chainsync"
 	"github.com/AloneAtWar/chainstream-market/internal/pkg/model"
 	streamv1 "github.com/AloneAtWar/chainstream-market/proto/stream/v1"
 	"github.com/shopspring/decimal"
@@ -36,12 +37,18 @@ type Options struct {
 	// CandleMinLiquidityUSD is the quote reserve value a pool needs before its
 	// trades join a token's aggregated candles.
 	CandleMinLiquidityUSD decimal.Decimal
+	// CurveMinLiquidityUSD replaces both thresholds above for launchpad
+	// bonding curves, whose quote raised starts near zero.
+	CurveMinLiquidityUSD decimal.Decimal
 	// MaxHops bounds how far from an anchor a price may propagate.
 	MaxHops uint8
 	// Intervals are the candle bucket sizes.
 	Intervals []time.Duration
-	// HistoryDepth is how many blocks of undo history to keep in addition to
-	// everything above the finalized height.
+	// HistoryDepth is the deepest reorg that can be undone: undo history is
+	// pruned through chainsync.PruneThrough, max(finalized, height-depth).
+	//
+	// HistoryDepth 是可撤销的最大重组深度：撤销历史按 chainsync.PruneThrough
+	// 即 max(finalized, height−depth) 裁剪，最多保留 depth 个区块。
 	HistoryDepth int64
 	// Feeds are the oracle aggregators trusted for USD prices. Updates from
 	// any other address are ignored.
@@ -280,6 +287,7 @@ func (processor *Processor) Apply(ctx context.Context, block *streamv1.BlockEven
 		processor.checkSwap(height, trade, tables)
 		processor.observe(height, trade, touched)
 	}
+	migrated := processor.applyLaunchpad(height, block, touched)
 	processor.settleTables(height, tables, touched)
 	processor.applyBalances(height, block, touched)
 	output.Prices = past.prices
@@ -304,7 +312,7 @@ func (processor *Processor) Apply(ctx context.Context, block *streamv1.BlockEven
 			trade.Outlier = processor.outlier(trade)
 		}
 		output.Trades = append(output.Trades, trade)
-		processor.aggregate(height, trade, touchedCandles)
+		processor.aggregate(height, trade, migrated, touchedCandles)
 	}
 	output.Candles = processor.collectCandles(touchedCandles, replayed)
 	processor.expireLate(height)
@@ -360,10 +368,7 @@ func (processor *Processor) RevertedCandles(rollbackTo int64) []model.CandleRese
 }
 
 func (processor *Processor) prune(block *streamv1.BlockEvent) {
-	through := block.GetFinalizedHeight()
-	if byDepth := block.GetBlockHeight() - processor.options.HistoryDepth; byDepth > through {
-		through = byDepth
-	}
+	through := chainsync.PruneThrough(block.GetBlockHeight(), block.GetFinalizedHeight(), processor.options.HistoryDepth)
 	if through <= processor.prunedThrough {
 		return
 	}
@@ -551,7 +556,7 @@ func (processor *Processor) bestQuote(height int64, token string) (tokenPrice, b
 			continue
 		}
 		liquidity := state.Reserves[1-position].Mul(counterpart.USD).Round(precision)
-		if liquidity.LessThan(processor.options.MinLiquidityUSD) {
+		if liquidity.LessThan(processor.minLiquidity(state)) {
 			continue
 		}
 		relative, ok := state.priceOf(position)
@@ -781,7 +786,11 @@ func (processor *Processor) candleSubjects(trade model.Trade, quoteLiquidity dec
 		return nil
 	}
 	subjects := []candleKey{{Subject: model.CandleSubjectPool, Key: trade.PoolID}}
-	if !trade.Outlier && !quoteLiquidity.LessThan(processor.options.CandleMinLiquidityUSD) {
+	threshold := processor.options.CandleMinLiquidityUSD
+	if state, ok := processor.pools.get(trade.PoolID); ok && state.Curve {
+		threshold = processor.options.CurveMinLiquidityUSD
+	}
+	if !trade.Outlier && !quoteLiquidity.LessThan(threshold) {
 		subjects = append(subjects, candleKey{
 			Subject: model.CandleSubjectToken, Key: processor.options.Catalog.Canonical(trade.BaseToken),
 		})
@@ -789,9 +798,17 @@ func (processor *Processor) candleSubjects(trade model.Trade, quoteLiquidity dec
 	return subjects
 }
 
-// aggregate adds a priced swap to its candles.
-func (processor *Processor) aggregate(height int64, trade model.Trade, touched map[candleKey]struct{}) {
-	for _, subject := range processor.candleSubjects(trade, processor.quoteLiquidityUSD(trade)) {
+// aggregate adds a priced swap to its candles. migrated holds the states of
+// curves that migrated in this block from before they did, which is the
+// liquidity their trades in this block saw.
+func (processor *Processor) aggregate(height int64, trade model.Trade, migrated map[string]pool, touched map[candleKey]struct{}) {
+	liquidity := processor.quoteLiquidityUSD(trade)
+	if state, ok := migrated[trade.PoolID]; ok {
+		if price, priced := processor.priceOf(trade.QuoteToken); priced {
+			liquidity = reserveUSD(processor.options.Catalog, state, trade.QuoteToken, price.USD)
+		}
+	}
+	for _, subject := range processor.candleSubjects(trade, liquidity) {
 		for _, interval := range processor.options.Intervals {
 			key := candleKey{Subject: subject.Subject, Key: subject.Key, Interval: interval}
 			current, exists := processor.candles.get(key)

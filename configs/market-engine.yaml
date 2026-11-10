@@ -78,9 +78,15 @@ market:
   min_liquidity_usd: 1000
   # A pool's trades join a token's aggregated candles only above this quote reserve value.
   candle_min_liquidity_usd: 10000
+  # Replaces both thresholds for launchpad bonding curves (four.meme, Flap),
+  # whose quote raised starts near zero; 0 lets every curve trade price its
+  # token and join its candles. A migrated curve stops pricing.
+  curve_min_liquidity_usd: 0
   max_hops: 3
   intervals: [1m, 5m, 15m, 1h, 4h, 24h]
-  # Blocks kept revertible beyond the finalized height.
+  # Deepest reorg that can be undone: undo history is pruned through
+  # max(finalized, height - history_depth), so at most this many blocks are
+  # kept. Keep it at or above chainstream-evm's scanner.cache_size.
   history_depth: 256
   # A feed-backed token falls back to its oracle answer when the graph price
   # deviates by more than this fraction.

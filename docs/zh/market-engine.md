@@ -30,6 +30,7 @@ market-engine 每条链一个进程，按 offset 顺序读该链的 topic，把 
 | 常数乘积池（Uniswap V2 一类） | `reserves_after` 之比 | `reserves_after` |
 | 集中流动性池（Uniswap/PancakeSwap V3、Uniswap V4、PancakeSwap Infinity） | `sqrt_price_x96` | tick 表在当前价下实际持有的币量，见下文 |
 | Curve / Balancer 池 | 区块附带的余额快照，见[下文](#curve-与-balancer-池) | 快照中的真实余额 |
+| 发射平台曲线池（four.meme、Flap） | 交易附带的 `pool_state.curve.price`，见[下文](#发射平台曲线池) | 计价币一侧取已募集量，代币一侧取已募集量按曲线价可换的数量 |
 | 其它池子（含暂时的 liquidity-book 池） | swap 成交价 | 无 |
 
 **没有储备的池子只有价格，不能用来传播价格。** 集中流动性池在 tick 表不可用时同样如此。
@@ -111,6 +112,15 @@ Curve 元池会按基础池的虚拟价格报告基础池 LP 代币，Balancer V
 
 相关代码：`internal/app/engine/biz/balances.go`（快照应用、各曲线族的价格与深度、汇率定价）、`selection.go`（定价池比较规则），
 曲线数学来自 oh-my-blockchain 的 `dex/mechanism/{stableswap,weighted,ladder}`。
+
+## 发射平台曲线池
+
+four.meme、Flap 的曲线交易带有交易后的曲线价格和已募集计价币（`pool_state.curve`）。engine 把曲线池当作常数乘积池定价：价格是换算成人类单位的曲线价，
+计价币储备是已募集量，代币储备是已募集量按该价格可换的数量。新曲线几乎没有募集，所以对曲线池用 `curve_min_liquidity_usd`（默认 0）
+同时替代 `min_liquidity_usd` 和 `candle_min_liquidity_usd`，让发射代币从第一笔交易起就有价格和 K 线。曲线迁移后不再参与定价：
+储备被清空，代币改由迁移到的 DEX 池定价。迁移发生在曲线还没有状态时（代币小数位未知）也会写入占位并保留迁移标记，之后补齐小数位回放的交易不会让曲线重新带储备；迁移区块内的曲线交易按迁移前的流动性判断能否进入代币 K 线。
+
+相关代码：`internal/app/engine/biz/pool.go`（`observeCurve`）、`launchpad.go`（阈值与迁移处理）。
 
 ## Chainlink 喂价
 
@@ -222,7 +232,7 @@ PostgreSQL 状态表（位于 `state.postgres.schema`）：
 | --- | --- |
 | `engine_checkpoints` | 每条链一行：Kafka offset、高度、哈希、已裁剪高度 |
 | `engine_state` | 当前状态 `(chain_id, kind, key) -> value JSONB`，kind 为 `pools`、`prices`、`orientations`、`candles`、`decimals`、`oracle`、`balance_pools` 等 |
-| `engine_state_undo` | 每个区块改动过的 key 在该块之前的值；回滚删除 `rollback_to` 以上的行，裁剪删除已最终确定且超出 `history_depth` 的行 |
+| `engine_state_undo` | 每个区块改动过的 key 在该块之前的值；回滚删除 `rollback_to` 以上的行，裁剪删除 `max(finalized, height − history_depth)` 及以下的行 |
 
 计算全部在内存里完成，PostgreSQL 每块只写一次，热路径上从不读取。
 
@@ -243,7 +253,7 @@ go run ./cmd/market-engine -conf configs/market-engine.yaml
 | `candle_min_liquidity_usd` | 10000 | swap 进入代币聚合 K 线所需的 quote 储备 USD 价值 |
 | `max_hops` | 3 | 价格离锚点的最大传播跳数 |
 | `intervals` | `[1m, 5m, 15m, 1h, 4h, 24h]` | K 线周期 |
-| `history_depth` | 256 | 可撤销的最大重组深度 |
+| `history_depth` | 256 | 可撤销的最大重组深度；撤销历史裁剪到 `max(finalized, height − history_depth)`，不应小于上游 chainstream-evm 的 `scanner.cache_size` |
 | `oracle_deviation` | 0.02 | 图价格与预言机报价允许的偏差 |
 | `outlier_deviation` | 0.5 | 异常交易阈值，-1 关闭 |
 | `late_trade_blocks` | 7200 | 挂起交易最多保留的块数，-1 关闭挂起 |

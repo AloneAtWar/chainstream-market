@@ -1,0 +1,34 @@
+syntax = "proto3";
+
+package app.launchpad.conf;
+
+option go_package = "github.com/AloneAtWar/chainstream-market/internal/app/launchpad/conf;conf";
+
+import "pkg/config/common.proto";
+
+// Bootstrap is market-launchpad's configuration; configs/market-launchpad.yaml
+// documents every setting. Durations may be written as Go durations such as
+// 500ms or 5m.
+message Bootstrap {
+  pkg.config.Source source = 1;
+  pkg.config.Kafka kafka = 2;
+  // postgres is the database the launchpad tables live in.
+  pkg.config.Postgres postgres = 3;
+  pkg.config.Metrics metrics = 4;
+  repeated pkg.config.Chain chains = 5;
+  Launchpad launchpad = 6;
+}
+
+// Launchpad tunes how market-launchpad follows bonding-curve tokens.
+message Launchpad {
+  // history_depth is the deepest reorg that can be undone: undo history is
+  // pruned through max(finalized, height - history_depth), so at most this
+  // many blocks are kept. It should not be below chainstream-evm's
+  // scanner.cache_size.
+  // history_depth 是可撤销的最大重组深度，撤销历史按 max(finalized, height−history_depth)
+  // 裁剪，最多保留这么多个区块；不应小于上游 chainstream-evm 的 scanner.cache_size。
+  int64 history_depth = 1;
+  // protocols are the launchpad protocols whose trades count as curve
+  // trades even when a trade carries no curve state.
+  repeated string protocols = 2;
+}

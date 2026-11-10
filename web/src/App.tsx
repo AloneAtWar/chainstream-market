@@ -1,6 +1,7 @@
 import { Navigate, Route, Routes, useParams } from "react-router-dom";
 import { Header } from "./components/Header";
 import { chainById, DEFAULT_CHAIN } from "./lib/chains";
+import { LaunchpadPage } from "./pages/LaunchpadPage";
 import { PoolPage } from "./pages/PoolPage";
 import { SmartMoneyPage } from "./pages/SmartMoneyPage";
 import { TokenListPage } from "./pages/TokenListPage";
@@ -25,6 +26,7 @@ function ChainRoutes() {
       <main>
         <Routes>
           <Route index element={<TokenListPage chain={chain} />} />
+          <Route path="launchpad" element={<LaunchpadPage chain={chain} />} />
           <Route path="token/:address" element={<TokenPage chain={chain} />} />
           <Route path="pool/:pool" element={<PoolPage chain={chain} />} />
           <Route path="smart-money" element={<SmartMoneyPage chain={chain} />} />

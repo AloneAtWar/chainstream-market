@@ -7,6 +7,7 @@ import {
   formatPercent,
   formatPnl,
   formatPrice,
+  formatProgress,
   formatUsd,
   scaleRaw,
   shortAddress,
@@ -89,5 +90,15 @@ describe("wallet stats", () => {
     expect(formatPnl("1234.5")).toBe("+$1.23K");
     expect(formatPnl("-350")).toBe("-$350");
     expect(formatPnl("0")).toBe("$0");
+  });
+});
+
+describe("formatProgress", () => {
+  it("writes a clamped percentage that only reads 100% when full", () => {
+    expect(formatProgress("0.4567")).toBe("45.7%");
+    expect(formatProgress("1")).toBe("100.0%");
+    expect(formatProgress("0.99999")).toBe("99.9%");
+    expect(formatProgress("1.2")).toBe("100.0%");
+    expect(formatProgress(null)).toBe("—");
   });
 });

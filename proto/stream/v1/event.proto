@@ -66,6 +66,53 @@ message BlockEvent {
   // this block's hash, after all of its events. Consumers replace whatever
   // they kept for each pool.
   repeated PoolBalanceSnapshot pool_balances = 19;
+  // launchpad_events are the block's bonding-curve lifecycle facts (four.meme,
+  // Flap): token launches, curves that sold out, and curves whose liquidity
+  // moved to a DEX pool. Curve trades are ordinary trades whose pool_state
+  // carries the curve.
+  repeated LaunchpadEvent launchpad_events = 20;
+}
+
+// LaunchpadEventType is a bonding curve's lifecycle step.
+enum LaunchpadEventType {
+  LAUNCHPAD_EVENT_TYPE_UNSPECIFIED = 0;
+  // CREATED launches a token on its curve.
+  LAUNCHPAD_EVENT_TYPE_CREATED = 1;
+  // COMPLETED marks a curve that sold out and stopped trading.
+  LAUNCHPAD_EVENT_TYPE_COMPLETED = 2;
+  // MIGRATED moves the curve's tokens and raised quote into a DEX pool.
+  LAUNCHPAD_EVENT_TYPE_MIGRATED = 3;
+}
+
+// LaunchpadEvent is one lifecycle step of a launchpad bonding curve. The
+// curve's pool_id is "<manager>:<token>", and its pool fact carries the curve
+// parameters as metadata. Integers are decimal strings.
+message LaunchpadEvent {
+  LaunchpadEventType type = 1;
+  string protocol = 2;
+  string pool_id = 3;
+  // manager is the launchpad contract that runs the curve.
+  string manager = 4;
+  string token = 5;
+  // quote is the pricing quote token: the wrapped native token for curves
+  // quoted in the native coin.
+  string quote = 6;
+  string transaction_hash = 7;
+  int64 transaction_index = 8;
+  uint32 log_index = 9;
+  // trader is the transaction sender (EOA).
+  string trader = 10;
+  // creator, name, symbol and meta_uri are set on CREATED. meta_uri is the
+  // platform's metadata reference (four.meme request ID, Flap IPFS CID).
+  string creator = 11;
+  string name = 12;
+  string symbol = 13;
+  string meta_uri = 14;
+  // target_pool_id, base_amount and quote_amount are set on MIGRATED.
+  // target_pool_id is empty when the event does not identify the pool.
+  string target_pool_id = 15;
+  string base_amount = 16;
+  string quote_amount = 17;
 }
 
 // PoolBalanceSnapshot is a multi-token pool's real balances and curve
@@ -229,6 +276,21 @@ message PoolState {
   // active_bin_id is the liquidity-book active bin; its price also needs the
   // pool's bin step from pool metadata.
   optional uint32 active_bin_id = 5;
+  // curve is set on launchpad bonding-curve trades.
+  CurveState curve = 6;
+}
+
+// CurveState is a launchpad bonding curve right after a trade. Values are
+// decimal strings; empty values are unavailable.
+message CurveState {
+  // progress is the share of the curve filled, scaled by 1e18 (1e18 = 100%).
+  string progress = 1;
+  // base_remaining is the token amount still for sale on the curve.
+  string base_remaining = 2;
+  // quote_raised is the quote amount the curve holds.
+  string quote_raised = 3;
+  // price is raw quote units per 1e18 raw token units.
+  string price = 4;
 }
 
 message TokenTransfer {

@@ -36,6 +36,7 @@ type Server struct {
 	liquidity LiquidityReader
 	wallets   WalletReader
 	labels    live.LabelSource
+	launchpad LaunchpadReader
 	live      http.Handler
 	intervals map[string]time.Duration
 	logger    *slog.Logger
@@ -95,6 +96,10 @@ func (server *Server) Handler() http.Handler {
 		mux.HandleFunc("GET /v1/chains/{chain}/wallets/{wallet}/positions", server.walletPositions)
 		mux.HandleFunc("GET /v1/chains/{chain}/wallets/{wallet}/trades", server.walletTrades)
 		mux.HandleFunc("GET /v1/chains/{chain}/tokens/{token}/traders", server.tokenTraders)
+	}
+	if server.launchpad != nil {
+		mux.HandleFunc("GET /v1/chains/{chain}/launchpad/tokens", server.launchpadList)
+		mux.HandleFunc("GET /v1/chains/{chain}/launchpad/tokens/{token}", server.launchpadDetail)
 	}
 	if server.live != nil {
 		mux.Handle("GET /v1/stream", server.live)

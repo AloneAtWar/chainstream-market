@@ -134,6 +134,10 @@ services:
     <<: *market
     command: ["/usr/local/bin/market-registry", "-conf", "/etc/chainstream-market/market-registry.yaml"]
 
+  market-launchpad:
+    <<: *market
+    command: ["/usr/local/bin/market-launchpad", "-conf", "/etc/chainstream-market/market-launchpad.yaml"]
+
   market-rankings:
     <<: *market
     command: ["/usr/local/bin/market-rankings", "-conf", "/etc/chainstream-market/market-rankings.yaml"]

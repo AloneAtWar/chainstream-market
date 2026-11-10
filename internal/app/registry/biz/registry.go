@@ -43,8 +43,11 @@ type RegistryRepo interface {
 type Options struct {
 	ChainID uint64
 	Repo    RegistryRepo
-	// HistoryDepth is how many blocks of undo history to keep in addition
-	// to everything above the finalized height.
+	// HistoryDepth is the deepest reorg that can be undone: undo history is
+	// pruned through chainsync.PruneThrough, max(finalized, height-depth).
+	//
+	// HistoryDepth 是可撤销的最大重组深度：撤销历史按 chainsync.PruneThrough
+	// 即 max(finalized, height−depth) 裁剪，最多保留 depth 个区块。
 	HistoryDepth int64
 	Logger       *slog.Logger
 }
@@ -112,10 +115,7 @@ func (registry *Registry) Apply(_ context.Context, block *streamv1.BlockEvent) e
 		change.Pools = append(change.Pools, pool)
 	}
 
-	through := block.GetFinalizedHeight()
-	if byDepth := height - registry.options.HistoryDepth; byDepth > through {
-		through = byDepth
-	}
+	through := chainsync.PruneThrough(height, block.GetFinalizedHeight(), registry.options.HistoryDepth)
 	registry.prunedThrough = max(registry.prunedThrough, through)
 	registry.pending = change
 	return nil

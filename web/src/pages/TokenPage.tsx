@@ -2,11 +2,11 @@ import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 import { useParams, useSearchParams } from "react-router-dom";
 import { CandleChart } from "../components/CandleChart";
-import { Address, CopyButton, Info, Stat, Tabs, TokenAvatar } from "../components/common";
+import { Address, CopyButton, Info, ProgressBar, Stat, Tabs, TokenAvatar } from "../components/common";
 import { HoldersTable, PoolsTable, TransfersTable } from "../components/tables";
 import { TradesTable } from "../components/TradesTable";
 import { TradersTable } from "../components/wallets";
-import { api } from "../lib/api";
+import { api, type LaunchpadToken } from "../lib/api";
 import { canonicalToken, INTERVALS, type Chain, type Interval } from "../lib/chains";
 import {
   changeClass,
@@ -15,10 +15,53 @@ import {
   formatCompact,
   formatInteger,
   formatPrice,
+  formatProgress,
   formatUsd,
   shortAddress,
 } from "../lib/format";
 import { useLiveCandles, useLiveTrades, useNow, useTokenMeta } from "../lib/hooks";
+import { formatRaised, metaLink, protocolLabel } from "../lib/launchpad";
+
+const LAUNCHPAD_STATUS = { bonding: "发射中", completed: "已打满，待迁移", migrated: "已迁移" } as const;
+
+// LaunchpadInfo shows a launchpad token's bonding curve: its progress, what
+// it raised and where it migrated.
+function LaunchpadInfo({ chain, token, now }: { chain: Chain; token: LaunchpadToken; now: number }) {
+  const meta = metaLink(token.meta_uri);
+  return (
+    <section className="card info launchpad-info">
+      <h3>
+        发射进度 <span className="badge">{protocolLabel(token.protocol)}</span>
+      </h3>
+      <div className="launchpad-progress big">
+        <ProgressBar fraction={token.progress} done={token.status !== "bonding"} />
+        <span className="mono">{formatProgress(token.progress)}</span>
+      </div>
+      <dl>
+        <Info label="状态" value={LAUNCHPAD_STATUS[token.status]} />
+        <Info label="已募集" value={formatRaised(chain, token)} />
+        <Info label="曲线成交" value={`${formatInteger(token.trades)}（买 ${formatInteger(token.buys)} / 卖 ${formatInteger(token.sells)}）`} />
+        <Info
+          label={token.launch_seen ? "发射" : "首次出现"}
+          value={`${formatAge(token.launch_time, now)} 前 · #${formatInteger(token.launch_height)}`}
+        />
+        {token.creator && <Info label="创建者" value={<Address chain={chain} value={token.creator} kind="holder" />} />}
+        {token.migrated_time !== null && <Info label="迁移" value={`${formatAge(token.migrated_time, now)} 前`} />}
+        {token.target_pool_id && <Info label="迁移池" value={<Address chain={chain} value={token.target_pool_id} kind="pool" />} />}
+        {meta && (
+          <Info
+            label="元数据"
+            value={
+              <a href={meta} target="_blank" rel="noreferrer">
+                打开 ↗
+              </a>
+            }
+          />
+        )}
+      </dl>
+    </section>
+  );
+}
 
 type Panel = "trades" | "traders" | "holders" | "pools" | "transfers";
 
@@ -53,6 +96,12 @@ export function TokenPage({ chain }: { chain: Chain }) {
     queryFn: () => api.price(chain.id, market),
     refetchInterval: 15_000,
   });
+  const launchpad = useQuery({
+    queryKey: ["launchpad-token", chain.id, address],
+    queryFn: () => api.launchpadToken(chain.id, address),
+    // A curve moves fast until it migrates; then it no longer changes.
+    refetchInterval: (query) => (query.state.data?.status === "migrated" ? false : 5_000),
+  });
   const candles = useLiveCandles(chain.id, "token", market, interval);
   const trades = useLiveTrades(chain.id, "token", market);
 
@@ -61,8 +110,8 @@ export function TokenPage({ chain }: { chain: Chain }) {
   const currentPrice =
     lastSwap && (!price.data || lastSwap.block_height >= price.data.block_height) ? lastSwap.price_usd : price.data?.price_usd;
 
-  const symbol = meta.data?.symbol ?? stats.data?.symbol ?? null;
-  const name = meta.data?.name ?? stats.data?.name ?? null;
+  const symbol = meta.data?.symbol ?? stats.data?.symbol ?? launchpad.data?.symbol ?? null;
+  const name = meta.data?.name ?? stats.data?.name ?? launchpad.data?.name ?? null;
   const ranking = stats.data;
 
   return (
@@ -134,6 +183,7 @@ export function TokenPage({ chain }: { chain: Chain }) {
         </div>
 
         <aside className="token-side">
+          {launchpad.data && <LaunchpadInfo chain={chain} token={launchpad.data} now={now} />}
           <section className="card info">
             <h3>代币信息</h3>
             {meta.data === null && <p className="muted">market-registry 还没有收录这个代币。</p>}
