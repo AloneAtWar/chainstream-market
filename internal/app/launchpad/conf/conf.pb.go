@@ -113,8 +113,12 @@ func (x *Bootstrap) GetLaunchpad() *Launchpad {
 // Launchpad tunes how market-launchpad follows bonding-curve tokens.
 type Launchpad struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// history_depth is how many recent blocks stay revertible in addition to
-	// everything above the finalized height.
+	// history_depth is the deepest reorg that can be undone: undo history is
+	// pruned through max(finalized, height - history_depth), so at most this
+	// many blocks are kept. It should not be below chainstream-evm's
+	// scanner.cache_size.
+	// history_depth 是可撤销的最大重组深度，撤销历史按 max(finalized, height−history_depth)
+	// 裁剪，最多保留这么多个区块；不应小于上游 chainstream-evm 的 scanner.cache_size。
 	HistoryDepth int64 `protobuf:"varint,1,opt,name=history_depth,json=historyDepth,proto3" json:"history_depth,omitempty"`
 	// protocols are the launchpad protocols whose trades count as curve
 	// trades even when a trade carries no curve state.

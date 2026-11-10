@@ -59,6 +59,9 @@ var MarketSchema = []string{
 	// scanning every granule of a height-ordered table.
 	`ALTER TABLE trades ADD INDEX IF NOT EXISTS trades_base_token base_token TYPE bloom_filter GRANULARITY 4`,
 	`ALTER TABLE trades ADD INDEX IF NOT EXISTS trades_pool_id pool_id TYPE bloom_filter GRANULARITY 4`,
+	// market-wallet fills gaps by revision_height, which a late trade has far
+	// above its block_height.
+	`ALTER TABLE trades ADD INDEX IF NOT EXISTS trades_revision revision_height TYPE minmax GRANULARITY 4`,
 	// A retention TTL drops a month's parts whole once all their rows have
 	// expired, instead of rewriting parts that are partly expired.
 	`ALTER TABLE trades MODIFY SETTING ttl_only_drop_parts = 1`,

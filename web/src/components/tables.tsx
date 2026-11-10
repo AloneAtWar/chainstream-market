@@ -5,6 +5,7 @@ import type { Chain } from "../lib/chains";
 import { formatAge, formatCompact, formatInteger, scaleRaw, shortAddress } from "../lib/format";
 import { useNow, useTokenMeta, useTokenSymbol } from "../lib/hooks";
 import { Address, Status } from "./common";
+import { WalletLabels } from "./wallets";
 
 export function HoldersTable({ chain, token }: { chain: Chain; token: string }) {
   const holders = useQuery({
@@ -40,6 +41,7 @@ export function HoldersTable({ chain, token }: { chain: Chain; token: string }) 
                 <td className="rank muted">{index + 1}</td>
                 <td>
                   <Address chain={chain} value={row.holder} kind="holder" />
+                  <WalletLabels labels={row.labels} compact />
                 </td>
                 <td className="num mono" title={amount}>
                   {formatCompact(amount)}

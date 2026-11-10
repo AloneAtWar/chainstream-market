@@ -23,6 +23,8 @@ type holderResponse struct {
 	BalanceRaw string `json:"balance_raw"`
 	// Balance is BalanceRaw in whole tokens, present when decimals are known.
 	Balance string `json:"balance,omitempty"`
+	// Labels 是持有人的钱包标签，如 smart_money、bot；没有时省略。
+	Labels []string `json:"labels,omitempty"`
 }
 
 type holdersResponse struct {
@@ -78,7 +80,9 @@ func (server *Server) tokenHolders(writer http.ResponseWriter, request *http.Req
 		}
 	}
 	for index, holding := range top {
-		response.Holders[index] = holderResponse{Holder: holding.Holder, BalanceRaw: holding.Balance.String()}
+		response.Holders[index] = holderResponse{
+			Holder: holding.Holder, BalanceRaw: holding.Balance.String(), Labels: server.walletLabels(chain, holding.Holder),
+		}
 		if response.Decimals != nil {
 			response.Holders[index].Balance = decimal.NewFromBigInt(holding.Balance, -int32(*response.Decimals)).String()
 		}

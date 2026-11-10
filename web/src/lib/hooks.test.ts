@@ -39,7 +39,7 @@ vi.mock("./live", async (importOriginal) => ({ ...(await importOriginal<typeof i
 const fakeApi = vi.hoisted(() => ({ candles: vi.fn(), trades: vi.fn() }));
 vi.mock("./api", () => ({ api: fakeApi }));
 
-const { useLiveCandles, useLiveTrades, CANDLE_PAGE } = await import("./hooks");
+const { useLiveCandles, useLiveFeed, useLiveTrades, CANDLE_PAGE } = await import("./hooks");
 
 function candle(openTime: number, close: string): Candle {
   return { open_time: openTime, open: close, high: close, low: close, close, volume_base: "1", volume_usd: "1", trades: 1 };
@@ -197,5 +197,20 @@ describe("useLiveTrades", () => {
     act(() => sendChain({ type: "revert", chain_id: 56, rollback_to: 10 }));
     expect(result.current.data).toHaveLength(1);
     expect(fakeApi.trades).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("useLiveFeed", () => {
+  it("collects pushed trades and drops reverted ones", () => {
+    const channel = "trades:56:label:smart_money";
+    const { result } = renderHook(() => useLiveFeed(channel));
+    expect(result.current).toEqual([]);
+    act(() => sendChannel({ type: "trades", channel, height: 10, trades: [trade(10, 10)] }));
+    act(() => sendChannel({ type: "trades", channel, height: 11, trades: [trade(11, 11)] }));
+    expect(result.current.map((t) => t.block_height)).toEqual([11, 10]);
+    act(() => sendChain({ type: "revert", chain_id: 1, rollback_to: 10 }));
+    expect(result.current).toHaveLength(2);
+    act(() => sendChain({ type: "revert", chain_id: 56, rollback_to: 10 }));
+    expect(result.current.map((t) => t.block_height)).toEqual([10]);
   });
 });

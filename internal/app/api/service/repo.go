@@ -56,6 +56,20 @@ type LiquidityReader interface {
 	PoolTickTable(ctx context.Context, chainID uint64, poolID string) (model.PoolTickTable, bool, error)
 }
 
+// WalletReader 读 market-wallet 的持仓、流水、统计和标签。
+type WalletReader interface {
+	// WalletStats 返回最近一次汇总的钱包统计，按 query.Sort 降序；还没有汇总时为空。
+	WalletStats(ctx context.Context, query model.WalletStatsQuery) ([]model.WalletStats, error)
+	// Positions 返回一个钱包（按最近交易时间倒序）或一个代币（按已实现盈亏降序）的持仓。
+	Positions(ctx context.Context, query model.PositionQuery) ([]model.PricedPosition, error)
+	// WalletTrades 返回钱包的账本流水，最新的在前。
+	WalletTrades(ctx context.Context, query model.WalletTradeQuery) ([]model.WalletTrade, error)
+	// LabeledWallets 返回带 label 标签的全部钱包。
+	LabeledWallets(ctx context.Context, chainID uint64, label string) ([]string, error)
+	// WalletLabels 返回 wallets 中各钱包的标签。
+	WalletLabels(ctx context.Context, chainID uint64, wallets []string) (map[string][]string, error)
+}
+
 // LaunchpadReader reads market-launchpad's launchpad tokens.
 //
 // LaunchpadReader 读取 market-launchpad 的发射平台代币。

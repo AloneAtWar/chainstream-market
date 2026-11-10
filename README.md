@@ -1,6 +1,6 @@
 # chainstream-market
 
-Market data services built on the [chainstream-evm](https://github.com/AloneAtWar/chainstream-evm) block stream: trade orientation, USD pricing, candles, holders and raw transfers for ETH, BSC, Base and Robinhood Chain.
+Market data services built on the [chainstream-evm](https://github.com/AloneAtWar/chainstream-evm) block stream: trade orientation, USD pricing, candles, holders, raw transfers and wallet PnL with smart money labels for ETH, BSC, Base and Robinhood Chain.
 
 中文文档：[docs/zh](docs/zh/README.md)
 
@@ -16,7 +16,8 @@ Market data services built on the [chainstream-evm](https://github.com/AloneAtWa
 | `cmd/market-registry` | Consumes the same chain topics and keeps the latest token and pool metadata in PostgreSQL. |
 | `cmd/market-launchpad` | Consumes the same chain topics and follows launchpad tokens in PostgreSQL, for the new / bonding / migrated lists: bonding curves (four.meme, Flap, Pons) from launch to DEX migration, and direct launches (Bankr, Long.xyz, Clanker, pools.trade) on their DEX pool. |
 | `cmd/market-rankings` | Periodically rolls prices, 24h activity, holder counts and metadata into the PostgreSQL token rankings. |
-| `internal/app/<component>` | One component per command, each with its own configuration and layers: `engine` (market-engine), `api` (market-api), `holder` (holder-indexer), `loader` (ch-loader), `registry` (market-registry), `launchpad` (market-launchpad) and `rankings` (market-rankings). See [Components](#components). |
+| `cmd/market-wallet` | Follows market-engine's live topics and keeps a moving weighted average cost ledger per wallet and token, wallet stats over 7/30/90 days, and smart money and bot labels. See [market-wallet](#market-wallet). |
+| `internal/app/<component>` | One component per command, each with its own configuration and layers: `engine` (market-engine), `api` (market-api), `holder` (holder-indexer), `loader` (ch-loader), `registry` (market-registry), `launchpad` (market-launchpad), `rankings` (market-rankings) and `wallet` (market-wallet). See [Components](#components). |
 | `internal/pkg/config` | The config loader, and the sections more than one component reads in `common.proto`: the chain source, Kafka, the databases, live push, metrics and the chains. |
 | `internal/pkg/model` | The data the components exchange: block output (oriented trades, token prices, candles), holder balances, token and pool metadata, raw facts and rankings. |
 | `internal/pkg/chdb` | The shared ClickHouse connection, the DDL of every table in it, their retention TTLs, and the row models and writes of the tables more than one component touches. |
@@ -30,7 +31,7 @@ Market data services built on the [chainstream-evm](https://github.com/AloneAtWa
 | `internal/pkg/live` | Realtime push: market-engine's live topic publisher and market-api's WebSocket hub, over a Kafka or Redis Pub/Sub transport. |
 | `internal/pkg/transport` | Kratos servers every command shares: HTTP, and a Runner for long-lived work. |
 | `internal/pkg/metrics` | Prometheus metrics every command serves at `/metrics`. |
-| `web/` | The frontend: token rankings, token and pool pages with live candles and trades, holders and transfers. See [Web frontend](#web-frontend). |
+| `web/` | The frontend: token rankings, token and pool pages with live candles and trades, holders and transfers, the smart money board and wallet profiles. See [Web frontend](#web-frontend). |
 | `deploy/` | docker-compose stack: infrastructure, chainstream-evm, every service, Prometheus and Grafana. |
 
 ## market-engine
@@ -96,7 +97,7 @@ The PostgreSQL store creates these tables in `state.postgres.schema`:
 | --- | --- |
 | `engine_checkpoints` | One row per chain: Kafka offset, height, hash and the pruned height. |
 | `engine_state` | Current state as `(chain_id, kind, key) -> value JSONB`, where kind is `pools`, `prices`, `orientations`, `candles`, `decimals` or `oracle`. |
-| `engine_state_undo` | For each key a block changed, the value it held before that block. A revert deletes rows above `rollback_to`; pruning deletes rows at or below the finalized height and `history_depth`. |
+| `engine_state_undo` | For each key a block changed, the value it held before that block. A revert deletes rows above `rollback_to`; pruning deletes rows at or below `max(finalized, height - history_depth)`. |
 
 Every service that uses PostgreSQL creates all the tables it might need when it starts, in one transaction that holds an advisory lock keyed by the schema name. Several services can therefore start together on an empty schema: they create the tables one after another instead of failing with a duplicate key error.
 
@@ -126,6 +127,11 @@ go run ./cmd/market-api -conf configs/market-api.yaml   # needs clickhouse.addr 
 | `GET /v1/chains/{chain}/launchpad/tokens/{token}` | One launchpad token's curve: status, progress, quote raised, trade counts, launch and migration. 404 when it is not a launchpad token. |
 | `GET /v1/chains/{chain}/tokens/{token}/transfers` | The token's ERC-20 transfers from ch-loader, newest first. `holder` narrows them to one party. |
 | `GET /v1/chains/{chain}/holders/{holder}/transfers` | Transfers to or from the holder across tokens, newest first. `token` narrows them to one token. |
+| `GET /v1/chains/{chain}/wallets/{wallet}` | A wallet's labels and its stats over each window from market-wallet, see [market-wallet](#market-wallet). |
+| `GET /v1/chains/{chain}/wallets/{wallet}/positions` | The wallet's positions, most recently traded first, with average cost, realized and unrealized PnL. `status=open` or `closed` filters them. |
+| `GET /v1/chains/{chain}/wallets/{wallet}/trades` | The wallet's ledger trades, newest first: each trade's event (open, add, reduce, close, untracked) and realized PnL. Accepts `token` and `limit`; a full page returns `next: {before_height, before_log_index, before_operation_index}`, which continues within a block when passed back. |
+| `GET /v1/chains/{chain}/wallets?window=30&label=smart_money` | The wallet leaderboard of one window (days). `sort` is `realized` (default), `winrate`, `roi` or `volume`; `label` narrows it to wallets with that label. |
+| `GET /v1/chains/{chain}/tokens/{token}/traders` | The token's traders by realized PnL, with their labels. |
 | `GET /v1/stream` | WebSocket stream of live trades and candles, see [Live push](#live-push). Served only with `live.enabled`. |
 | `GET /healthz` | 204 when the process is up. |
 
@@ -133,6 +139,7 @@ go run ./cmd/market-api -conf configs/market-api.yaml   # needs clickhouse.addr 
 - Candles accept `from` and `to` (unix seconds, `from <= open_time < to`) and `limit`. `interval` must be one of `api.intervals`, which must be among market-engine's `market.intervals`. Buckets with no trades are omitted, and each returned bucket opens at the previous close.
 - Trades accept `limit` and `before_height` for paging backwards.
 - Transfers accept `limit`, `before_height` and `before_log_index`. A full page returns `next: {before_height, before_log_index}`; pass both back to continue without skipping the rest of a block. Amounts are raw token units in `amount_raw`, and the native pseudo-address is not mapped, since only ERC-20 transfers are stored.
+- Trades carry `trader_labels` and holders `labels` (such as `smart_money` or `bot`) when market-wallet labeled the wallet; market-api reloads the labels every minute.
 - Decimal values are returned as strings.
 
 Queries go straight to ClickHouse, which is fast enough at local scale. Add a Redis hot view only if latency calls for it.
@@ -164,6 +171,8 @@ chain topic -> market-engine -> {topic}-live (Kafka or Redis) -> market-api hub 
 | `trades:<chain>:token:<token>` | Trades with the token as base, like `/tokens/{token}/trades`. |
 | `candles:<chain>:pool:<pool>:<interval>` | Pool candles. `interval` is one of `api.intervals`. |
 | `candles:<chain>:token:<token>:<interval>` | The token's aggregated candles. |
+| `trades:<chain>:wallet:<wallet>` | Trades by one wallet. |
+| `trades:<chain>:label:<label>` | Trades by every wallet with the label, such as `trades:56:label:smart_money`: smart money monitoring. |
 
 Addresses are lowercased and token aliases, such as the native pseudo-address, map to the wrapped token. The `subscribed` reply lists the channels as the server spells them, and messages use that spelling. A connection holds at most `live.max_subscriptions` channels; an invalid request gets an `error` message and changes nothing.
 
@@ -215,7 +224,7 @@ market-registry reads each chain topic on its own checkpoint and keeps the lates
 - **Tokens.** One row per address with standard, recognition, `metadata_complete`, the published `asset.Info` JSON, and the name, symbol and decimals read from it. ERC-20 fields only count when chainstream-evm marked them known. A `created` fact, or any fact with a deployment, sets `created` and keeps the deployment.
 - **Pools.** One row per pool ID with protocol, DEX address, tokens, source height and time, and the protocol metadata JSON. A fact without metadata keeps the stored metadata. A GIN index on `tokens` serves the pools of a token.
 - **Newer wins.** A fact replaces stored metadata unless the stored metadata was read at a higher source height, so a late observation of older metadata is ignored. `created` and the deployment are kept regardless.
-- **Reorgs.** Before a block first changes a row, the row (or its absence) is saved in `registry_undo`. A revert restores the oldest saved image above `rollback_to`. Undo history is pruned at the finalized height and `registry.history_depth`.
+- **Reorgs.** Before a block first changes a row, the row (or its absence) is saved in `registry_undo`. A revert restores the oldest saved image above `rollback_to`. Undo history is pruned through `max(finalized, height - registry.history_depth)`, so at most `history_depth` blocks are kept.
 - **Cleaning.** Metadata that is not valid JSON is dropped. NUL characters, which PostgreSQL rejects and token names can contain, are stripped.
 
 | Table | Contents |
@@ -254,6 +263,42 @@ A token is ranked once it has a price or traded in the window. Activity, holders
 
 Name, symbol and decimals come from market-registry. The response includes `refreshed_at`, the unix time of the last refresh.
 
+## market-wallet
+
+```sh
+go run ./cmd/market-wallet -conf configs/market-wallet.yaml   # needs kafka, clickhouse and postgres
+```
+
+market-wallet answers "who is making money on what": a cost ledger per wallet and token, wallet stats over 7, 30 and 90 days, and rule labels such as `smart_money`. It needs market-engine with `live.enabled`, `live.driver: kafka` and the ClickHouse store.
+
+```
+{topic}-live -> market-wallet -> wallet_positions (PostgreSQL) + wallet_trades (ClickHouse)
+                    every 15m -> wallet_token_daily -> wallet_stats -> wallet_labels
+```
+
+**Ledger.** Each priced, non-outlier buy or sell of a `trader` (the transaction sender) moves its position with the moving weighted average cost method. A buy adds its amount and USD value. A sell takes the costed part of its amount at the average cost, so the average does not move: realized PnL is that part's share of the proceeds less its cost. Tokens that came in by transfer or airdrop have no cost; selling them counts as volume but not as PnL (event `untracked`). A sell that leaves less than `wallet.close_ratio` of the position closes it. Win rate is per sell: the share of PnL-counted sells that made money.
+
+**Following the live topic.** market-engine skips blocks older than `live.max_lag` on the live topic, so whenever a block arrives after a gap, market-wallet fills the missing heights from market-engine's `trades` table in ClickHouse, by `revision_height`, before applying it. A first start reads the live topic from its end and replays `wallet.history` (at most 90 days) from ClickHouse the same way. A record of a block already applied is skipped; a missing part of a block stops the follower. Every block record carries `parts`, the number of records the block spans: when the next block arrives while the previous one is still missing parts (market-engine crashed halfway through publishing it and later skipped it as too old), market-wallet reverts that block and fills it from ClickHouse. Every write records each position's state before the block first changed it in `wallet_undo`, so a `revert` restores the positions and deletes the reverted `wallet_trades`; undo history is pruned through `max(finalized, height - wallet.history_depth)` like the other services, so at most `history_depth` blocks are kept; heights here are revision heights, so a late trade is reverted with the block that wrote it. A revert below the pruned history stops the follower with `ErrReorgTooDeep`, so keep `wallet.history_depth` at or above chainstream-evm's `scanner.cache_size`. Ledger trades are written to ClickHouse before the PostgreSQL transaction that commits the positions and the checkpoint; a restart deletes the trades above the checkpoint. Close to the head every block commits at once; while catching up, blocks are batched up to `wallet.flush_rows` trades or `wallet.flush_interval`.
+
+**Stats and labels.** Every `wallet.stats.refresh_interval`, market-wallet rebuilds the changed days of `wallet_token_daily` from `wallet_trades` (the day before the previous refresh's newest trade, the earliest day of trades deleted since it started, and the earliest day of trades written at or above its highest apply height, which catches later parts of the same block), writes `wallet_stats` for each window (counted back from the day of the newest trade, not the clock) as a new version, records the version in `wallet_refreshes`, and recomputes the rule labels:
+
+- `smart_money`: over `smart_money.window_days` (30), realized PnL ≥ $5,000, win rate ≥ 50%, at least 10 tokens traded, at most 30% of them lost by more than half, and not a bot; the top 1,000 by realized PnL.
+- `bot`: over `bot.window_days` (7), at least 2,000 trades, or at least 10 closes of which 30% were opened and closed within `fast_close_seconds`.
+
+Rule labels no longer met are removed; labels with another `source` are left alone. Every threshold is in the config.
+
+| Table | Contents |
+| --- | --- |
+| `wallet_positions` (PostgreSQL) | `(chain_id, wallet, token)`: quantity, remaining cost, realized PnL, volume and counts, first buy and current holding start. |
+| `wallet_undo`, `wallet_checkpoints` (PostgreSQL) | Revert history and the follower's position: live topic offset, height, block part and the block's part count. |
+| `wallet_pending_invalidations` (PostgreSQL) | The range of ledger trades about to be deleted, kept until it is written to `wallet_invalidations`, so a crash between the two is caught up on the next start. |
+| `wallet_labels` (PostgreSQL) | `(chain_id, wallet, label)` with `source` (`rule` for market-wallet's) and since when. |
+| `wallet_trades` (ClickHouse) | Every ledger trade with its event, realized PnL and hold time, ordered by wallet and time; aged out after `wallet.trades_days`. |
+| `wallet_token_daily`, `wallet_stats`, `wallet_refreshes` (ClickHouse) | The daily rollup, the stats per window with one partition per version, and the refreshes; market-api reads the latest version, and after publishing one market-wallet drops all but it and the previous version. |
+| `wallet_invalidations` (ClickHouse) | Written after a revert or restart deletes ledger trades: the earliest trade day they touched, which the next refresh rebuilds from. |
+
+market-api serves the ledger under `/v1/chains/{chain}/wallets` and `/tokens/{token}/traders`, adds labels to trades and holders, and streams trades by wallet or by label, see [market-api](#market-api) and [Live push](#live-push). Funding-source clustering, KOL lists and watchlists are not built yet.
+
 ## market-launchpad
 
 ```sh
@@ -267,7 +312,7 @@ market-launchpad reads each chain topic on its own checkpoint and follows launch
 - **Direct launches.** A `CREATED` with `direct` names the token's trading pool; that pool's swaps count as the token's trades (taking the token out of the pool is a buy), from the launch block on and again after a restart. A direct launch never completes or migrates, so it stays `bonding`. Its progress is computed when read: through its launch window (`launch_start` to `launch_end`, the Long.xyz epoch) when it has one, otherwise its fully diluted value (market-rankings' USD price times the launch pool's `total_supply`) over the protocol's target in market-api's `api.launchpad` ($69k by default, $50k for pools.trade), capped at 100%. Until the token has a price, decimals and a known supply its progress is null.
 - **Launches seen late.** A token first seen trading, because its launch predates the topic, gets that block as an approximate launch with `launch_seen` false, and never enters the new list.
 - **Time.** The list windows count back from the newest block time applied (`launchpad_heads`), not the wall clock, so a replay or a lagging consumer lists what the chain showed at its head.
-- **Reorgs.** Before a block first changes a row, the row (or its absence) is saved in `launchpad_undo`, restored like registry rows. Undo history keeps the latest `launchpad.history_depth` blocks and every block above the finalized height, whichever reaches further back; with no finalized height it keeps the depth. A commit that only moves the checkpoint (a block chainsync skipped as already handled) leaves the rows and the head alone.
+- **Reorgs.** Before a block first changes a row, the row (or its absence) is saved in `launchpad_undo`, restored like registry rows. Undo history is pruned through `max(finalized, height - launchpad.history_depth)` like the other services, so at most `history_depth` blocks are kept. A commit that only moves the checkpoint (a block chainsync skipped as already handled) leaves the rows and the head alone.
 
 | Table | Contents |
 | --- | --- |
@@ -409,7 +454,7 @@ The output is the same as for held trades: rows keep their own block height, bel
 | `market.backfill_blocks` | How far back a backfill reads (default 50400, about a week on Ethereum). `-1` replays only held trades. Ignored without ClickHouse. |
 | `market.backfill_wait` | How long a backfill waits for ch-loader (default 30s). |
 
-All state is journaled by height. A revert undoes it exactly, as long as the reorg stays above the finalized height and within `history_depth` blocks. A deeper reorg stops the engine. State is computed in memory and persisted per block when `state.driver` is `postgres`; see [State](#state).
+All state is journaled by height. A revert undoes it exactly, as long as the reorg stays above the finalized height and within `history_depth` blocks: undo history is pruned through `max(finalized, height - history_depth)`. A deeper reorg stops the engine, so keep `history_depth` at or above chainstream-evm's `scanner.cache_size`. State is computed in memory and persisted per block when `state.driver` is `postgres`; see [State](#state).
 
 ```sh
 go run ./cmd/market-engine -conf configs/market-engine.yaml
@@ -417,7 +462,7 @@ go run ./cmd/market-engine -conf configs/market-engine.yaml
 
 ## Local stack
 
-`make up` builds the images and starts everything with docker compose: Kafka, ClickHouse, PostgreSQL and Redis, chainstream-evm scanning eth into `chainstream-eth`, the six services here, the web frontend, and Prometheus and Grafana. It needs Docker with Compose v2, an eth node, and a chainstream-evm checkout next to this one (`EVM_DIR=...` points elsewhere). Both images read the private oh-my-blockchain module through your SSH agent (`docker build --ssh default`); see chainstream-evm's README.
+`make up` builds the images and starts everything with docker compose: Kafka, ClickHouse, PostgreSQL and Redis, chainstream-evm scanning eth into `chainstream-eth`, the eight services here, the web frontend, and Prometheus and Grafana. It needs Docker with Compose v2, an eth node, and a chainstream-evm checkout next to this one (`EVM_DIR=...` points elsewhere). Both images read the private oh-my-blockchain module through your SSH agent (`docker build --ssh default`); see chainstream-evm's README.
 
 ```sh
 cp deploy/.env.example deploy/.env   # set ETH_RPC_URL
@@ -448,9 +493,10 @@ The topics are created by `kafka-init` with one partition and no retention limit
 | --- | --- |
 | `/{chain}` | The token list from market-rankings, sorted by 24h volume, price change, liquidity, holders or creation, with a liquidity filter and symbol or address search. Refreshed every 15s. |
 | `/{chain}/launchpad` | The three launchpad lists from market-launchpad side by side: new launches, curves by progress, and migrations, with a protocol filter. Each column polls every 5s. |
-| `/{chain}/token/{address}` | Price, 24h stats, the token's aggregated candles and live trades, and tabs for holders, pools and transfers, beside the registry metadata and how the price was derived. A launchpad token also shows its curve's progress, quote raised and migration. |
+| `/{chain}/token/{address}` | Price, 24h stats, the token's aggregated candles and live trades, and tabs for its profit leaderboard (traders by realized PnL), holders, pools and transfers, beside the registry metadata and how the price was derived. A launchpad token also shows its curve's progress, quote raised and migration. |
 | `/{chain}/pool/{pool}` | The pool's own candles and live trades, its tokens and metadata. |
-| `/{chain}/holder/{address}` | The address's ERC-20 transfers across tokens. |
+| `/{chain}/smart-money` | market-wallet's leaderboard over 7, 30 or 90 days, of smart money wallets or of every wallet, sorted by realized PnL, ROI, win rate or volume, beside a live feed of what smart money wallets trade (`trades:<chain>:label:smart_money`). |
+| `/{chain}/wallet/{address}` (also `/holder/`) | A wallet's profile: labels, stats per window with the ROI distribution of its tokens, open and closed positions with PnL, ledger trades, live trades and ERC-20 transfers. |
 
 Candles are drawn with TradingView's lightweight-charts. Live data follows [Live push](#live-push): the page subscribes first, loads history over REST once the hub's `subscribed` reply confirms the channel, then applies what arrived meanwhile; it replaces candle buckets by `open_time` and keys trades by `(block_height, transaction_hash, log_index, operation_index)`. History is loaded again on every confirmation, which follows each reconnect, and after every revert, since REST trades do not carry `revision_height`; older candle pages requested before a reload, revert or reset are dropped. Scrolling the chart left pages back through older candles. Empty buckets are drawn flat at the previous close.
 
@@ -466,7 +512,7 @@ npm run build    # type-check and build into dist/
 make docker-web  # from the repository root: the chainstream-web image
 ```
 
-`mock/server.mjs` serves the same routes and stream protocol as market-api, mints a block per second on each chain, and pushes its trades, candles and head, so the UI can be worked on without the stack. It does not simulate reorgs. The chains and candle intervals the UI offers are in `web/src/lib/chains.ts` and must match market-api's `chains` and `api.intervals`.
+`mock/server.mjs` serves the same routes and stream protocol as market-api, mints a block per second on each chain, and pushes its trades, candles and head, and serves generated wallet stats, positions, ledger trades and labels (some of its traders are labeled wallets, whose trades are also pushed on the wallet and label channels), so the UI can be worked on without the stack. It does not simulate reorgs. The chains and candle intervals the UI offers are in `web/src/lib/chains.ts` and must match market-api's `chains` and `api.intervals`.
 
 ## Metrics
 
@@ -483,6 +529,8 @@ Every command serves Prometheus metrics at `/metrics` on `metrics.addr`, off by 
 | `rpc_requests_total{result}`, `rpc_request_seconds` | JSON-RPC batches sent by holder-indexer and market-engine's feed lookups, one per attempt: the SDK retries a failed batch up to three times. |
 | `rpc_failures_total` | Failed batches, plus node errors on single calls other than a revert. |
 | `rankings_refresh_seconds`, `rankings_refresh_failures_total` | market-rankings refreshes. |
+| `wallet_height`, `wallet_block_lag_seconds`, `wallet_trades_total`, `wallet_backfills_total` | market-wallet's ledger: last committed height, how far behind the clock, trades committed and gaps filled from ClickHouse. |
+| `wallet_refresh_seconds`, `wallet_refresh_failures_total`, `wallet_labels{label}` | market-wallet's stats refreshes and how many wallets carry each rule label. |
 | `http_requests_total{route,code}`, `http_request_seconds{route}` | market-api requests by matched route pattern. |
 
 The engine metrics come from every consumer: market-engine, ch-loader, holder-indexer and market-registry. chainstream-evm exports its own under `chainstream_evm_`. The Grafana dashboard in `deploy/grafana/dashboards` charts both.
@@ -524,6 +572,6 @@ Most components name their one database directly (`clickhouse:` or `postgres:`).
 
 PostgreSQL and ClickHouse are reached through GORM. The schemas stay hand-written DDL in `internal/pkg/chdb/schema.go` and `internal/pkg/pgdb/schema.go` rather than GORM migrations, since they rely on partial and GIN indexes, ClickHouse engines, sort keys and TTLs that model tags cannot express.
 
-The ClickHouse tests, including ch-loader's end-to-end run over an in-process kfake broker, run only when `CLICKHOUSE_ADDR` is set, for example `CLICKHOUSE_ADDR=127.0.0.1:9000 make test`. The PostgreSQL tests run only when `POSTGRES_DSN` is set, for example `POSTGRES_DSN=postgres://market:market@127.0.0.1:5432/market make test`. market-engine's late-trade run over kfake needs both. CI starts both services.
+The ClickHouse tests, including ch-loader's end-to-end run over an in-process kfake broker, run only when `CLICKHOUSE_ADDR` is set, for example `CLICKHOUSE_ADDR=127.0.0.1:9000 make test`. The PostgreSQL tests run only when `POSTGRES_DSN` is set, for example `POSTGRES_DSN=postgres://market:market@127.0.0.1:5432/market make test`. market-engine's late-trade run and market-wallet's ledger run over kfake need both. CI starts both services.
 
 `proto/stream/v1/event.proto` is copied from chainstream-evm's `api/stream/v1`, with only `go_package` changed. chainstream-evm still publishes from its own copy. The two must stay wire-compatible until chainstream-evm imports this module.

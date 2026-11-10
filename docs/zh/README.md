@@ -1,7 +1,7 @@
 # chainstream-market 中文文档
 
 `chainstream-market` 是建立在 [chainstream-evm](https://github.com/AloneAtWar/chainstream-evm) 区块流之上的一组
-市场数据服务：给交易定方向（base/quote）、USD 定价、K 线、持有人余额、原始转账、代币排行榜，以及一个 Web 前端。
+市场数据服务：给交易定方向（base/quote）、USD 定价、K 线、持有人余额、原始转账、代币排行榜、钱包盈亏与聪明钱标签，以及一个 Web 前端。
 目前覆盖 ETH、BSC、Base 和 Robinhood Chain。
 
 chainstream-evm 只发布链上"事实"（每块的交易、转账、资产、池子、预言机日志……），本仓库负责所有"派生"计算。
@@ -10,9 +10,9 @@ chainstream-evm 只发布链上"事实"（每块的交易、转账、资产、�
 
 | 文档 | 内容 |
 | --- | --- |
-| [architecture.md](architecture.md) | 整体数据流、六个组件的职责、目录结构与分层约定、共享的顺序消费循环（chainsync） |
+| [architecture.md](architecture.md) | 整体数据流、八个组件的职责、目录结构与分层约定、共享的顺序消费循环（chainsync） |
 | [market-engine.md](market-engine.md) | 定价与 K 线：池子状态、价格图、交易定方向、集中流动性 tick 表、Chainlink、异常交易、迟到的代币小数位与回填、存储与状态 |
-| [services.md](services.md) | market-api 接口、实时推送协议、holder-indexer、market-registry、market-launchpad、market-rankings、ch-loader |
+| [services.md](services.md) | market-api 接口、实时推送协议、holder-indexer、market-registry、market-launchpad、market-rankings、market-wallet（聪明钱）、ch-loader |
 | [operations.md](operations.md) | 本地完整环境、配置、开发命令、指标、Web 前端 |
 
 英文版完整说明见仓库根目录 [README.md](../../README.md)；两者不一致时以英文 README 和代码为准。
@@ -34,6 +34,7 @@ chainstream-evm 只发布链上"事实"（每块的交易、转账、资产、�
   trades/prices/   holder_*        registry_*        raw_*                 │
   candles                                                                  │
         │  live topic（Kafka / Redis）        market-rankings（定期汇总 → token_rankings）
+        │        └─► market-wallet（持仓账本、钱包统计、聪明钱标签）
         ▼                                                │
      market-api（REST + WebSocket /v1/stream） ◄─────────┘
         │

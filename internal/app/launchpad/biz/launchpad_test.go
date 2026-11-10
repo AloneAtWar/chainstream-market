@@ -2,6 +2,7 @@ package biz
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/AloneAtWar/chainstream-market/internal/pkg/chainsync"
@@ -75,7 +76,7 @@ func TestApplyCollectsOneChangePerToken(t *testing.T) {
 		t.Fatal(err)
 	}
 	change := repo.changes[0]
-	if !change.Applied || change.Height != 100 || change.Time != 1_000 || change.PrunedThrough != 90 || len(change.Tokens) != 2 {
+	if !change.Applied || change.Height != 100 || change.Time != 1_000 || change.PrunedThrough != 96 || len(change.Tokens) != 2 {
 		t.Fatalf("change = %+v", change)
 	}
 	a, b := change.Tokens[0], change.Tokens[1]
@@ -112,29 +113,30 @@ func TestRevertRefusesPrunedHistory(t *testing.T) {
 	}
 }
 
-func TestPruningKeepsEveryUnfinalizedBlock(t *testing.T) {
-	repo := &recordingRepo{}
-	launchpad, err := New(Options{ChainID: 56, Repo: repo, HistoryDepth: 4})
-	if err != nil {
-		t.Fatal(err)
-	}
-	// Finalized lags the depth: everything above it stays revertible.
-	if err := launchpad.Apply(context.Background(), &streamv1.BlockEvent{BlockHeight: 100, FinalizedHeight: 90}); err != nil {
-		t.Fatal(err)
-	}
-	if err := launchpad.Revert(context.Background(), 90); err != nil {
-		t.Fatalf("Revert(90) error = %v", err)
-	}
-	if err := launchpad.Revert(context.Background(), 89); err == nil {
-		t.Fatal("Revert(89) below the finalized height succeeded")
-	}
-	for _, test := range []struct{ height, finalized, want int64 }{
-		{100, 90, 90}, // finalized lags: keep everything above it
-		{100, 98, 96}, // finalized is recent: keep the depth
-		{100, 0, 96},  // finalized unknown: keep the depth
+func TestPruningKeepsAtMostTheDepth(t *testing.T) {
+	ctx := context.Background()
+	for _, test := range []struct {
+		name      string
+		finalized int64
+		// lowest is the lowest rollback height still accepted.
+		lowest int64
+	}{
+		{"finalized unknown", 0, 96},
+		{"finalized lags less than the depth", 98, 98},
+		{"finalized lags more than the depth", 90, 96},
 	} {
-		if got := pruneBound(test.height, test.finalized, 4); got != test.want {
-			t.Errorf("pruneBound(%d, %d, 4) = %d, want %d", test.height, test.finalized, got, test.want)
+		launchpad, err := New(Options{ChainID: 56, Repo: &recordingRepo{}, HistoryDepth: 4})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := launchpad.Apply(ctx, &streamv1.BlockEvent{BlockHeight: 100, FinalizedHeight: test.finalized}); err != nil {
+			t.Fatal(err)
+		}
+		if err := launchpad.Revert(ctx, test.lowest); err != nil {
+			t.Errorf("%s: Revert(%d) error = %v", test.name, test.lowest, err)
+		}
+		if err := launchpad.Revert(ctx, test.lowest-1); !errors.Is(err, ErrReorgTooDeep) {
+			t.Errorf("%s: Revert(%d) error = %v, want ErrReorgTooDeep", test.name, test.lowest-1, err)
 		}
 	}
 }

@@ -232,7 +232,7 @@ PostgreSQL 状态表（位于 `state.postgres.schema`）：
 | --- | --- |
 | `engine_checkpoints` | 每条链一行：Kafka offset、高度、哈希、已裁剪高度 |
 | `engine_state` | 当前状态 `(chain_id, kind, key) -> value JSONB`，kind 为 `pools`、`prices`、`orientations`、`candles`、`decimals`、`oracle`、`balance_pools` 等 |
-| `engine_state_undo` | 每个区块改动过的 key 在该块之前的值；回滚删除 `rollback_to` 以上的行，裁剪删除已最终确定且超出 `history_depth` 的行 |
+| `engine_state_undo` | 每个区块改动过的 key 在该块之前的值；回滚删除 `rollback_to` 以上的行，裁剪删除 `max(finalized, height − history_depth)` 及以下的行 |
 
 计算全部在内存里完成，PostgreSQL 每块只写一次，热路径上从不读取。
 
@@ -253,7 +253,7 @@ go run ./cmd/market-engine -conf configs/market-engine.yaml
 | `candle_min_liquidity_usd` | 10000 | swap 进入代币聚合 K 线所需的 quote 储备 USD 价值 |
 | `max_hops` | 3 | 价格离锚点的最大传播跳数 |
 | `intervals` | `[1m, 5m, 15m, 1h, 4h, 24h]` | K 线周期 |
-| `history_depth` | 256 | 可撤销的最大重组深度 |
+| `history_depth` | 256 | 可撤销的最大重组深度；撤销历史裁剪到 `max(finalized, height − history_depth)`，不应小于上游 chainstream-evm 的 `scanner.cache_size` |
 | `oracle_deviation` | 0.02 | 图价格与预言机报价允许的偏差 |
 | `outlier_deviation` | 0.5 | 异常交易阈值，-1 关闭 |
 | `late_trade_blocks` | 7200 | 挂起交易最多保留的块数，-1 关闭挂起 |

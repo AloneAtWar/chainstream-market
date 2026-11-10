@@ -5,6 +5,7 @@ import { CandleChart } from "../components/CandleChart";
 import { Address, CopyButton, Info, ProgressBar, Stat, Tabs, TokenAvatar } from "../components/common";
 import { HoldersTable, PoolsTable, TransfersTable } from "../components/tables";
 import { TradesTable } from "../components/TradesTable";
+import { TradersTable } from "../components/wallets";
 import { api, type LaunchpadToken } from "../lib/api";
 import { canonicalToken, INTERVALS, type Chain, type Interval } from "../lib/chains";
 import {
@@ -75,10 +76,11 @@ function formatWindowEnd(end: number, now: number): string {
   return end > now ? `${formatAge(now, end)} 后` : `${formatAge(end, now)} 前`;
 }
 
-type Panel = "trades" | "holders" | "pools" | "transfers";
+type Panel = "trades" | "traders" | "holders" | "pools" | "transfers";
 
 const PANELS: { value: Panel; label: string }[] = [
   { value: "trades", label: "实时成交" },
+  { value: "traders", label: "盈利榜" },
   { value: "holders", label: "持有人" },
   { value: "pools", label: "池子" },
   { value: "transfers", label: "转账" },
@@ -186,6 +188,7 @@ export function TokenPage({ chain }: { chain: Chain }) {
               <Tabs value={panel} options={PANELS} onChange={setPanel} />
             </div>
             {panel === "trades" && <TradesTable chain={chain} trades={trades.data} loading={trades.loading} error={trades.error} showPool />}
+            {panel === "traders" && <TradersTable chain={chain} token={market} />}
             {panel === "holders" && <HoldersTable chain={chain} token={address} />}
             {panel === "pools" && <PoolsTable chain={chain} token={address} />}
             {panel === "transfers" && <TransfersTable chain={chain} subject="token" value={address} />}

@@ -230,6 +230,10 @@ func TestReplayedTradesFollowTheirRevision(t *testing.T) {
 func TestMigrateAddsRevisionHeight(t *testing.T) {
 	ctx := context.Background()
 	store, options := openTestStore(t)
+	// Tables that old have no index on revision_height either.
+	if err := store.db.WithContext(ctx).Exec("ALTER TABLE trades DROP INDEX IF EXISTS trades_revision").Error; err != nil {
+		t.Fatalf("drop trades index: %v", err)
+	}
 	for _, table := range []string{"trades", "token_prices"} {
 		if err := store.db.WithContext(ctx).Exec("ALTER TABLE " + table + " DROP COLUMN revision_height").Error; err != nil {
 			t.Fatalf("drop %s column: %v", table, err)

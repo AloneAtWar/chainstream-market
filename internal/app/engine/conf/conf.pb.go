@@ -251,8 +251,12 @@ type Market struct {
 	CandleMinLiquidityUsd float64                `protobuf:"fixed64,2,opt,name=candle_min_liquidity_usd,json=candleMinLiquidityUsd,proto3" json:"candle_min_liquidity_usd,omitempty"`
 	MaxHops               uint32                 `protobuf:"varint,3,opt,name=max_hops,json=maxHops,proto3" json:"max_hops,omitempty"`
 	Intervals             []*durationpb.Duration `protobuf:"bytes,4,rep,name=intervals,proto3" json:"intervals,omitempty"`
-	// history_depth is how many recent blocks stay revertible in addition to
-	// everything above the finalized height.
+	// history_depth is the deepest reorg that can be undone: undo history is
+	// pruned through max(finalized, height - history_depth), so at most this
+	// many blocks are kept. It should not be below chainstream-evm's
+	// scanner.cache_size.
+	// history_depth 是可撤销的最大重组深度，撤销历史按 max(finalized, height−history_depth)
+	// 裁剪，最多保留这么多个区块；不应小于上游 chainstream-evm 的 scanner.cache_size。
 	HistoryDepth int64 `protobuf:"varint,5,opt,name=history_depth,json=historyDepth,proto3" json:"history_depth,omitempty"`
 	// oracle_deviation is the largest relative gap between a feed-backed
 	// token's graph price and its oracle answer before the answer wins.

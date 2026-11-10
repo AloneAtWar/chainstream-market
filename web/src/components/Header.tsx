@@ -23,12 +23,15 @@ export function Header({ chain }: { chain: Chain }) {
     setQuery("");
   };
 
-  // Switching chains keeps the token list's query string and the launchpad
-  // page but leaves detail pages, whose addresses belong to the old chain.
+  // Switching chains keeps the token list's query string, the launchpad
+  // page and the smart money board, but leaves detail pages, whose
+  // addresses belong to the old chain.
+  const onSmartMoney = location.pathname === `/${chain.id}/smart-money`;
   const switchChain = (id: number) => {
     const onList = location.pathname === `/${chain.id}`;
     const onLaunchpad = location.pathname === `/${chain.id}/launchpad`;
-    navigate(`/${id}${onList ? location.search : onLaunchpad ? "/launchpad" : ""}`);
+    if (onSmartMoney) navigate(`/${id}/smart-money${location.search}`);
+    else navigate(`/${id}${onList ? location.search : onLaunchpad ? "/launchpad" : ""}`);
   };
 
   return (
@@ -59,6 +62,9 @@ export function Header({ chain }: { chain: Chain }) {
         </NavLink>
         <NavLink to={`/${chain.id}/launchpad`} className="section">
           发射台
+        </NavLink>
+        <NavLink to={`/${chain.id}/smart-money`} className="section">
+          🧠 聪明钱
         </NavLink>
       </nav>
       <form className="search" onSubmit={search}>

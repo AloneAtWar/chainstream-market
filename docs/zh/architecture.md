@@ -13,6 +13,7 @@
 | `market-registry` | `registry` | 链 topic | PostgreSQL（registry_*） | 代币与池子的最新元数据 |
 | `market-launchpad` | `launchpad` | 链 topic | PostgreSQL（launchpad_*） | 发射平台代币的生命周期与三栏列表 |
 | `market-rankings` | `rankings` | ClickHouse、PostgreSQL | PostgreSQL（token_rankings） | 定期重建代币排行榜 |
+| `market-wallet` | `wallet` | live topic、ClickHouse（trades） | PostgreSQL（wallet_positions、wallet_labels 等）、ClickHouse（wallet_trades、wallet_stats 等） | 钱包持仓账本、盈亏统计、聪明钱与机器人标签 |
 
 **组件之间互不 import**，`internal/pkg` 也不 import 任何组件（golangci-lint 的 depguard 规则保证）。一个组件写、另一个组件读
 的表（例如 `token_prices`、`holder_counts`），其行模型和共享查询放在 `internal/pkg/chdb` 或 `internal/pkg/pgdb`。
