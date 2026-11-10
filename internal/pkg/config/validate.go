@@ -6,6 +6,8 @@ import (
 	"slices"
 	"strings"
 	"time"
+
+	"github.com/AloneAtWar/oh-my-blockchain/chain/evm"
 )
 
 // Validate checks the brokers and fetch limits. A component whose transports
@@ -138,6 +140,9 @@ func ValidateChains(chains []*Chain, live *Live) error {
 		if err := validateFeeds(index, chain); err != nil {
 			return err
 		}
+		if err := validateStateReads(index, chain); err != nil {
+			return err
+		}
 	}
 	return validateLiveTopics(chains, live)
 }
@@ -186,4 +191,32 @@ func validateLiveTopics(chains []*Chain, live *Live) error {
 		used[chain.GetLiveTopic()] = struct{}{}
 	}
 	return nil
+}
+
+// State read modes of Chain.state_reads.
+const (
+	// StateReadsLatest reads at the latest block no older than the applied one.
+	//
+	// StateReadsLatest 在不早于当前块的 latest 读取。
+	StateReadsLatest = "latest"
+	// StateReadsExact reads at the applied block's hash.
+	//
+	// StateReadsExact 按当前块哈希读取。
+	StateReadsExact = "exact"
+)
+
+// validateStateReads checks chain.state_reads; empty means latest.
+func validateStateReads(index int, chain *Chain) error {
+	switch chain.GetStateReads() {
+	case "", StateReadsLatest:
+		return nil
+	case StateReadsExact:
+		// TRON nodes run eth_call at the latest block alone.
+		if evm.ChainType(chain.GetChainId()) == evm.TRON {
+			return fmt.Errorf("conf: chains[%d] state_reads exact: TRON nodes only serve the latest block", index)
+		}
+		return nil
+	default:
+		return fmt.Errorf("conf: chains[%d] state_reads %q must be latest or exact", index, chain.GetStateReads())
+	}
 }

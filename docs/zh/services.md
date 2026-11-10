@@ -116,24 +116,30 @@ go run ./cmd/holder-indexer -conf configs/holder-indexer.yaml   # 需要 postgre
 
 代码：`internal/app/holder`。维护见过的每一笔 ERC-20 持仓，可选维护原生币余额。
 
-- **初始化（seeding）**：某个 `(token, holder)` 第一次出现时，用该块哈希调用 `balanceOf` 读取余额，所以初值已包含本块转账和 indexer 启动前的历史。
-  节点必须能提供该块的状态（全节点在链头附近都可以）；拿不到状态时 indexer 停止而不是猜测。
-  `balanceOf` 本身 revert 时，用本块净转账作为初值，并标记为未验证。
-- **累加**：之后每块按持仓累加净转账。mint / burn 使用零地址，零地址不算持有人；零金额转账忽略。
-- **对账（reconcile）**：每 `holders.reconcile_every` 块，挑 `reconcile_batch` 个最久未验证的持仓用 `balanceOf` 校正。
-  这能纠正 rebase 代币和收税代币——它们的余额变化没有对应的 `Transfer`。
+- **读取方式（`chains[].state_reads`）**：
+  - `latest`（默认）：在不早于当前块的 latest 读余额，并记下实际读到的块高 `as_of_height`。不需要历史状态，普通全节点即可，
+    落后很多块追赶时也能跑；TRON 只支持这种。追块期间中间高度的持有人数会"超前"，追平后正确。
+  - `exact`：按当前块哈希读（EIP-1898），逐块精确；落后超过全节点保留的状态（约 128 块）时需要 archive 节点。
+  - 两种方式规则相同：每个持仓的余额已包含到 `as_of_height`，块高不超过它的转账不再叠加；exact 下它就是读取的块。
+- **初始化（seeding）**：某个 `(token, holder)` 第一次出现时读取 `balanceOf`，所以初值已包含本块转账和 indexer 启动前的历史。
+  节点拿不到状态时 indexer 停止而不是猜测。`balanceOf` 本身 revert 时，用本块净转账作为初值，并标记为未验证。
+- **累加**：之后每个块高大于 `as_of_height` 的区块按持仓累加净转账。mint / burn 使用零地址（TRON 为 base58 零地址），
+  零地址不算持有人；零金额转账忽略。TRON 的 base58 地址区分大小写，原样保存。
+- **对账（reconcile）**：每 `holders.reconcile_every` 块，挑 `reconcile_batch` 个最久未验证的持仓用 `balanceOf` 校正，
+  `as_of_height` 改为实际读取的块高。这能纠正 rebase 代币和收税代币——它们的余额变化没有对应的 `Transfer`。
 - **原生币**：开启 `holders.native_balances` 后，ETH / BNB 余额存在同一组表里，代币地址为 `0xeeee…eeee`。
   gas、出块奖励、L2 费用都会改变余额却没有转账，所以不做累加：对本块 `native_touched` 中的每个地址（发送方、原生转账双方、出块收益地址），
-  在该块哈希上用 Multicall3 的 `getEthBalance`（与 `balanceOf` 一起批量）读取，把与存储值的差作为已验证的增量。
+  用 Multicall3 的 `getEthBalance`（与 `balanceOf` 一起批量）读取，把与存储值的差作为已验证的增量。
   余额为零的地址不保存。chainstream-evm 未开 `need_internal` 时内部转账的接收方、信标链提款不会被触及，靠对账纠正。
   没有已知 multicall 合约的链（如本地开发链）记录警告并跳过原生币。
 - **重组**：每次变化都以可撤销增量保存，回滚时减去被回滚区块加上的量，并删除它们新建的持仓。
+  回滚后 `as_of_height` 仍高于回滚点的持仓，余额可能读自被回滚的分支：下次被触及时重新读取，未被触及的优先对账。
 
 | 表 | 内容 |
 | --- | --- |
 | `holder_checkpoints` | 每条链一行：Kafka offset、高度、哈希、已裁剪高度 |
-| `holder_balances` | `(chain_id, token, holder) -> balance NUMERIC(78,0)`，以及 `balanceOf` 最后确认的高度 |
-| `holder_undo` | 每块每个持仓加上的增量或是否新建，以及之前的验证高度；裁剪方式同 `engine_state_undo` |
+| `holder_balances` | `(chain_id, token, holder) -> balance NUMERIC(78,0)`，`balanceOf` 最后确认的高度，以及余额已包含到的块高 `as_of_height`（-1 表示须重新读取） |
+| `holder_undo` | 每块每个持仓加上的增量或是否新建，以及之前的验证高度和 `as_of_height`；裁剪方式同 `engine_state_undo` |
 | `holder_counts` | `(chain_id, token) -> holders`，正余额数量；与余额在同一事务中增减，回滚时同样回退 |
 
 余额只存在 PostgreSQL 中，内存不会随持有人数量增长。

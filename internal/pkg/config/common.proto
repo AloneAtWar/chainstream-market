@@ -127,15 +127,24 @@ message Chain {
   string name = 1;
   uint64 chain_id = 2;
   string topic = 3;
-  // rpc_url is a JSON-RPC endpoint holder-indexer reads balanceOf from. It
-  // must serve state by block hash for blocks the indexer is applying, which
-  // near the head any full node does.
+  // rpc_url is a JSON-RPC endpoint holder-indexer reads balanceOf from.
+  // With state_reads latest any full node works; with exact it must serve
+  // state by block hash for every block the indexer applies, which far
+  // behind the head only an archive node does.
   string rpc_url = 4;
   // live_topic carries this chain's live updates when live.enabled is set;
   // it defaults to the topic name with a "-live" suffix.
   string live_topic = 5;
   // feeds are the Chainlink USD feeds trusted on this chain.
   repeated Feed feeds = 6;
+  // state_reads is how holder-indexer reads balances: latest (the default)
+  // reads them at the latest block no older than the block being applied
+  // and records the block they were read at, so the transfers up to that
+  // block are not added again; exact reads them at the applied block's
+  // hash. TRON nodes only serve latest.
+  // state_reads 是 holder-indexer 读余额的方式：latest（默认）在不早于当前块的 latest 读，
+  // 并记下实际读到的块高，之后不再叠加该块高及以前的转账；exact 按当前块哈希读。TRON 只支持 latest。
+  string state_reads = 7;
 }
 
 // Feed maps a USD-denominated Chainlink feed to a token it prices. Give either

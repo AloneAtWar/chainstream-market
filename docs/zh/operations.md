@@ -31,7 +31,7 @@ make down    # 停止，保留数据；make clean 同时删除数据卷
 
 节点要求与注意事项：
 
-- 节点必须支持按区块哈希调用 `eth_call`（EIP-1898），且能提供链头附近的状态，供 holder-indexer 使用；还要能访问 market-engine 启动时解析的 Chainlink 代理合约。
+- holder-indexer 默认（`state_reads: latest`）在 latest 读余额，普通全节点即可；`state_reads: exact` 时节点必须支持按区块哈希调用 `eth_call`（EIP-1898），并能提供正在应用的区块的状态。节点还要能访问 market-engine 启动时解析的 Chainlink 代理合约。
 - chainstream-evm 默认从链头开始扫描，设置 `ETH_START_HEIGHT` 可指定起点，之后游标保存在 Redis 中。
 - 公共节点会限制请求大小：`ETH_CALL_BATCH_SIZE`（默认 10）是 chainstream-evm 每个 JSON-RPC 批量请求中的 `eth_call` 数量，
   publicnode 可以接受；drpc 免费档需要设为 3。

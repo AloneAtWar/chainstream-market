@@ -33,7 +33,9 @@ var engineSchema = []string{
 
 // holderSchema creates the holder tables. Balances are raw token units.
 // verified_height is the last height balanceOf confirmed the balance; NULL
-// means it was never confirmed.
+// means it was never confirmed. as_of_height is the block whose post-state
+// the balance includes (model.Holding.AsOf); rows from before it existed
+// read 0, which is behind every block they are applied to.
 var holderSchema = []string{
 	`CREATE TABLE IF NOT EXISTS holder_checkpoints (
 		chain_id       BIGINT PRIMARY KEY,
@@ -55,8 +57,10 @@ var holderSchema = []string{
 		ON holder_balances (chain_id, token, balance DESC) WHERE balance > 0`,
 	`CREATE INDEX IF NOT EXISTS holder_balances_verified
 		ON holder_balances (chain_id, verified_height NULLS FIRST)`,
+	`ALTER TABLE holder_balances ADD COLUMN IF NOT EXISTS as_of_height BIGINT NOT NULL DEFAULT 0`,
 	// Each row undoes one block's change to one holding: a created row is
-	// deleted, otherwise delta is subtracted and verified_height restored.
+	// deleted, otherwise delta is subtracted and verified_height and
+	// as_of_height restored.
 	`CREATE TABLE IF NOT EXISTS holder_undo (
 		chain_id      BIGINT NOT NULL,
 		block_height  BIGINT NOT NULL,
@@ -67,6 +71,7 @@ var holderSchema = []string{
 		prev_verified BIGINT,
 		PRIMARY KEY (chain_id, block_height, token, holder)
 	)`,
+	`ALTER TABLE holder_undo ADD COLUMN IF NOT EXISTS prev_as_of BIGINT NOT NULL DEFAULT 0`,
 	// holder_counts keeps the number of positive holdings per token, moved
 	// by CommitHolders whenever a balance crosses zero. A schema that had
 	// holder_balances before this table existed is backfilled once.

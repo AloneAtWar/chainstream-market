@@ -44,7 +44,7 @@ func (repo *holderRepo) Holdings(ctx context.Context, chainID uint64, keys []mod
 	}
 	tokens, holders := splitKeys(keys)
 	var rows []pgdb.HoldingRow
-	err := repo.db.WithContext(ctx).Raw(`SELECT b.token, b.holder, b.balance::text AS balance
+	err := repo.db.WithContext(ctx).Raw(`SELECT b.token, b.holder, b.balance::text AS balance, b.as_of_height
 		FROM unnest(CAST(@tokens AS text[]), CAST(@holders AS text[])) AS k(token, holder)
 		JOIN holder_balances b ON b.chain_id = @chain AND b.token = k.token AND b.holder = k.holder`,
 		map[string]any{"chain": int64(chainID), "tokens": pgdb.Array(tokens), "holders": pgdb.Array(holders)}).Scan(&rows).Error
@@ -58,7 +58,7 @@ func (repo *holderRepo) Holdings(ctx context.Context, chainID uint64, keys []mod
 // first, leaving out those of skipToken unless it is empty.
 func (repo *holderRepo) StaleHoldings(ctx context.Context, chainID uint64, limit int, skipToken string) ([]model.Holding, error) {
 	var rows []pgdb.HoldingRow
-	query := repo.db.WithContext(ctx).Table("holder_balances").Select("token, holder, balance::text AS balance").
+	query := repo.db.WithContext(ctx).Table("holder_balances").Select("token, holder, balance::text AS balance, as_of_height").
 		Where("chain_id = ?", int64(chainID))
 	if skipToken != "" {
 		query = query.Where("token <> ?", skipToken)
@@ -90,10 +90,11 @@ func (repo *holderRepo) CommitHolders(ctx context.Context, checkpoint chainsync.
 				)`+addHolderCounts, revert)
 			run.Exec(`WITH changed AS (
 					UPDATE holder_balances AS b
-					SET balance = b.balance - u.delta, verified_height = u.prev_verified
+					SET balance = b.balance - u.delta, verified_height = u.prev_verified, as_of_height = u.prev_as_of
 					FROM (
 						SELECT token, holder, sum(delta) AS delta,
-						       (array_agg(prev_verified ORDER BY block_height))[1] AS prev_verified
+						       (array_agg(prev_verified ORDER BY block_height))[1] AS prev_verified,
+						       (array_agg(prev_as_of ORDER BY block_height))[1] AS prev_as_of
 						FROM holder_undo WHERE chain_id = @chain AND block_height > @to AND NOT created
 						GROUP BY token, holder
 					) AS u
@@ -101,26 +102,33 @@ func (repo *holderRepo) CommitHolders(ctx context.Context, checkpoint chainsync.
 					RETURNING b.token, b.balance + u.delta AS old_balance, b.balance AS new_balance
 				)`+addHolderCounts, revert)
 			run.Exec(`DELETE FROM holder_undo WHERE chain_id = ? AND block_height > ?`, chainID, change.RevertTo)
+			// A balance read at a block above the rollback may come from the
+			// reverted branch: it is read again when next touched, and
+			// reconciled first otherwise.
+			run.Exec(`UPDATE holder_balances SET as_of_height = ?, verified_height = NULL
+				WHERE chain_id = ? AND as_of_height > ?`, model.AsOfReread, chainID, change.RevertTo)
 		}
 		if len(change.Created) > 0 {
 			tokens := make([]string, len(change.Created))
 			holders := make([]string, len(change.Created))
 			balances := make([]string, len(change.Created))
 			verified := make([]*int64, len(change.Created))
+			asOf := make([]int64, len(change.Created))
 			for index, seed := range change.Created {
 				tokens[index], holders[index], balances[index] = seed.Token, seed.Holder, seed.Balance.String()
+				asOf[index] = max(seed.AsOf, change.Height)
 				if seed.Verified {
 					verified[index] = &change.Height
 				}
 			}
 			run.Exec(`WITH changed AS (
-					INSERT INTO holder_balances (chain_id, token, holder, balance, verified_height)
-					SELECT @chain, token, holder, balance::numeric, verified
-					FROM unnest(CAST(@tokens AS text[]), CAST(@holders AS text[]), CAST(@balances AS text[]), CAST(@verified AS bigint[])) AS s(token, holder, balance, verified)
+					INSERT INTO holder_balances (chain_id, token, holder, balance, verified_height, as_of_height)
+					SELECT @chain, token, holder, balance::numeric, verified, as_of
+					FROM unnest(CAST(@tokens AS text[]), CAST(@holders AS text[]), CAST(@balances AS text[]), CAST(@verified AS bigint[]), CAST(@as_of AS bigint[])) AS s(token, holder, balance, verified, as_of)
 					RETURNING token, NULL::numeric AS old_balance, balance AS new_balance
 				)`+addHolderCounts, map[string]any{
 				"chain": chainID, "tokens": pgdb.Array(tokens), "holders": pgdb.Array(holders),
-				"balances": pgdb.Array(balances), "verified": pgdb.Array(verified),
+				"balances": pgdb.Array(balances), "verified": pgdb.Array(verified), "as_of": pgdb.Array(asOf),
 			})
 			run.Exec(`INSERT INTO holder_undo (chain_id, block_height, token, holder, delta, created)
 				SELECT @chain, @height, token, holder, 0, true FROM unnest(CAST(@tokens AS text[]), CAST(@holders AS text[])) AS s(token, holder)`,
@@ -131,24 +139,27 @@ func (repo *holderRepo) CommitHolders(ctx context.Context, checkpoint chainsync.
 			holders := make([]string, len(change.Deltas))
 			deltas := make([]string, len(change.Deltas))
 			verified := make([]bool, len(change.Deltas))
+			asOf := make([]int64, len(change.Deltas))
 			for index, delta := range change.Deltas {
 				tokens[index], holders[index] = delta.Token, delta.Holder
-				deltas[index], verified[index] = delta.Delta.String(), delta.Verified
+				deltas[index], verified[index], asOf[index] = delta.Delta.String(), delta.Verified, delta.AsOf
 			}
 			values := map[string]any{
 				"chain": chainID, "height": change.Height, "tokens": pgdb.Array(tokens), "holders": pgdb.Array(holders),
-				"deltas": pgdb.Array(deltas), "verified": pgdb.Array(verified),
+				"deltas": pgdb.Array(deltas), "verified": pgdb.Array(verified), "as_of": pgdb.Array(asOf),
 			}
-			// The undo row captures verified_height before the update changes it.
-			run.Exec(`INSERT INTO holder_undo (chain_id, block_height, token, holder, delta, created, prev_verified)
-				SELECT @chain, @height, d.token, d.holder, d.delta::numeric, false, b.verified_height
+			// The undo row captures verified_height and as_of_height before
+			// the update changes them.
+			run.Exec(`INSERT INTO holder_undo (chain_id, block_height, token, holder, delta, created, prev_verified, prev_as_of)
+				SELECT @chain, @height, d.token, d.holder, d.delta::numeric, false, b.verified_height, b.as_of_height
 				FROM unnest(CAST(@tokens AS text[]), CAST(@holders AS text[]), CAST(@deltas AS text[])) AS d(token, holder, delta)
 				JOIN holder_balances b ON b.chain_id = @chain AND b.token = d.token AND b.holder = d.holder`, values)
 			run.Exec(`WITH changed AS (
 					UPDATE holder_balances AS b
 					SET balance = b.balance + d.delta::numeric,
-					    verified_height = CASE WHEN d.verified THEN @height ELSE b.verified_height END
-					FROM unnest(CAST(@tokens AS text[]), CAST(@holders AS text[]), CAST(@deltas AS text[]), CAST(@verified AS bool[])) AS d(token, holder, delta, verified)
+					    verified_height = CASE WHEN d.verified THEN @height ELSE b.verified_height END,
+					    as_of_height = CASE WHEN d.as_of > 0 THEN d.as_of ELSE b.as_of_height END
+					FROM unnest(CAST(@tokens AS text[]), CAST(@holders AS text[]), CAST(@deltas AS text[]), CAST(@verified AS bool[]), CAST(@as_of AS bigint[])) AS d(token, holder, delta, verified, as_of)
 					WHERE b.chain_id = @chain AND b.token = d.token AND b.holder = d.holder
 					RETURNING b.token, b.balance - d.delta::numeric AS old_balance, b.balance AS new_balance
 				)`+addHolderCounts, values)

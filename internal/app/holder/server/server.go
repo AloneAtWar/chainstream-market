@@ -22,7 +22,7 @@ import (
 var ProviderSet = wire.NewSet(NewServers)
 
 // NewServers serves metrics and runs the indexer on each chain's topic,
-// reading balanceOf over the chain's rpc_url.
+// reading balanceOf over the chain's rpc_url as its state_reads says.
 func NewServers(
 	chains []*config.Chain,
 	holders *conf.Holders,
@@ -36,7 +36,7 @@ func NewServers(
 		client, err := rpc.New(rpc.Options{
 			URL: chain.GetRpcUrl(), ChainID: chain.GetChainId(), Chain: chain.GetName(),
 			BatchSize: int(holders.GetRpcBatchSize()), Timeout: holders.GetRpcTimeout().AsDuration(),
-			Logger: logger.With("chain", chain.GetName()),
+			Logger: logger.With("chain", chain.GetName()), Exact: chain.GetStateReads() == config.StateReadsExact,
 		})
 		if err != nil {
 			return nil, fmt.Errorf("chain %s: %w", chain.GetName(), err)

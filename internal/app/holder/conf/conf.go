@@ -65,6 +65,7 @@ func (bootstrap *Bootstrap) ApplyDefaults() {
 	}
 	bootstrap.Source.ApplyDefaults()
 	bootstrap.Kafka.ApplyDefaults()
+	config.ApplyChainDefaults(bootstrap.Chains)
 
 	holders := bootstrap.Holders
 	if holders.HistoryDepth == 0 {

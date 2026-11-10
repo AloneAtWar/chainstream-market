@@ -17,17 +17,17 @@ func TestClientCountsRequestsAndFailures(t *testing.T) {
 	defer node.Close()
 	node.SetBalance(blockA, token, alice, 1)
 	node.Missing(missing)
-	client, err := New(Options{URL: node.URL, Chain: chain})
+	client, err := New(Options{URL: node.URL, Chain: chain, Exact: true})
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
 	}
 	ctx := context.Background()
-	if _, err := client.BalancesAt(ctx, blockA, []BalanceQuery{{Token: token, Holder: alice}}); err != nil {
-		t.Fatalf("BalancesAt() error = %v", err)
+	if _, err := client.Balances(ctx, Block{Height: 10, Hash: blockA}, []BalanceQuery{{Token: token, Holder: alice}}); err != nil {
+		t.Fatalf("Balances() error = %v", err)
 	}
 	// A node without the block's state answers with a call error.
-	if _, err := client.BalancesAt(ctx, missing, []BalanceQuery{{Token: token, Holder: alice}}); err == nil {
-		t.Fatal("BalancesAt() without state error = nil")
+	if _, err := client.Balances(ctx, Block{Height: 10, Hash: missing}, []BalanceQuery{{Token: token, Holder: alice}}); err == nil {
+		t.Fatal("Balances() without state error = nil")
 	}
 	down := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
 		writer.WriteHeader(http.StatusBadGateway)

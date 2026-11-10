@@ -23,6 +23,9 @@ func TestParseAppliesDefaults(t *testing.T) {
 		holders.RpcTimeout.AsDuration() != defaultRPCTimeout || holders.NativeBalances {
 		t.Fatalf("holders = %+v", holders)
 	}
+	if reads := bootstrap.Chains[0].StateReads; reads != "latest" {
+		t.Fatalf("state_reads = %q, want latest", reads)
+	}
 }
 
 func TestParseRejectsInvalidConfig(t *testing.T) {
@@ -35,6 +38,14 @@ func TestParseRejectsInvalidConfig(t *testing.T) {
 		},
 		"negative batch": {
 			minimal + "holders: {rpc_batch_size: -1}", "holders settings must be positive",
+		},
+		"unknown state reads": {
+			"kafka: {brokers: [b]}\npostgres: {dsn: x}\nchains: [{name: eth, chain_id: 1, topic: a, rpc_url: r, state_reads: archive}]",
+			"must be latest or exact",
+		},
+		"exact on TRON": {
+			"kafka: {brokers: [b]}\npostgres: {dsn: x}\nchains: [{name: trx, chain_id: 7281264369, topic: a, rpc_url: r, state_reads: exact}]",
+			"TRON nodes only serve the latest block",
 		},
 	}
 	for name, test := range tests {
