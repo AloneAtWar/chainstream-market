@@ -131,7 +131,9 @@ type API struct {
 	Addr  string                 `protobuf:"bytes,1,opt,name=addr,proto3" json:"addr,omitempty"`
 	// intervals are the candle sizes served, which must be among
 	// market-engine's market.intervals.
-	Intervals     []*durationpb.Duration `protobuf:"bytes,2,rep,name=intervals,proto3" json:"intervals,omitempty"`
+	Intervals []*durationpb.Duration `protobuf:"bytes,2,rep,name=intervals,proto3" json:"intervals,omitempty"`
+	// launchpad configures the launchpad lists.
+	Launchpad     *Launchpad `protobuf:"bytes,3,opt,name=launchpad,proto3" json:"launchpad,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -180,6 +182,72 @@ func (x *API) GetIntervals() []*durationpb.Duration {
 	return nil
 }
 
+func (x *API) GetLaunchpad() *Launchpad {
+	if x != nil {
+		return x.Launchpad
+	}
+	return nil
+}
+
+// Launchpad sets the pseudo-progress of direct launches, tokens launched
+// straight into a DEX pool (Bankr, Clanker, pools.trade). One without a
+// launch window shows its fully diluted value over a target value as its
+// progress, and stays in the bonding list when it passes it.
+type Launchpad struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// target_fdv_usd is the target in USD, default 69000.
+	TargetFdvUsd float64 `protobuf:"fixed64,1,opt,name=target_fdv_usd,json=targetFdvUsd,proto3" json:"target_fdv_usd,omitempty"`
+	// protocol_target_fdv_usd overrides it per protocol; poolstrade defaults
+	// to 50000.
+	ProtocolTargetFdvUsd map[string]float64 `protobuf:"bytes,2,rep,name=protocol_target_fdv_usd,json=protocolTargetFdvUsd,proto3" json:"protocol_target_fdv_usd,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"fixed64,2,opt,name=value"`
+	unknownFields        protoimpl.UnknownFields
+	sizeCache            protoimpl.SizeCache
+}
+
+func (x *Launchpad) Reset() {
+	*x = Launchpad{}
+	mi := &file_app_api_conf_conf_proto_msgTypes[2]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *Launchpad) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*Launchpad) ProtoMessage() {}
+
+func (x *Launchpad) ProtoReflect() protoreflect.Message {
+	mi := &file_app_api_conf_conf_proto_msgTypes[2]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use Launchpad.ProtoReflect.Descriptor instead.
+func (*Launchpad) Descriptor() ([]byte, []int) {
+	return file_app_api_conf_conf_proto_rawDescGZIP(), []int{2}
+}
+
+func (x *Launchpad) GetTargetFdvUsd() float64 {
+	if x != nil {
+		return x.TargetFdvUsd
+	}
+	return 0
+}
+
+func (x *Launchpad) GetProtocolTargetFdvUsd() map[string]float64 {
+	if x != nil {
+		return x.ProtocolTargetFdvUsd
+	}
+	return nil
+}
+
 var File_app_api_conf_conf_proto protoreflect.FileDescriptor
 
 const file_app_api_conf_conf_proto_rawDesc = "" +
@@ -194,10 +262,17 @@ const file_app_api_conf_conf_proto_rawDesc = "" +
 	"\x04live\x18\x04 \x01(\v2\x10.pkg.config.LiveR\x04live\x12'\n" +
 	"\x05kafka\x18\x05 \x01(\v2\x11.pkg.config.KafkaR\x05kafka\x12-\n" +
 	"\ametrics\x18\x06 \x01(\v2\x13.pkg.config.MetricsR\ametrics\x12)\n" +
-	"\x06chains\x18\a \x03(\v2\x11.pkg.config.ChainR\x06chains\"R\n" +
+	"\x06chains\x18\a \x03(\v2\x11.pkg.config.ChainR\x06chains\"\x89\x01\n" +
 	"\x03API\x12\x12\n" +
 	"\x04addr\x18\x01 \x01(\tR\x04addr\x127\n" +
-	"\tintervals\x18\x02 \x03(\v2\x19.google.protobuf.DurationR\tintervalsBEZCgithub.com/AloneAtWar/chainstream-market/internal/app/api/conf;confb\x06proto3"
+	"\tintervals\x18\x02 \x03(\v2\x19.google.protobuf.DurationR\tintervals\x125\n" +
+	"\tlaunchpad\x18\x03 \x01(\v2\x17.app.api.conf.LaunchpadR\tlaunchpad\"\xe4\x01\n" +
+	"\tLaunchpad\x12$\n" +
+	"\x0etarget_fdv_usd\x18\x01 \x01(\x01R\ftargetFdvUsd\x12h\n" +
+	"\x17protocol_target_fdv_usd\x18\x02 \x03(\v21.app.api.conf.Launchpad.ProtocolTargetFdvUsdEntryR\x14protocolTargetFdvUsd\x1aG\n" +
+	"\x19ProtocolTargetFdvUsdEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\x01R\x05value:\x028\x01BEZCgithub.com/AloneAtWar/chainstream-market/internal/app/api/conf;confb\x06proto3"
 
 var (
 	file_app_api_conf_conf_proto_rawDescOnce sync.Once
@@ -211,32 +286,36 @@ func file_app_api_conf_conf_proto_rawDescGZIP() []byte {
 	return file_app_api_conf_conf_proto_rawDescData
 }
 
-var file_app_api_conf_conf_proto_msgTypes = make([]protoimpl.MessageInfo, 2)
+var file_app_api_conf_conf_proto_msgTypes = make([]protoimpl.MessageInfo, 4)
 var file_app_api_conf_conf_proto_goTypes = []any{
 	(*Bootstrap)(nil),           // 0: app.api.conf.Bootstrap
 	(*API)(nil),                 // 1: app.api.conf.API
-	(*config.ClickHouse)(nil),   // 2: pkg.config.ClickHouse
-	(*config.Postgres)(nil),     // 3: pkg.config.Postgres
-	(*config.Live)(nil),         // 4: pkg.config.Live
-	(*config.Kafka)(nil),        // 5: pkg.config.Kafka
-	(*config.Metrics)(nil),      // 6: pkg.config.Metrics
-	(*config.Chain)(nil),        // 7: pkg.config.Chain
-	(*durationpb.Duration)(nil), // 8: google.protobuf.Duration
+	(*Launchpad)(nil),           // 2: app.api.conf.Launchpad
+	nil,                         // 3: app.api.conf.Launchpad.ProtocolTargetFdvUsdEntry
+	(*config.ClickHouse)(nil),   // 4: pkg.config.ClickHouse
+	(*config.Postgres)(nil),     // 5: pkg.config.Postgres
+	(*config.Live)(nil),         // 6: pkg.config.Live
+	(*config.Kafka)(nil),        // 7: pkg.config.Kafka
+	(*config.Metrics)(nil),      // 8: pkg.config.Metrics
+	(*config.Chain)(nil),        // 9: pkg.config.Chain
+	(*durationpb.Duration)(nil), // 10: google.protobuf.Duration
 }
 var file_app_api_conf_conf_proto_depIdxs = []int32{
-	1, // 0: app.api.conf.Bootstrap.api:type_name -> app.api.conf.API
-	2, // 1: app.api.conf.Bootstrap.clickhouse:type_name -> pkg.config.ClickHouse
-	3, // 2: app.api.conf.Bootstrap.postgres:type_name -> pkg.config.Postgres
-	4, // 3: app.api.conf.Bootstrap.live:type_name -> pkg.config.Live
-	5, // 4: app.api.conf.Bootstrap.kafka:type_name -> pkg.config.Kafka
-	6, // 5: app.api.conf.Bootstrap.metrics:type_name -> pkg.config.Metrics
-	7, // 6: app.api.conf.Bootstrap.chains:type_name -> pkg.config.Chain
-	8, // 7: app.api.conf.API.intervals:type_name -> google.protobuf.Duration
-	8, // [8:8] is the sub-list for method output_type
-	8, // [8:8] is the sub-list for method input_type
-	8, // [8:8] is the sub-list for extension type_name
-	8, // [8:8] is the sub-list for extension extendee
-	0, // [0:8] is the sub-list for field type_name
+	1,  // 0: app.api.conf.Bootstrap.api:type_name -> app.api.conf.API
+	4,  // 1: app.api.conf.Bootstrap.clickhouse:type_name -> pkg.config.ClickHouse
+	5,  // 2: app.api.conf.Bootstrap.postgres:type_name -> pkg.config.Postgres
+	6,  // 3: app.api.conf.Bootstrap.live:type_name -> pkg.config.Live
+	7,  // 4: app.api.conf.Bootstrap.kafka:type_name -> pkg.config.Kafka
+	8,  // 5: app.api.conf.Bootstrap.metrics:type_name -> pkg.config.Metrics
+	9,  // 6: app.api.conf.Bootstrap.chains:type_name -> pkg.config.Chain
+	10, // 7: app.api.conf.API.intervals:type_name -> google.protobuf.Duration
+	2,  // 8: app.api.conf.API.launchpad:type_name -> app.api.conf.Launchpad
+	3,  // 9: app.api.conf.Launchpad.protocol_target_fdv_usd:type_name -> app.api.conf.Launchpad.ProtocolTargetFdvUsdEntry
+	10, // [10:10] is the sub-list for method output_type
+	10, // [10:10] is the sub-list for method input_type
+	10, // [10:10] is the sub-list for extension type_name
+	10, // [10:10] is the sub-list for extension extendee
+	0,  // [0:10] is the sub-list for field type_name
 }
 
 func init() { file_app_api_conf_conf_proto_init() }
@@ -250,7 +329,7 @@ func file_app_api_conf_conf_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_app_api_conf_conf_proto_rawDesc), len(file_app_api_conf_conf_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   2,
+			NumMessages:   4,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

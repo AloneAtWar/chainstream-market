@@ -70,13 +70,15 @@ type WalletReader interface {
 	WalletLabels(ctx context.Context, chainID uint64, wallets []string) (map[string][]string, error)
 }
 
-// LaunchpadReader reads market-launchpad's bonding-curve tokens.
+// LaunchpadReader reads market-launchpad's launchpad tokens.
 //
 // LaunchpadReader 读取 market-launchpad 的发射平台代币。
 type LaunchpadReader interface {
 	// LaunchpadList returns one of the new / bonding / migrated lists.
 	LaunchpadList(ctx context.Context, query model.LaunchpadQuery) ([]model.LaunchpadListing, error)
-	// LaunchpadToken returns one token; ok is false when market-launchpad
-	// has not seen it.
-	LaunchpadToken(ctx context.Context, chainID uint64, token string) (model.LaunchpadListing, bool, error)
+	// LaunchpadToken returns one token, with targets for a direct launch's
+	// pseudo-progress; ok is false when market-launchpad has not seen it.
+	LaunchpadToken(ctx context.Context, chainID uint64, token string, targets model.LaunchpadTargets) (model.LaunchpadListing, bool, error)
+	// LaunchpadProtocols returns the chain's launchpad platforms.
+	LaunchpadProtocols(ctx context.Context, chainID uint64) ([]string, error)
 }

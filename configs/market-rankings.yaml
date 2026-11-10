@@ -38,3 +38,4 @@ chains:
   - {name: eth, chain_id: 1}
   - {name: bsc, chain_id: 56}
   - {name: base, chain_id: 8453}
+  - {name: robinhood, chain_id: 4663}

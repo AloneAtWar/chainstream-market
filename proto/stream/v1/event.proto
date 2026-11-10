@@ -66,10 +66,11 @@ message BlockEvent {
   // this block's hash, after all of its events. Consumers replace whatever
   // they kept for each pool.
   repeated PoolBalanceSnapshot pool_balances = 19;
-  // launchpad_events are the block's bonding-curve lifecycle facts (four.meme,
-  // Flap): token launches, curves that sold out, and curves whose liquidity
-  // moved to a DEX pool. Curve trades are ordinary trades whose pool_state
-  // carries the curve.
+  // launchpad_events are the block's launchpad lifecycle facts: token
+  // launches, curves that sold out, and curves whose liquidity moved to a DEX
+  // pool (four.meme, Flap, Pons), plus direct launches into a DEX pool with no
+  // curve (Bankr, Long.xyz, Clanker, pools.trade). Curve trades are ordinary
+  // trades whose pool_state carries the curve.
   repeated LaunchpadEvent launchpad_events = 20;
 }
 
@@ -113,6 +114,16 @@ message LaunchpadEvent {
   string target_pool_id = 15;
   string base_amount = 16;
   string quote_amount = 17;
+  // direct is set on CREATED for a token launched straight into a DEX pool,
+  // with no curve. Such a launch has no COMPLETED or MIGRATED; its trades are
+  // the ordinary trades of trading_pool_id, which is empty when the launch
+  // transaction does not identify the pool.
+  bool direct = 18;
+  string trading_pool_id = 19;
+  // launch_start and launch_end are the platform's launch window in unix
+  // seconds (the Long.xyz epoch), or 0 when it has none.
+  int64 launch_start = 20;
+  int64 launch_end = 21;
 }
 
 // PoolBalanceSnapshot is a multi-token pool's real balances and curve

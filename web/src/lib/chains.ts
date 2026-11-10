@@ -37,6 +37,14 @@ export const CHAINS: Chain[] = [
     wrappedNative: "0x4200000000000000000000000000000000000006",
     explorer: "https://basescan.org",
   },
+  {
+    id: 4663,
+    name: "Robinhood Chain",
+    short: "Robinhood",
+    nativeSymbol: "ETH",
+    wrappedNative: "0x0bd7d308f8e1639fab988df18a8011f41eacad73",
+    explorer: "https://robinhoodchain.blockscout.com",
+  },
 ];
 
 export const DEFAULT_CHAIN = CHAINS[0]!;

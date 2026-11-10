@@ -142,9 +142,9 @@ var registrySchema = []string{
 	)`,
 }
 
-// launchpadSchema creates the market-launchpad tables: one row per bonding
-// curve token with its lifecycle status and latest curve state. Each list
-// reads a partial index, so a page touches only the rows it returns.
+// launchpadSchema creates the market-launchpad tables: one row per launchpad
+// token with its lifecycle status and latest curve state. Each list reads a
+// partial index, so a page touches only the rows it returns.
 var launchpadSchema = []string{
 	`CREATE TABLE IF NOT EXISTS launchpad_checkpoints (
 		chain_id       BIGINT PRIMARY KEY,
@@ -194,14 +194,42 @@ var launchpadSchema = []string{
 		migrated_time     BIGINT,
 		target_pool_id    TEXT,
 		updated_height    BIGINT NOT NULL,
+		direct            BOOLEAN,
+		trading_pool_id   TEXT,
+		launch_start      BIGINT,
+		launch_end        BIGINT,
 		PRIMARY KEY (chain_id, token)
 	)`,
+	// A direct launch has no curve: its trades are those of trading_pool_id,
+	// and launch_start and launch_end are its platform's launch window. The
+	// columns are nullable, so undo images taken before they existed restore.
+	`ALTER TABLE launchpad_tokens ADD COLUMN IF NOT EXISTS direct BOOLEAN,
+		ADD COLUMN IF NOT EXISTS trading_pool_id TEXT, ADD COLUMN IF NOT EXISTS launch_start BIGINT,
+		ADD COLUMN IF NOT EXISTS launch_end BIGINT`,
+	`CREATE INDEX IF NOT EXISTS launchpad_tokens_trading_pool ON launchpad_tokens (chain_id, trading_pool_id)
+		WHERE trading_pool_id IS NOT NULL`,
 	`CREATE INDEX IF NOT EXISTS launchpad_tokens_new ON launchpad_tokens (chain_id, launch_time DESC, token)
 		WHERE status = 'bonding'`,
 	`CREATE INDEX IF NOT EXISTS launchpad_tokens_bonding ON launchpad_tokens (chain_id, progress DESC NULLS LAST, token)
 		WHERE status IN ('bonding', 'completed')`,
 	`CREATE INDEX IF NOT EXISTS launchpad_tokens_migrated ON launchpad_tokens (chain_id, migrated_time DESC, token)
 		WHERE status = 'migrated'`,
+	// launchpad_protocols lists each chain's launchpad platforms, which
+	// CommitLaunchpad adds as their first token arrives; a reorg leaves them.
+	// A schema that had launchpad_tokens before this table existed is
+	// backfilled once.
+	`DO $$
+	BEGIN
+		IF to_regclass('launchpad_protocols') IS NULL THEN
+			CREATE TABLE launchpad_protocols (
+				chain_id BIGINT NOT NULL,
+				protocol TEXT NOT NULL,
+				PRIMARY KEY (chain_id, protocol)
+			);
+			INSERT INTO launchpad_protocols (chain_id, protocol)
+			SELECT DISTINCT chain_id, protocol FROM launchpad_tokens;
+		END IF;
+	END $$`,
 	// Each row holds a token row as it was before block_height first
 	// changed it, or NULL when that block created it.
 	`CREATE TABLE IF NOT EXISTS launchpad_undo (
