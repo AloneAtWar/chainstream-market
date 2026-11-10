@@ -29,6 +29,8 @@ const CHAINS = {
   1: { native: "WETH", wrapped: "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2", nativePrice: 3400, usdc: "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48" },
   56: { native: "WBNB", wrapped: "0xbb4cdb9cbd36b01bd1cbaebf2de08d9173bc095c", nativePrice: 610, usdc: "0x8ac76a51cc950d9822d68b83fe1ad97b32cd580d" },
   8453: { native: "WETH", wrapped: "0x4200000000000000000000000000000000000006", nativePrice: 3400, usdc: "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913" },
+  // Robinhood Chain's dollar is USDG.
+  4663: { native: "WETH", wrapped: "0x0bd7d308f8e1639fab988df18a8011f41eacad73", nativePrice: 3400, usdc: "0x5fc5360d0400a0fd4f2af552add042d716f1d168", stable: "USDG" },
 };
 
 const NAMES = [
@@ -46,12 +48,12 @@ const now = () => Math.floor(Date.now() / 1000);
 const state = {};
 for (const [chainId, chain] of Object.entries(CHAINS)) {
   const id = Number(chainId);
-  const height = { 1: 23_650_000, 56: 66_100_000, 8453: 37_400_000 }[id];
+  const height = { 1: 23_650_000, 56: 66_100_000, 8453: 37_400_000, 4663: 106_000_000 }[id];
   const tokens = [];
   const pools = [];
   const quoteTokens = [
     { address: chain.wrapped, symbol: chain.native, name: `Wrapped ${chain.native.slice(1)}`, decimals: 18, price: chain.nativePrice },
-    { address: chain.usdc, symbol: "USDC", name: "USD Coin", decimals: id === 56 ? 18 : 6, price: 1 },
+    { address: chain.usdc, symbol: chain.stable ?? "USDC", name: chain.stable ? "Global Dollar" : "USD Coin", decimals: id === 56 ? 18 : 6, price: 1 },
   ];
   for (const quote of quoteTokens) tokens.push(makeToken(quote, height, true));
   for (const [symbol, name] of NAMES) {
@@ -81,8 +83,178 @@ for (const [chainId, chain] of Object.entries(CHAINS)) {
       pools.push(pool);
     }
   }
-  state[id] = { id, height, finalized: height - 64, tokens, pools, chain };
+  state[id] = { id, height, finalized: height - 64, tokens, pools, chain, wallets: null };
   for (const token of tokens) seedHistory(state[id], token);
+}
+
+// --- Wallets, like market-wallet's ledger and stats ---
+
+const WINDOWS = [7, 30, 90];
+
+function makeWallets(tokens) {
+  const tradable = tokens.filter((token) => !token.quote);
+  return Array.from({ length: 300 }, (_, index) => {
+    // A few wallets are very good, most are about even, a tail loses.
+    const skill = index < 40 ? 0.6 + random() * 0.4 : random() * 1.2 - 0.6;
+    const bot = index >= 40 && random() < 0.08;
+    const size = 10 ** (2.5 + random() * 2.5);
+    const stats = {};
+    for (const days of WINDOWS) {
+      const scale = days / 30;
+      const tokensTraded = Math.max(1, Math.round((bot ? 60 : 4 + random() * 30) * Math.sqrt(scale)));
+      const bought = size * tokensTraded * (0.5 + random()) * scale;
+      const roi = skill * (0.3 + random() * 1.5) * (bot ? 0.05 : 1);
+      const counted = Math.max(1, Math.round(tokensTraded * (1.5 + random() * 3) * (bot ? 30 : 1)));
+      const winRate = Math.min(0.95, Math.max(0.05, 0.5 + skill * 0.35 + (random() - 0.5) * 0.15));
+      const wins = Math.round(counted * winRate);
+      const spread = [0.08, 0.17, 0.4, 0.22, 0.13].map((share, bucket) => share * (1 + skill * (bucket < 2 ? 1.5 : bucket > 2 ? -0.8 : 0)));
+      const sum = spread.reduce((total, value) => total + value, 0);
+      const counts = spread.map((share) => Math.round((share / sum) * tokensTraded));
+      const closes = Math.round(tokensTraded * (0.4 + random() * 0.5) * (bot ? 20 : 1));
+      stats[days] = {
+        window_days: days,
+        realized_usd: decimalString(bought * roi),
+        bought_usd: decimalString(bought),
+        sold_usd: decimalString(bought * (1 + roi) * (0.6 + random() * 0.4)),
+        roi: decimalString(roi),
+        buys: Math.round(counted * (1 + random())),
+        sells: counted,
+        win_rate: wins / counted,
+        wins,
+        counted_sells: counted,
+        tokens: tokensTraded,
+        roi_distribution: { over_5x: counts[0], from_2x_to_5x: counts[1], from_0_to_2x: counts[2], loss_0_to_50: counts[3], loss_over_50: counts[4] },
+        closes,
+        average_hold_seconds: Math.round(bot ? 3 + random() * 30 : 600 + random() * 86400 * 4),
+        fast_closes: bot ? Math.round(closes * 0.7) : Math.round(closes * random() * 0.1),
+      };
+    }
+    const labels = [];
+    const thirty = stats[30];
+    if (bot) labels.push("bot");
+    else if (Number(thirty.realized_usd) >= 5000 && thirty.win_rate >= 0.5 && thirty.tokens >= 10 && thirty.roi_distribution.loss_over_50 <= thirty.tokens * 0.3) labels.push("smart_money");
+    const held = Array.from({ length: 3 + Math.floor(random() * 10) }, () => pick(tradable)).filter((token, at, all) => all.indexOf(token) === at);
+    return { wallet: address(), labels, stats, size, skill, held, positions: null, trades: null };
+  });
+}
+
+function walletStats(entry, days) {
+  return entry.stats[days] ?? entry.stats[30];
+}
+
+// positionsOf builds a wallet's positions once, priced at the tokens' current prices.
+function positionsOf(chain, entry) {
+  if (!entry.positions) {
+    entry.positions = entry.held.map((token, index) => {
+      const open = index < Math.ceil(entry.held.length / 2);
+      const bought = entry.size * (0.5 + random() * 2);
+      const average = token.price * (1 - entry.skill * 0.5 + (random() - 0.5) * 0.4);
+      const quantityBought = bought / average;
+      const sold = open ? quantityBought * random() * 0.6 : quantityBought;
+      const quantity = quantityBought - sold;
+      const exit = average * (1 + entry.skill * (0.5 + random()) + (random() - 0.5) * 0.3);
+      const opened = now() - Math.floor(random() * 86400 * 20);
+      const sells = sold > 0 ? 1 + Math.floor(random() * 4) : 0;
+      const wins = exit > average ? sells : Math.floor(sells * random() * 0.5);
+      return {
+        token,
+        open,
+        quantity,
+        average,
+        realized: sold * (exit - average),
+        bought,
+        boughtQuantity: quantityBought,
+        sold,
+        soldUsd: sold * exit,
+        buys: 1 + Math.floor(random() * 5),
+        sells,
+        wins,
+        losses: sells - wins,
+        opened,
+        last: opened + Math.floor(random() * (now() - opened)),
+        firstBuyHeight: chain.height - Math.floor((now() - opened) / 12),
+      };
+    }).sort((left, right) => right.last - left.last);
+  }
+  return entry.positions;
+}
+
+function positionJSON(chain, entry, position) {
+  const price = position.token.price;
+  return {
+    wallet: entry.wallet,
+    token: position.token.address,
+    symbol: position.token.symbol,
+    status: position.open ? "open" : "closed",
+    quantity: decimalString(position.open ? position.quantity : 0),
+    average_cost_usd: decimalString(position.open ? position.average : 0),
+    cost_usd: decimalString(position.open ? position.quantity * position.average : 0),
+    price_usd: decimalString(price),
+    realized_usd: decimalString(position.realized),
+    unrealized_usd: position.open ? decimalString(position.quantity * (price - position.average)) : null,
+    bought_quantity: decimalString(position.boughtQuantity),
+    sold_quantity: decimalString(position.sold),
+    bought_usd: decimalString(position.bought),
+    sold_usd: decimalString(position.soldUsd),
+    buys: position.buys,
+    sells: position.sells,
+    wins: position.wins,
+    losses: position.losses,
+    first_buy_height: position.firstBuyHeight,
+    first_buy_time: position.opened,
+    opened_at: position.open ? position.opened : null,
+    last_trade_time: position.last,
+  };
+}
+
+// ledgerOf builds a wallet's ledger trades from its positions, newest first.
+function ledgerOf(chain, entry) {
+  if (!entry.trades) {
+    const trades = [];
+    for (const position of positionsOf(chain, entry)) {
+      const pool = position.token.pools[0];
+      const steps = [{ side: "buy", event: "open", share: 0.6, time: position.opened }];
+      if (position.buys > 1) steps.push({ side: "buy", event: "add", share: 0.4, time: position.opened + (position.last - position.opened) * 0.3 });
+      if (position.sold > 0) steps.push({ side: "sell", event: position.open ? "reduce" : "close", share: 1, time: position.last });
+      let quantity = 0;
+      for (const step of steps) {
+        const buy = step.side === "buy";
+        const amount = buy ? position.boughtQuantity * step.share : position.sold;
+        const price = buy ? position.average : position.soldUsd / Math.max(position.sold, 1e-18);
+        quantity += buy ? amount : -amount;
+        trades.push({
+          block_height: chain.height - Math.floor((now() - step.time) / 12),
+          block_time: Math.floor(step.time),
+          transaction_hash: `0x${hex(64)}`,
+          log_index: Math.floor(random() * 400),
+          operation_index: 0,
+          pool_id: pool?.pool_id ?? address(),
+          token: position.token.address,
+          quote_token: pool?.quote.address ?? chain.chain.wrapped,
+          side: step.side,
+          event: step.event,
+          amount: decimalString(amount),
+          value_usd: decimalString(amount * price),
+          price_usd: decimalString(price),
+          realized_usd: decimalString(buy ? 0 : position.realized),
+          counted: !buy,
+          hold_seconds: step.event === "close" ? Math.floor(position.last - position.opened) : 0,
+          quantity_after: decimalString(Math.max(0, quantity)),
+          cost_after_usd: decimalString(Math.max(0, quantity) * position.average),
+        });
+      }
+    }
+    entry.trades = trades.sort((a, b) => b.block_height - a.block_height || b.log_index - a.log_index || b.operation_index - a.operation_index);
+  }
+  return entry.trades;
+}
+
+function findWallet(chain, value) {
+  return chain.wallets.find((entry) => entry.wallet === value.toLowerCase());
+}
+
+function labelsOf(chain, wallet) {
+  return findWallet(chain, wallet)?.labels ?? [];
 }
 
 function makeToken(info, height, quote) {
@@ -144,7 +316,7 @@ function makeTrade(chain, token, height, time, revision) {
     operation_index: 0,
     protocol: pool.protocol,
     pool_id: pool.pool_id,
-    trader: address(),
+    ...traderOf(chain),
     side,
     base_token: token.address,
     quote_token: pool.quote.address,
@@ -155,6 +327,15 @@ function makeTrade(chain, token, height, time, revision) {
     value_usd: String(value),
     outlier: random() < 0.01,
   };
+}
+
+// traderOf picks the trader: often one of the ranked wallets, so labeled
+// trades show up; otherwise a fresh address.
+function traderOf(chain) {
+  if (!chain.wallets || random() < 0.6) return { trader: address() };
+  // Smart money wallets are the first 40 and trade more often.
+  const entry = random() < 0.5 ? chain.wallets[Math.floor(random() * 40)] : pick(chain.wallets);
+  return { trader: entry.wallet, ...(entry.labels.length ? { trader_labels: entry.labels } : {}) };
 }
 
 function makeTransfer(chain, token, height, time) {
@@ -275,7 +456,126 @@ function send(response, status, body) {
   response.end(JSON.stringify(body));
 }
 
+// --- Concentrated liquidity ---
+//
+// V3/V4-style pools get a made-up tick table: a thin full-range position and
+// a few dozen ranges around the price they opened at. Each request values
+// the table at the base token's current price, as market-api does.
+
+const CONCENTRATED = new Set(["uniswap_v3", "uniswap_v4", "pancakeswap_v3"]);
+const SPACING = { 100: 1, 500: 10, 3000: 60, 10000: 200 };
+const LOG_TICK = Math.log(1.0001);
+
+// poolOrder returns the pool's tokens as token0 and token1, sorted by
+// address like the contracts sort them.
+function poolOrder(pool) {
+  return pool.base.address < pool.quote.address ? [pool.base, pool.quote] : [pool.quote, pool.base];
+}
+
+// rawPrice is token0 in token1, in raw units.
+function rawPrice(pool) {
+  const [token0, token1] = poolOrder(pool);
+  return (token0.price / token1.price) * 10 ** (token1.decimals - token0.decimals);
+}
+
+function tickTable(pool) {
+  if (pool.ticks) return pool.ticks;
+  const spacing = SPACING[pool.metadata.fee] ?? 60;
+  const align = (tick) => Math.round(tick / spacing) * spacing;
+  const center = Math.log(rawPrice(pool)) / LOG_TICK;
+  const [, token1] = poolOrder(pool);
+  // Size L so about half the pool's USD liquidity sits as token1 within 10%.
+  const target1 = ((pool.base.liquidity / 2) / token1.price) * 10 ** token1.decimals;
+  const unit = target1 / (0.05 * Math.sqrt(rawPrice(pool)));
+  const net = new Map();
+  const add = (lower, upper, liquidity) => {
+    if (upper <= lower) return;
+    net.set(lower, (net.get(lower) ?? 0) + liquidity);
+    net.set(upper, (net.get(upper) ?? 0) - liquidity);
+  };
+  const edge = Math.floor(887272 / spacing) * spacing;
+  add(-edge, edge, unit * 0.05);
+  const stable = pool.metadata.fee <= 100;
+  for (let index = 0; index < 40; index++) {
+    const spread = stable ? 2 + random() * 10 : 50 + random() * 4000;
+    const middle = center + (random() - 0.5) * spread * 1.5;
+    const width = Math.max(spacing, spread * (0.2 + random()));
+    add(align(middle - width / 2), align(middle + width / 2), unit * random() ** 2 * (stable ? 3 : 1));
+  }
+  pool.ticks = [...net.entries()].filter(([, value]) => value !== 0).sort((a, b) => a[0] - b[0]);
+  return pool.ticks;
+}
+
+const bigString = (value) => BigInt(Math.max(0, Math.floor(value))).toString();
+
+function amount(raw, decimals) {
+  return { raw: bigString(raw), value: decimalString(Math.max(0, Math.floor(raw)) / 10 ** decimals) };
+}
+
+function liquidityJSON(chain, pool) {
+  const [token0, token1] = poolOrder(pool);
+  const price = Math.sqrt(rawPrice(pool));
+  const sqrtAt = (tick) => Math.exp((tick * LOG_TICK) / 2);
+  const segments = [];
+  let liquidity = 0;
+  const totals = [0, 0];
+  const depth = [0, 0];
+  const band = pool.metadata.fee <= 100 ? 50 : pool.metadata.fee <= 500 ? 100 : pool.metadata.fee <= 3000 ? 200 : 500;
+  const bandLow = price * Math.sqrt(1 - band / 10000);
+  const bandHigh = price * Math.sqrt(1 + band / 10000);
+  const table = tickTable(pool);
+  table.forEach(([tick, net], index) => {
+    if (index > 0 && liquidity > 1) {
+      const lower = table[index - 1][0];
+      const a = sqrtAt(lower);
+      const b = sqrtAt(tick);
+      let amount0 = 0;
+      let amount1 = 0;
+      if (price <= a) amount0 = (liquidity * (b - a)) / (a * b);
+      else if (price < b) {
+        amount0 = (liquidity * (b - price)) / (price * b);
+        amount1 = liquidity * (price - a);
+      } else amount1 = liquidity * (b - a);
+      totals[0] += amount0;
+      totals[1] += amount1;
+      const low = Math.max(a, bandLow);
+      const high = Math.min(b, price);
+      if (low < high) depth[1] += liquidity * (high - low);
+      const low0 = Math.max(a, price);
+      const high0 = Math.min(b, bandHigh);
+      if (low0 < high0) depth[0] += (liquidity * (high0 - low0)) / (low0 * high0);
+      segments.push({
+        tick_lower: lower,
+        tick_upper: tick,
+        liquidity: bigString(liquidity),
+        amounts: [amount(amount0, token0.decimals), amount(amount1, token1.decimals)],
+      });
+    }
+    liquidity += net;
+  });
+  return {
+    chain_id: chain.id,
+    pool_id: pool.pool_id,
+    protocol: pool.protocol,
+    fee: pool.metadata.fee,
+    snapshot_height: pool.first_height,
+    sqrt_price_x96: bigString(price * 2 ** 96),
+    tokens: [token0.address, token1.address],
+    decimals: [token0.decimals, token1.decimals],
+    usable: true,
+    stale: false,
+    swap_delta_hooks: false,
+    amounts: [amount(totals[0], token0.decimals), amount(totals[1], token1.decimals)],
+    depth: { band_bps: band, amounts: [amount(depth[0], token0.decimals), amount(depth[1], token1.decimals)] },
+    segments,
+  };
+}
+
 const routes = [
+  [/^\/v1\/chains\/(\d+)\/launchpad\/protocols$/, (chain) => {
+    const protocols = [...new Set(chain.launchpad.map((token) => token.protocol))].sort();
+    return [200, { chain_id: chain.id, protocols }];
+  }],
   [/^\/v1\/chains\/(\d+)\/launchpad\/tokens$/, (chain, _match, query) => {
     const column = query.get("column");
     const protocol = query.get("protocol") ?? "";
@@ -349,7 +649,8 @@ const routes = [
     const limit = Number(query.get("limit") ?? 200);
     const holders = (token?.topHolders ?? []).slice(0, limit).map((row) => {
       const raw = BigInt(Math.floor(row.units * 1e6)).toString() + "0".repeat(Math.max(0, token.decimals - 6));
-      return { holder: row.holder, balance_raw: raw, balance: decimalString(row.units) };
+      const labels = labelsOf(chain, row.holder);
+      return { holder: row.holder, balance_raw: raw, balance: decimalString(row.units), ...(labels.length ? { labels } : {}) };
     });
     return [200, { chain_id: chain.id, token: match[2], ...(token ? { decimals: token.decimals } : {}), holder_count: token?.holders ?? 0, holders }];
   }],
@@ -357,9 +658,69 @@ const routes = [
     const pools = chain.pools.filter((pool) => pool.tokens.includes(match[2])).slice(0, 50);
     return [200, { pools: pools.map((pool) => poolJSON(chain, pool)) }];
   }],
+  [/^\/v1\/chains\/(\d+)\/pools\/(0x[0-9a-f]+)\/liquidity$/, (chain, match) => {
+    const pool = findPool(chain, match[2]);
+    if (!pool || !CONCENTRATED.has(pool.protocol)) return [404, { error: "no tick table for pool" }];
+    return [200, liquidityJSON(chain, pool)];
+  }],
   [/^\/v1\/chains\/(\d+)\/pools\/(0x[0-9a-f]+)$/, (chain, match) => {
     const pool = findPool(chain, match[2]);
     return pool ? [200, poolJSON(chain, pool)] : [404, { error: "unknown pool" }];
+  }],
+  [/^\/v1\/chains\/(\d+)\/wallets$/, (chain, _match, query) => {
+    const days = Number(query.get("window") ?? 30);
+    if (!Number.isInteger(days) || days < 1 || days > 90) return [400, { error: "window must be days between 1 and 90" }];
+    const sort = query.get("sort") || "realized";
+    const key = { realized: (s) => Number(s.realized_usd), winrate: (s) => s.win_rate, roi: (s) => Number(s.roi), volume: (s) => Number(s.bought_usd) + Number(s.sold_usd) }[sort];
+    if (!key) return [400, { error: "sort must be one of realized, winrate, roi, volume" }];
+    const label = query.get("label") ?? "";
+    const limit = Number(query.get("limit") ?? 200);
+    const rows = chain.wallets
+      .filter((entry) => !label || entry.labels.includes(label))
+      .map((entry) => ({ wallet: entry.wallet, labels: entry.labels, ...walletStats(entry, days), window_days: days }))
+      .sort((left, right) => key(right) - key(left))
+      .slice(0, limit);
+    return [200, { chain_id: chain.id, window_days: days, sort, label, refreshed_at: rows.length ? now() - 240 : null, wallets: rows }];
+  }],
+  [/^\/v1\/chains\/(\d+)\/wallets\/(0x[0-9a-f]+)$/, (chain, match) => {
+    const entry = findWallet(chain, match[2]);
+    const stats = entry ? WINDOWS.map((days) => entry.stats[days]) : [];
+    return [200, { chain_id: chain.id, wallet: match[2], labels: entry?.labels ?? [], refreshed_at: entry ? now() - 240 : null, stats }];
+  }],
+  [/^\/v1\/chains\/(\d+)\/wallets\/(0x[0-9a-f]+)\/positions$/, (chain, match, query) => {
+    const entry = findWallet(chain, match[2]);
+    const status = query.get("status");
+    const limit = Number(query.get("limit") ?? 200);
+    const positions = entry ? positionsOf(chain, entry).filter((position) => !status || (status === "open") === position.open) : [];
+    return [200, { chain_id: chain.id, wallet: match[2], positions: positions.slice(0, limit).map((position) => positionJSON(chain, entry, position)) }];
+  }],
+  [/^\/v1\/chains\/(\d+)\/wallets\/(0x[0-9a-f]+)\/trades$/, (chain, match, query) => {
+    const entry = findWallet(chain, match[2]);
+    const limit = Number(query.get("limit") ?? 200);
+    const token = query.get("token");
+    const cursor = query.has("before_height")
+      ? [Number(query.get("before_height")), Number(query.get("before_log_index") ?? Infinity), Number(query.get("before_operation_index") ?? Infinity)]
+      : null;
+    const before = (trade) =>
+      !cursor ||
+      trade.block_height < cursor[0] ||
+      (trade.block_height === cursor[0] && (trade.log_index < cursor[1] || (trade.log_index === cursor[1] && trade.operation_index < cursor[2])));
+    const trades = (entry ? ledgerOf(chain, entry) : []).filter((trade) => (!token || trade.token === token) && before(trade));
+    const page = trades.slice(0, limit);
+    const last = page[page.length - 1];
+    const next = page.length === limit && last ? { before_height: last.block_height, before_log_index: last.log_index, before_operation_index: last.operation_index } : undefined;
+    return [200, { chain_id: chain.id, wallet: match[2], trades: page, ...(next ? { next } : {}) }];
+  }],
+  [/^\/v1\/chains\/(\d+)\/tokens\/(0x[0-9a-f]+)\/traders$/, (chain, match, query) => {
+    const limit = Number(query.get("limit") ?? 200);
+    const rows = [];
+    for (const entry of chain.wallets) {
+      if (!entry.held.some((token) => token.address === match[2])) continue;
+      const position = positionsOf(chain, entry).find((item) => item.token.address === match[2]);
+      if (position) rows.push({ labels: entry.labels, ...positionJSON(chain, entry, position) });
+    }
+    rows.sort((left, right) => Number(right.realized_usd) - Number(left.realized_usd));
+    return [200, { chain_id: chain.id, token: match[2], traders: rows.slice(0, limit) }];
   }],
   [/^\/v1\/chains\/(\d+)\/(tokens|holders)\/(0x[0-9a-f]+)\/transfers$/, (chain, match, query) => {
     const limit = Number(query.get("limit") ?? 200);
@@ -376,11 +737,12 @@ const routes = [
 
 // --- Launchpad ---
 //
-// four.meme runs on BSC and Flap on BSC and Base; each mock block may launch
+// four.meme runs on BSC, Flap on BSC, Base and Robinhood Chain and Pons on
+// Robinhood Chain; each mock block may launch
 // a curve, and every open curve trades a little, sells out at 100% and
 // migrates a few blocks later.
 
-const LAUNCHPADS = { 56: ["fourmeme", "flap"], 8453: ["flap"] };
+const LAUNCHPADS = { 56: ["fourmeme", "flap"], 8453: ["flap"], 4663: ["flap", "pons"] };
 const LAUNCH_NAMES = ["CAT", "MOON", "FROG", "AI", "PUMP", "BULL", "GEM", "RICH", "DRAGON", "PANDA", "ROCKET", "LUCKY"];
 
 function launchCurve(chain, time) {
@@ -438,6 +800,10 @@ function launchpadJSON(chain, token) {
     price: String(Math.floor(priceUsd * 1e18 / chain.chain.nativePrice)),
     price_usd: token.trades > 0 ? decimalString(priceUsd) : null,
     volume_24h_usd: token.trades > 0 ? decimalString(token.trades * 37.5) : null,
+    direct: false,
+    trading_pool_id: null,
+    launch_start: null,
+    launch_end: null,
   };
 }
 
@@ -515,7 +881,7 @@ function mineBlock(chain) {
   stepCurves(chain, time);
   const active = chain.tokens.filter(() => random() < 0.08);
   for (const token of active) {
-    if (token.symbol === "USDC") token.price = 1 + (random() - 0.5) * 0.0002;
+    if (token.symbol === "USDC" || token.symbol === "USDG") token.price = 1 + (random() - 0.5) * 0.0002;
     else token.price *= Math.exp((random() - 0.5) * (token.quote ? 0.001 : 0.01));
     const trades = [];
     for (let count = 1 + Math.floor(random() * 3); count > 0; count--) {
@@ -529,6 +895,11 @@ function mineBlock(chain) {
     if (random() < 0.3) token.transfers.unshift(makeTransfer(chain, token, chain.height, time));
     if (trades.length === 0) continue;
     publish(`trades:${chain.id}:token:${token.address}`, { type: "trades", channel: `trades:${chain.id}:token:${token.address}`, height: chain.height, trades });
+    for (const trade of trades) {
+      for (const channel of [`trades:${chain.id}:wallet:${trade.trader}`, ...(trade.trader_labels ?? []).map((label) => `trades:${chain.id}:label:${label}`)]) {
+        publish(channel, { type: "trades", channel, height: chain.height, trades: [trade] });
+      }
+    }
     for (const pool of token.pools) {
       const poolTrades = trades.filter((trade) => trade.pool_id === pool.pool_id);
       if (poolTrades.length > 0) {
@@ -566,6 +937,18 @@ function addToCandle(token, trade) {
       open_time: openTime, open, high: Math.max(open, price), low: Math.min(open, price), close: price,
       volume_usd: Number(trade.value_usd), volume_base: Number(trade.base_amount), trades: 1,
     });
+  }
+}
+
+// Wallets are made once every helper above is defined; the seeded trades
+// then get some of them as traders.
+for (const chain of Object.values(state)) {
+  chain.wallets = makeWallets(chain.tokens);
+  for (const token of chain.tokens) {
+    for (const trade of token.trades) {
+      delete trade.trader_labels;
+      Object.assign(trade, traderOf(chain));
+    }
   }
 }
 

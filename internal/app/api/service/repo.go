@@ -56,13 +56,29 @@ type LiquidityReader interface {
 	PoolTickTable(ctx context.Context, chainID uint64, poolID string) (model.PoolTickTable, bool, error)
 }
 
-// LaunchpadReader reads market-launchpad's bonding-curve tokens.
+// WalletReader 读 market-wallet 的持仓、流水、统计和标签。
+type WalletReader interface {
+	// WalletStats 返回最近一次汇总的钱包统计，按 query.Sort 降序；还没有汇总时为空。
+	WalletStats(ctx context.Context, query model.WalletStatsQuery) ([]model.WalletStats, error)
+	// Positions 返回一个钱包（按最近交易时间倒序）或一个代币（按已实现盈亏降序）的持仓。
+	Positions(ctx context.Context, query model.PositionQuery) ([]model.PricedPosition, error)
+	// WalletTrades 返回钱包的账本流水，最新的在前。
+	WalletTrades(ctx context.Context, query model.WalletTradeQuery) ([]model.WalletTrade, error)
+	// LabeledWallets 返回带 label 标签的全部钱包。
+	LabeledWallets(ctx context.Context, chainID uint64, label string) ([]string, error)
+	// WalletLabels 返回 wallets 中各钱包的标签。
+	WalletLabels(ctx context.Context, chainID uint64, wallets []string) (map[string][]string, error)
+}
+
+// LaunchpadReader reads market-launchpad's launchpad tokens.
 //
 // LaunchpadReader 读取 market-launchpad 的发射平台代币。
 type LaunchpadReader interface {
 	// LaunchpadList returns one of the new / bonding / migrated lists.
 	LaunchpadList(ctx context.Context, query model.LaunchpadQuery) ([]model.LaunchpadListing, error)
-	// LaunchpadToken returns one token; ok is false when market-launchpad
-	// has not seen it.
-	LaunchpadToken(ctx context.Context, chainID uint64, token string) (model.LaunchpadListing, bool, error)
+	// LaunchpadToken returns one token, with targets for a direct launch's
+	// pseudo-progress; ok is false when market-launchpad has not seen it.
+	LaunchpadToken(ctx context.Context, chainID uint64, token string, targets model.LaunchpadTargets) (model.LaunchpadListing, bool, error)
+	// LaunchpadProtocols returns the chain's launchpad platforms.
+	LaunchpadProtocols(ctx context.Context, chainID uint64) ([]string, error)
 }

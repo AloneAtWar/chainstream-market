@@ -33,4 +33,18 @@ message API {
   // intervals are the candle sizes served, which must be among
   // market-engine's market.intervals.
   repeated google.protobuf.Duration intervals = 2;
+  // launchpad configures the launchpad lists.
+  Launchpad launchpad = 3;
+}
+
+// Launchpad sets the pseudo-progress of direct launches, tokens launched
+// straight into a DEX pool (Bankr, Clanker, pools.trade). One without a
+// launch window shows its fully diluted value over a target value as its
+// progress, and stays in the bonding list when it passes it.
+message Launchpad {
+  // target_fdv_usd is the target in USD, default 69000.
+  double target_fdv_usd = 1;
+  // protocol_target_fdv_usd overrides it per protocol; poolstrade defaults
+  // to 50000.
+  map<string, double> protocol_target_fdv_usd = 2;
 }

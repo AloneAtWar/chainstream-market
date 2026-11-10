@@ -1,6 +1,6 @@
 # 其它服务
 
-本页介绍 market-engine 之外的六个组件：market-api（含实时推送）、holder-indexer、market-registry、market-launchpad、market-rankings 和 ch-loader。
+本页介绍 market-engine 之外的七个组件：market-api（含实时推送）、holder-indexer、market-registry、market-launchpad、market-rankings、market-wallet 和 ch-loader。
 除 market-api 和 market-rankings 外，它们都通过 [chainsync](architecture.md) 各自按 offset 顺序读链 topic、维护自己的检查点。
 
 ## market-api
@@ -23,12 +23,18 @@ go run ./cmd/market-api -conf configs/market-api.yaml   # 需要 clickhouse.addr
 | `GET /v1/chains/{chain}/tokens/{token}` | registry 中的代币元数据：标准、识别状态、名称、符号、小数位、部署信息、原始元数据 JSON |
 | `GET /v1/chains/{chain}/tokens/{token}/pools` | 交易该代币的池子，最近观察到的在前，支持 `limit` |
 | `GET /v1/chains/{chain}/pools/{pool}` | 池子元数据：协议、DEX、代币、原始元数据 JSON |
-| `GET /v1/chains/{chain}/pools/{pool}/liquidity` | 集中流动性池在当前价下各价格区间的币量、合计及 `band_bps` 内的深度（来自 engine 的 tick 表）；表过期或 hook 可能在表外结算时 `usable` 为 false；engine 没有该池的表时返回 404 |
+| `GET /v1/chains/{chain}/pools/{pool}/liquidity` | 集中流动性池在当前价下各价格区间的币量、合计及 `band_bps` 内的深度（来自 engine 的 tick 表）；`decimals` 按池子顺序给出两个代币的精度（未知为 null，V4 原生币为 18），前端用它把 tick 换算成价格；表过期或 hook 可能在表外结算时 `usable` 为 false；engine 没有该池的表时返回 404 |
 | `GET /v1/chains/{chain}/tokens?sort=volume_24h` | market-rankings 生成的代币列表 |
+| `GET /v1/chains/{chain}/launchpad/protocols` | market-launchpad 在这条链上见过的发射平台，供平台筛选 |
 | `GET /v1/chains/{chain}/launchpad/tokens?column=new` | market-launchpad 的三栏之一（新币 / 发射中 / 已迁移），见 [market-launchpad](#market-launchpad) |
 | `GET /v1/chains/{chain}/launchpad/tokens/{token}` | 单个发射平台代币的曲线：状态、进度、已募集、成交笔数、发射与迁移信息；不是发射平台代币时返回 404 |
 | `GET /v1/chains/{chain}/tokens/{token}/transfers` | 代币的 ERC-20 转账（来自 ch-loader），`holder` 可限定某一方 |
 | `GET /v1/chains/{chain}/holders/{holder}/transfers` | 某地址跨代币的转入转出，`token` 可限定代币 |
+| `GET /v1/chains/{chain}/wallets/{wallet}` | 钱包的标签和各窗口统计（来自 market-wallet） |
+| `GET /v1/chains/{chain}/wallets/{wallet}/positions` | 钱包持仓，最近交易的在前，带均价、已实现和未实现盈亏；`status=open` / `closed` 过滤 |
+| `GET /v1/chains/{chain}/wallets/{wallet}/trades` | 钱包的账本流水，新的在前，每笔带事件（建仓/加仓/减仓/清仓/untracked）和已实现盈亏；支持 `token`、`limit`；整页返回时带 `next: {before_height, before_log_index, before_operation_index}`，原样传回可以在同一区块里接着翻 |
+| `GET /v1/chains/{chain}/wallets?window=30&label=smart_money` | 一个窗口（天）的钱包排行；`sort` 为 `realized`（默认）、`winrate`、`roi`、`volume`，`label` 只看带该标签的钱包 |
+| `GET /v1/chains/{chain}/tokens/{token}/traders` | 代币的交易者按已实现盈亏排序（盈利榜），带标签 |
 | `GET /v1/stream` | 实时交易与 K 线的 WebSocket，需开启 `live.enabled` |
 | `GET /healthz` | 进程存活时返回 204 |
 
@@ -40,6 +46,7 @@ go run ./cmd/market-api -conf configs/market-api.yaml   # 需要 clickhouse.addr
 - 交易支持 `limit` 和 `before_height` 向前翻页。
 - 转账支持 `limit`、`before_height`、`before_log_index`；整页返回时带 `next: {before_height, before_log_index}`，原样传回即可继续，
   不会跳过同一块剩余的转账。金额为原始单位 `amount_raw`；只存 ERC-20 转账，所以原生币伪地址不做映射。
+- market-wallet 给钱包打过标签时，交易带 `trader_labels`、持有人带 `labels`（如 `smart_money`、`bot`）；market-api 每分钟重读一次标签。
 - 所有小数值以字符串返回。
 
 ## 实时推送（Live push）
@@ -83,6 +90,8 @@ go run ./cmd/market-api -conf configs/market-api.yaml   # 需要 clickhouse.addr
 | `trades:<chain>:token:<token>` | 以该代币为 base 的交易，同 `/tokens/{token}/trades` |
 | `candles:<chain>:pool:<pool>:<interval>` | 池子 K 线，`interval` 取自 `api.intervals` |
 | `candles:<chain>:token:<token>:<interval>` | 代币聚合 K 线 |
+| `trades:<chain>:wallet:<wallet>` | 某个钱包的交易 |
+| `trades:<chain>:label:<label>` | 带某个标签的全部钱包的交易，如 `trades:56:label:smart_money`，用于聪明钱监控 |
 
 地址统一小写，代币别名（如原生币伪地址）映射为包装代币。`subscribed` 回复列出服务端规范化后的频道名，之后的消息都用这个写法。
 每个连接最多订阅 `live.max_subscriptions` 个频道；非法请求收到 `error` 消息，且不改变任何订阅。
@@ -174,15 +183,20 @@ go run ./cmd/market-registry -conf configs/market-registry.yaml   # 需要 postg
 go run ./cmd/market-launchpad -conf configs/market-launchpad.yaml   # 需要 postgres.dsn
 ```
 
-代码：`internal/app/launchpad`。它按自己的检查点读每条链的 topic，跟踪发射平台（bonding curve）代币的生命周期，
-支撑 GMGN / OKX 式的三栏：新币、发射中、已迁移。chainstream-evm 目前解析 four.meme（BSC）和 Flap（BSC、Base），
-区块里带有 `launchpad_events`（`CREATED`、`COMPLETED`、`MIGRATED`）和曲线交易：曲线交易就是作用在作用域池 `<manager>:<token>`
-上的普通 swap，其 `pool_state.curve` 是交易后的曲线状态。
+代码：`internal/app/launchpad`。它按自己的检查点读每条链的 topic，跟踪发射平台代币的生命周期，
+支撑 GMGN / OKX 式的三栏：新币、发射中、已迁移。chainstream-evm 解析 four.meme（BSC）、Flap（BSC、Base、Robinhood Chain）
+和 Pons（Robinhood Chain）的 bonding curve，区块里带有 `launchpad_events`（`CREATED`、`COMPLETED`、`MIGRATED`）和曲线交易：
+曲线交易就是作用在作用域池 `<manager>:<token>` 上的普通 swap，其 `pool_state.curve` 是交易后的曲线状态。它还解析直发平台：
+发射即进入 Uniswap v4 池、没有曲线的 Bankr、Long.xyz、Clanker 和 pools.trade（Robinhood Chain）。
 
 - **生命周期**：`bonding`（曲线交易中）→ `completed`（已打满，待迁移）→ `migrated`（已迁移到 DEX）。状态只前进不后退；
   迁移时记录目标 DEX 池。非 `bonding` 状态但没有交易上报进度的代币按 100% 计。
 - **曲线状态**：进度（wad，1e18 = 100%）、剩余可售代币、已募集计价币、价格（每 1e18 最小单位代币对应的计价币最小单位）
   取该代币块内最后一笔曲线交易后的值。`launchpad.protocols` 中协议的交易即使没有曲线状态也计入。买、卖笔数和最后成交时间累加。
+- **直发代币**：带 `direct` 的 `CREATED` 给出代币的交易池，该池的 swap 计为代币的成交（代币流出池子为买入），从发射块开始，
+  重启后同样生效。直发代币不会打满或迁移，一直是 `bonding`。进度在读取时计算：有发射窗口（`launch_start` 到 `launch_end`，
+  即 Long.xyz 的 epoch）时按时间推进；否则为完全稀释市值（market-rankings 的 USD 价格 × 发射池的 `total_supply`）除以
+  market-api `api.launchpad` 中该平台的目标市值（默认 $69k，pools.trade 为 $50k），最多 100%。代币还没有价格、精度或供应量时进度为空。
 - **晚发现的发射**：发射早于 topic 起点、先以交易被看到的代币，以该块作为近似发射时间，`launch_seen` 为 false，不进入新币栏。
 - **时间**：各栏的时间窗口从已应用的最新区块时间（`launchpad_heads`）往回算，而不是墙上时钟，所以重放或消费落后时列表与链头一致。
 - **重组**：一个块首次修改某行之前，先把该行（或其不存在）存入 `launchpad_undo`，回滚方式与 registry 相同；
@@ -192,17 +206,18 @@ go run ./cmd/market-launchpad -conf configs/market-launchpad.yaml   # 需要 pos
 | --- | --- |
 | `launchpad_checkpoints` | 每条链一行：Kafka offset、高度、哈希、已裁剪高度 |
 | `launchpad_heads` | 每条链一行：最新应用区块的高度和时间 |
-| `launchpad_tokens` | `(chain_id, token)` 及协议、作用域池 ID、manager、计价币、创建者、名称、符号、元数据 URI、状态、曲线状态、成交笔数，以及发射 / 打满 / 迁移的高度和时间；每栏一个部分索引 |
+| `launchpad_tokens` | `(chain_id, token)` 及协议、作用域池 ID、manager、计价币、创建者、名称、符号、元数据 URI、状态、曲线状态、成交笔数，以及发射 / 打满 / 迁移的高度和时间；每栏一个部分索引；直发代币另有 `direct`、`trading_pool_id` 和发射窗口 |
+| `launchpad_protocols` | `(chain_id, protocol)`：有代币的每个平台，第一个代币到达时加入 |
 | `launchpad_undo` | 每块每个代币修改前的行（JSONB），该块新建时为 NULL |
 
 `GET /v1/chains/{chain}/launchpad/tokens` 的 `column`：
 
 - `new`（新币）：仍在 `bonding`、`max_age`（默认 24h）内看到发射的代币，按发射时间倒序。
 - `bonding`（发射中）：`bonding` 或 `completed`、`max_age` 内发射、`stale`（默认 1h）内有成交、进度不低于 `min_progress`（小数，默认 0）的代币，
-  按进度倒序。长时间没有成交的代币会退出这一栏。
+  按进度倒序（直发代币按计算出的进度）。长时间没有成交的代币会退出这一栏。
 - `migrated`（已迁移）：`migrated_age`（默认 72h）内迁移的代币，按迁移时间倒序。
 
-时间窗口可写秒数或 Go duration（如 `6h`），最多 720h。`protocol`（`fourmeme`、`flap`）可筛选平台，`limit` 默认 50（最多 1000）。
+时间窗口可写秒数或 Go duration（如 `6h`），最多 720h。`protocol`（`fourmeme`、`flap`、`pons`、`bankr`、`longxyz`、`clanker`、`poolstrade`）可筛选平台，`limit` 默认 50（最多 1000）。
 每个代币带有小数形式的进度、原始曲线数值、计价币的符号和小数位、registry 的名称和符号（兜底），以及被 market-rankings 收录后的 USD 价格、
 24h 成交额和持有人数。`head_time` 是窗口起算的链上时间。目前三栏靠轮询刷新，还没有实时推送频道。
 
@@ -239,6 +254,53 @@ go run ./cmd/market-rankings -conf configs/market-rankings.yaml   # 需要 click
 - `min_liquidity_usd`、`limit`（默认 200，最多 1000）、`offset`（最多 10000）。
 
 名称、符号、小数位来自 market-registry；响应中的 `refreshed_at` 是上次刷新的 unix 时间。
+
+## market-wallet
+
+```sh
+go run ./cmd/market-wallet -conf configs/market-wallet.yaml   # 需要 kafka、clickhouse 和 postgres
+```
+
+代码：`internal/app/wallet`。它回答"谁在什么币上赚钱"：每个钱包每个代币的成本账本、7/30/90 天的钱包统计，
+以及 `smart_money`、`bot` 这样的规则标签。需要 market-engine 开启 `live.enabled`、`live.driver: kafka` 并使用 ClickHouse 存储。
+
+```text
+{topic}-live → market-wallet → wallet_positions（PostgreSQL）+ wallet_trades（ClickHouse）
+                 每 15 分钟 → wallet_token_daily → wallet_stats → wallet_labels
+```
+
+**账本**：每笔有 USD 金额、不是异常价的买卖，按交易发起地址（`trader`，即 tx.from）用移动加权平均成本记账。
+买入把数量和金额加进持仓；卖出按均价取走有成本的部分，均价不变，已实现盈亏 = 这部分对应的收入 − 成本。
+转入或空投来的代币没有成本，卖出只计成交额、不计盈亏（事件 `untracked`）。卖出后剩余不到 `wallet.close_ratio` 视为清仓。
+胜率按笔算：计入盈亏的卖出里盈利的比例。
+
+**跟读 live topic**：market-engine 在 live topic 上跳过比 `live.max_lag` 更旧的区块，所以区块到达时如果高度不连续，
+market-wallet 先从 ClickHouse 的 `trades` 表按 `revision_height` 补上缺的高度再应用。首次启动从 live topic 末尾开始读，
+同样从 ClickHouse 回放 `wallet.history`（最长 90 天）。已应用的区块重复投递会跳过；同一区块缺了分片则停止。每条区块记录都带 `parts`（该区块的记录总数）：下一个区块到达时，如果上一个区块的分片还没收齐（market-engine 发布到一半崩溃，之后又因为太旧跳过了它），先回滚这个区块，再从 ClickHouse 补齐。
+每次写入都在 `wallet_undo` 记下每个持仓在该块第一次改动之前的状态，`revert` 时恢复持仓并删掉被回滚的 `wallet_trades`；
+undo 与其他服务一样裁剪到 `max(finalized, height − wallet.history_depth)`，最多保留 `history_depth` 个区块；这里的高度是 revision 高度，延迟写出的成交随写出它的区块一起回滚。回滚到已裁剪的高度以下会报 `ErrReorgTooDeep` 停止，所以 `wallet.history_depth` 不应小于上游 chainstream-evm 的 `scanner.cache_size`。流水先写 ClickHouse，再在一个 PostgreSQL 事务里提交持仓和检查点；
+重启时删掉检查点之后的流水。接近链头时每块提交，追块时按 `wallet.flush_rows` 或 `wallet.flush_interval` 攒批。
+
+**统计与标签**：每隔 `wallet.stats.refresh_interval`，从 `wallet_trades` 重算变化过的日子的 `wallet_token_daily`（上次汇总最新成交的前一天、上次汇总开始后被删掉的流水里最早的那天、上次汇总最高 apply_height 及以上写入的流水里最早的那天，后者能覆盖同一区块后到的分片），
+按每个窗口（从最新成交所在的日子往前数，不按墙钟）写一个新版本的 `wallet_stats`，记进 `wallet_refreshes`，再重算规则标签：
+
+- `smart_money`：`smart_money.window_days`（30 天）内已实现盈亏 ≥ 5000 美元、胜率 ≥ 50%、交易代币 ≥ 10 个、
+  亏损超过一半的代币不超过 30%、不是机器人，按已实现盈亏取前 1000。
+- `bot`：`bot.window_days`（7 天）内交易 ≥ 2000 笔，或清仓 ≥ 10 次且其中 30% 在 `fast_close_seconds` 内建仓又清仓。
+
+不再符合的规则标签会删除，其它来源（`source`）的标签不动。所有门槛都在配置里。
+
+| 表 | 内容 |
+| --- | --- |
+| `wallet_positions`（PostgreSQL） | `(chain_id, wallet, token)`：持仓数量、剩余成本、已实现盈亏、成交额和笔数、首次买入、本轮建仓时间 |
+| `wallet_undo`、`wallet_checkpoints`（PostgreSQL） | 回滚历史和跟读位置：live topic offset、高度、区块分片和分片总数 |
+| `wallet_pending_invalidations`（PostgreSQL） | 将要删除的流水范围，写进 `wallet_invalidations` 之后才清掉；两步之间崩溃，下次启动补写 |
+| `wallet_labels`（PostgreSQL） | `(chain_id, wallet, label)`，带 `source`（market-wallet 写的是 `rule`）和生效时间 |
+| `wallet_trades`（ClickHouse） | 每笔账本流水：事件、已实现盈亏、持仓时长，按钱包和时间排序；`wallet.trades_days` 后过期 |
+| `wallet_token_daily`、`wallet_stats`、`wallet_refreshes`（ClickHouse） | 日汇总、按窗口的统计（每个版本一个分区）、每次汇总；market-api 只读最新版本，market-wallet 发布新版本后只留它和上一个版本 |
+| `wallet_invalidations`（ClickHouse） | 回滚或重启删掉流水之后记下受影响的最早成交日，下次汇总从那天重算 |
+
+资金来源聚类、KOL 名单和关注列表还没有做。
 
 ## ch-loader
 

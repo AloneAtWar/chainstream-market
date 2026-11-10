@@ -198,8 +198,11 @@ chains: [{name: eth, chain_id: 1, topic: a}]
 
 func TestLoadRepositoryConfig(t *testing.T) {
 	bootstrap := mustLoad(t, filepath.Join("..", "..", "..", "..", "configs", "market-engine.yaml"))
-	if len(bootstrap.Chains) != 3 {
-		t.Fatalf("chains = %d, want 3", len(bootstrap.Chains))
+	if len(bootstrap.Chains) != 4 {
+		t.Fatalf("chains = %d, want 4", len(bootstrap.Chains))
+	}
+	if robinhood := bootstrap.Chains[3]; robinhood.GetChainId() != 4663 || len(robinhood.GetFeeds()) != 37 {
+		t.Fatalf("robinhood chain = %d with %d feeds", robinhood.GetChainId(), len(robinhood.GetFeeds()))
 	}
 	if bootstrap.Kafka.FetchMaxWait.AsDuration() != time.Second/2 {
 		t.Fatalf("fetch_max_wait = %s", bootstrap.Kafka.FetchMaxWait)

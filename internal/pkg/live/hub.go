@@ -35,7 +35,15 @@ type HubOptions struct {
 	// OriginPatterns lists the other origins browsers may connect from, as
 	// host patterns like "localhost:3000" or "*.example.com".
 	OriginPatterns []string
-	Logger         *slog.Logger
+	// Labels 给交易附上交易者的钱包标签，并启用 trades:<chain>:label:<label> 频道；为 nil
+	// 时两者都没有。
+	Labels LabelSource
+	Logger *slog.Logger
+}
+
+// LabelSource 返回钱包的标签（market-wallet 写的 wallet_labels），没有时为 nil。
+type LabelSource interface {
+	WalletLabels(chainID uint64, wallet string) []string
 }
 
 // Hub fans the live topics out to WebSocket clients by channel.
@@ -196,10 +204,18 @@ func (hub *Hub) dispatchBlock(update Update) {
 	var order []string
 	grouped := make(map[string][]Trade)
 	for _, trade := range update.Trades {
-		for _, channel := range []string{
+		channels := []string{
 			TradeChannel(update.ChainID, "pool", trade.PoolID),
 			TradeChannel(update.ChainID, "token", trade.BaseToken),
-		} {
+			TradeChannel(update.ChainID, "wallet", strings.ToLower(trade.Trader)),
+		}
+		if hub.options.Labels != nil {
+			trade.TraderLabels = hub.options.Labels.WalletLabels(update.ChainID, strings.ToLower(trade.Trader))
+			for _, label := range trade.TraderLabels {
+				channels = append(channels, TradeChannel(update.ChainID, "label", label))
+			}
+		}
+		for _, channel := range channels {
 			if len(hub.channels[channel]) == 0 {
 				continue
 			}
@@ -446,7 +462,7 @@ type parsedChannel struct {
 // pseudo-address, mapped to the token that carries their market data.
 func (hub *Hub) parseChannel(name string) (parsedChannel, error) {
 	parts := strings.Split(strings.TrimSpace(name), ":")
-	invalid := fmt.Errorf("invalid channel %q: want trades:<chain>:<pool|token>:<address> or candles:<chain>:<pool|token>:<address>:<interval>", name)
+	invalid := fmt.Errorf("invalid channel %q: want trades:<chain>:<pool|token|wallet>:<address>, trades:<chain>:label:<label> or candles:<chain>:<pool|token>:<address>:<interval>", name)
 	if len(parts) < 4 {
 		return parsedChannel{}, invalid
 	}
@@ -458,7 +474,19 @@ func (hub *Hub) parseChannel(name string) (parsedChannel, error) {
 		return parsedChannel{}, fmt.Errorf("chain %d is not streamed", chainID)
 	}
 	subject, key := parts[2], strings.ToLower(parts[3])
-	if (subject != "pool" && subject != "token") || key == "" {
+	switch {
+	case key == "":
+		return parsedChannel{}, invalid
+	case subject == "wallet" || subject == "label":
+		// 钱包和标签频道只有交易。
+		if parts[0] != "trades" || len(parts) != 4 {
+			return parsedChannel{}, invalid
+		}
+		if subject == "label" && hub.options.Labels == nil {
+			return parsedChannel{}, fmt.Errorf("wallet labels are not streamed")
+		}
+		return parsedChannel{name: TradeChannel(chainID, subject, key), chainID: chainID}, nil
+	case subject != "pool" && subject != "token":
 		return parsedChannel{}, invalid
 	}
 	if subject == "token" {

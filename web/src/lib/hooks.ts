@@ -163,6 +163,31 @@ export function useLiveTrades(chain: number, subject: "token" | "pool", key: str
   );
 }
 
+// useLiveFeed collects what a channel without REST history pushes, such as
+// the trades of every smart money wallet: it starts empty, keeps what
+// arrived across reconnects, and drops trades of reverted blocks.
+export function useLiveFeed(channel: string | null, limit = TRADE_LIMIT): Trade[] {
+  const [trades, setTrades] = useState<Trade[]>(NO_TRADES);
+  useEffect(() => {
+    if (channel === null) return;
+    const chain = chainOfChannel(channel);
+    setTrades(NO_TRADES);
+    const unsubscribe = live.subscribe(channel, (message) => {
+      if (message.type === "trades") setTrades((current) => mergeTrades(current, message.trades, limit));
+    });
+    const offChain = live.onChain((message) => {
+      if (message.type === "revert" && message.chain_id === chain) {
+        setTrades((current) => revertTrades(current, message.rollback_to));
+      }
+    });
+    return () => {
+      unsubscribe();
+      offChain();
+    };
+  }, [channel, limit]);
+  return trades;
+}
+
 export function useLiveStatus(): LiveStatus {
   return useSyncExternalStore(
     (notify) => live.onStatus(notify),

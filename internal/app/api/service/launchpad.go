@@ -25,17 +25,22 @@ const (
 // progressScale turns a wad progress into a fraction.
 var progressScale = decimal.New(1, 18)
 
-// WithLaunchpad serves market-launchpad's lists from reader.
+// WithLaunchpad serves market-launchpad's lists from reader, with targets
+// for direct launches' pseudo-progress.
 //
-// WithLaunchpad 启用发射平台三栏接口。
-func (server *Server) WithLaunchpad(reader LaunchpadReader) *Server {
+// WithLaunchpad 启用发射平台三栏接口，targets 用于直发代币的伪进度。
+func (server *Server) WithLaunchpad(reader LaunchpadReader, targets model.LaunchpadTargets) *Server {
 	server.launchpad = reader
+	server.launchpadTargets = targets
 	return server
 }
 
 // launchpadTokenResponse is one launchpad token. progress is a fraction
 // (1 = sold out); base_remaining, quote_raised and price are raw integers,
-// price in raw quote units per 1e18 raw token units.
+// price in raw quote units per 1e18 raw token units. A direct launch
+// (direct true) has no curve: it trades on trading_pool_id, and its progress
+// runs through its launch window (launch_start to launch_end) or, without
+// one, is its fully diluted value over its platform's target, capped at 1.
 type launchpadTokenResponse struct {
 	Token         string  `json:"token"`
 	Protocol      string  `json:"protocol"`
@@ -67,6 +72,10 @@ type launchpadTokenResponse struct {
 	PriceUSD      *string `json:"price_usd"`
 	Volume24hUSD  *string `json:"volume_24h_usd"`
 	Holders       *int64  `json:"holders"`
+	Direct        bool    `json:"direct"`
+	TradingPoolID *string `json:"trading_pool_id"`
+	LaunchStart   *int64  `json:"launch_start"`
+	LaunchEnd     *int64  `json:"launch_end"`
 }
 
 func launchpadToken(listing model.LaunchpadListing) launchpadTokenResponse {
@@ -79,7 +88,8 @@ func launchpadToken(listing model.LaunchpadListing) launchpadTokenResponse {
 		Price: bigString(listing.Price), Trades: listing.Trades, Buys: listing.Buys, Sells: listing.Sells,
 		LastTradeTime: listing.LastTradeTime, CompletedTime: listing.CompletedTime, MigratedTime: listing.MigratedTime,
 		TargetPoolID: listing.TargetPoolID, PriceUSD: listing.PriceUSD, Volume24hUSD: listing.Volume24hUSD,
-		Holders: listing.Holders,
+		Holders: listing.Holders, Direct: listing.Direct, TradingPoolID: listing.TradingPoolID,
+		LaunchStart: listing.LaunchStart, LaunchEnd: listing.LaunchEnd,
 	}
 	if listing.Progress != nil {
 		progress := decimal.NewFromBigInt(listing.Progress, 0).Div(progressScale).String()
@@ -102,6 +112,7 @@ func (server *Server) launchpadList(writer http.ResponseWriter, request *http.Re
 		server.fail(writer, request, err)
 		return
 	}
+	query.Targets = server.launchpadTargets
 	listings, err := server.launchpad.LaunchpadList(request.Context(), query)
 	if err != nil {
 		server.fail(writer, request, err)
@@ -132,7 +143,7 @@ func (server *Server) launchpadDetail(writer http.ResponseWriter, request *http.
 		server.fail(writer, request, err)
 		return
 	}
-	listing, ok, err := server.launchpad.LaunchpadToken(request.Context(), chain, token)
+	listing, ok, err := server.launchpad.LaunchpadToken(request.Context(), chain, token, server.launchpadTargets)
 	if err != nil {
 		server.fail(writer, request, err)
 		return
@@ -144,6 +155,25 @@ func (server *Server) launchpadDetail(writer http.ResponseWriter, request *http.
 	writeJSON(writer, http.StatusOK, map[string]any{
 		"chain_id": chain, "head_time": listing.HeadTime, "token": launchpadToken(listing),
 	})
+}
+
+// launchpadProtocols lists the chain's launchpad platforms, so a client
+// offers filters for the platforms that have tokens.
+func (server *Server) launchpadProtocols(writer http.ResponseWriter, request *http.Request) {
+	chain, err := chainID(request)
+	if err != nil {
+		server.fail(writer, request, err)
+		return
+	}
+	protocols, err := server.launchpad.LaunchpadProtocols(request.Context(), chain)
+	if err != nil {
+		server.fail(writer, request, err)
+		return
+	}
+	if protocols == nil {
+		protocols = []string{}
+	}
+	writeJSON(writer, http.StatusOK, map[string]any{"chain_id": chain, "protocols": protocols})
 }
 
 func launchpadListQuery(request *http.Request) (model.LaunchpadQuery, error) {

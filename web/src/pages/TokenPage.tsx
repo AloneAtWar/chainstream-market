@@ -5,6 +5,7 @@ import { CandleChart } from "../components/CandleChart";
 import { Address, CopyButton, Info, ProgressBar, Stat, Tabs, TokenAvatar } from "../components/common";
 import { HoldersTable, PoolsTable, TransfersTable } from "../components/tables";
 import { TradesTable } from "../components/TradesTable";
+import { TradersTable } from "../components/wallets";
 import { api, type LaunchpadToken } from "../lib/api";
 import { canonicalToken, INTERVALS, type Chain, type Interval } from "../lib/chains";
 import {
@@ -19,12 +20,13 @@ import {
   shortAddress,
 } from "../lib/format";
 import { useLiveCandles, useLiveTrades, useNow, useTokenMeta } from "../lib/hooks";
-import { formatRaised, metaLink, protocolLabel } from "../lib/launchpad";
+import { formatRaised, metaLink, progressBasis, protocolLabel } from "../lib/launchpad";
 
 const LAUNCHPAD_STATUS = { bonding: "发射中", completed: "已打满，待迁移", migrated: "已迁移" } as const;
 
 // LaunchpadInfo shows a launchpad token's bonding curve: its progress, what
-// it raised and where it migrated.
+// it raised and where it migrated; or, for a direct launch, its trading pool
+// and what its progress measures.
 function LaunchpadInfo({ chain, token, now }: { chain: Chain; token: LaunchpadToken; now: number }) {
   const meta = metaLink(token.meta_uri);
   return (
@@ -37,9 +39,15 @@ function LaunchpadInfo({ chain, token, now }: { chain: Chain; token: LaunchpadTo
         <span className="mono">{formatProgress(token.progress)}</span>
       </div>
       <dl>
-        <Info label="状态" value={LAUNCHPAD_STATUS[token.status]} />
-        <Info label="已募集" value={formatRaised(chain, token)} />
-        <Info label="曲线成交" value={`${formatInteger(token.trades)}（买 ${formatInteger(token.buys)} / 卖 ${formatInteger(token.sells)}）`} />
+        <Info label="状态" value={token.direct ? "发射中（直发，不迁移）" : LAUNCHPAD_STATUS[token.status]} />
+        <Info label="进度口径" value={progressBasis(token)} />
+        {token.direct ? (
+          token.trading_pool_id && <Info label="交易池" value={<Address chain={chain} value={token.trading_pool_id} kind="pool" />} />
+        ) : (
+          <Info label="已募集" value={formatRaised(chain, token)} />
+        )}
+        {token.launch_end !== null && <Info label="发射窗口结束" value={formatWindowEnd(token.launch_end, now)} />}
+        <Info label={token.direct ? "成交" : "曲线成交"} value={`${formatInteger(token.trades)}（买 ${formatInteger(token.buys)} / 卖 ${formatInteger(token.sells)}）`} />
         <Info
           label={token.launch_seen ? "发射" : "首次出现"}
           value={`${formatAge(token.launch_time, now)} 前 · #${formatInteger(token.launch_height)}`}
@@ -62,10 +70,17 @@ function LaunchpadInfo({ chain, token, now }: { chain: Chain; token: LaunchpadTo
   );
 }
 
-type Panel = "trades" | "holders" | "pools" | "transfers";
+// formatWindowEnd writes when a launch window ends or ended; now is in
+// seconds.
+function formatWindowEnd(end: number, now: number): string {
+  return end > now ? `${formatAge(now, end)} 后` : `${formatAge(end, now)} 前`;
+}
+
+type Panel = "trades" | "traders" | "holders" | "pools" | "transfers";
 
 const PANELS: { value: Panel; label: string }[] = [
   { value: "trades", label: "实时成交" },
+  { value: "traders", label: "盈利榜" },
   { value: "holders", label: "持有人" },
   { value: "pools", label: "池子" },
   { value: "transfers", label: "转账" },
@@ -173,6 +188,7 @@ export function TokenPage({ chain }: { chain: Chain }) {
               <Tabs value={panel} options={PANELS} onChange={setPanel} />
             </div>
             {panel === "trades" && <TradesTable chain={chain} trades={trades.data} loading={trades.loading} error={trades.error} showPool />}
+            {panel === "traders" && <TradersTable chain={chain} token={market} />}
             {panel === "holders" && <HoldersTable chain={chain} token={address} />}
             {panel === "pools" && <PoolsTable chain={chain} token={address} />}
             {panel === "transfers" && <TransfersTable chain={chain} subject="token" value={address} />}

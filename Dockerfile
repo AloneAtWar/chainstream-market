@@ -15,7 +15,7 @@ RUN --mount=type=cache,target=/go/pkg/mod --mount=type=cache,target=/root/.cache
       && git config --global url."git@github.com:".insteadOf "https://github.com/" \
       && go mod download; \
     fi \
-    && for command in market-engine market-api holder-indexer market-registry market-launchpad market-rankings ch-loader; do \
+    && for command in market-engine market-api holder-indexer market-registry market-launchpad market-rankings market-wallet ch-loader; do \
       go build -trimpath -ldflags "-X main.Version=${VERSION}" -o /out/$command ./cmd/$command || exit 1; \
     done
 

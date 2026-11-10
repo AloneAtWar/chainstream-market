@@ -34,11 +34,15 @@ type Server struct {
 	registry  RegistryReader
 	rankings  RankingReader
 	liquidity LiquidityReader
+	wallets   WalletReader
+	labels    live.LabelSource
 	launchpad LaunchpadReader
-	live      http.Handler
-	intervals map[string]time.Duration
-	logger    *slog.Logger
-	now       func() time.Time
+	// launchpadTargets set direct launches' pseudo-progress.
+	launchpadTargets model.LaunchpadTargets
+	live             http.Handler
+	intervals        map[string]time.Duration
+	logger           *slog.Logger
+	now              func() time.Time
 }
 
 // New serves the given candle intervals, named like "1m", "4h" or "1d".
@@ -88,7 +92,15 @@ func (server *Server) Handler() http.Handler {
 	if server.liquidity != nil {
 		mux.HandleFunc("GET /v1/chains/{chain}/pools/{pool}/liquidity", server.poolLiquidity)
 	}
+	if server.wallets != nil {
+		mux.HandleFunc("GET /v1/chains/{chain}/wallets", server.walletList)
+		mux.HandleFunc("GET /v1/chains/{chain}/wallets/{wallet}", server.wallet)
+		mux.HandleFunc("GET /v1/chains/{chain}/wallets/{wallet}/positions", server.walletPositions)
+		mux.HandleFunc("GET /v1/chains/{chain}/wallets/{wallet}/trades", server.walletTrades)
+		mux.HandleFunc("GET /v1/chains/{chain}/tokens/{token}/traders", server.tokenTraders)
+	}
 	if server.launchpad != nil {
+		mux.HandleFunc("GET /v1/chains/{chain}/launchpad/protocols", server.launchpadProtocols)
 		mux.HandleFunc("GET /v1/chains/{chain}/launchpad/tokens", server.launchpadList)
 		mux.HandleFunc("GET /v1/chains/{chain}/launchpad/tokens/{token}", server.launchpadDetail)
 	}
@@ -300,6 +312,8 @@ type tradeResponse struct {
 	// Outlier marks a swap left out of the token's candles because its
 	// price strayed too far from the token's reference price.
 	Outlier bool `json:"outlier"`
+	// TraderLabels 是交易者的钱包标签，如 smart_money、bot；没有时省略。
+	TraderLabels []string `json:"trader_labels,omitempty"`
 }
 
 func (server *Server) trades(keyName string) http.HandlerFunc {
@@ -347,7 +361,7 @@ func (server *Server) trades(keyName string) http.HandlerFunc {
 				BaseToken: trade.BaseToken, QuoteToken: trade.QuoteToken,
 				BaseAmount: trade.BaseAmount.String(), QuoteAmount: trade.QuoteAmount.String(),
 				PriceQuote: trade.PriceQuote.String(), PriceUSD: trade.PriceUSD.String(), ValueUSD: trade.ValueUSD.String(),
-				Outlier: trade.Outlier,
+				Outlier: trade.Outlier, TraderLabels: server.walletLabels(chain, trade.Trader),
 			}
 		}
 		writeJSON(writer, http.StatusOK, map[string]any{"trades": body})

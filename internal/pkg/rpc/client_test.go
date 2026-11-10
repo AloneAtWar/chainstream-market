@@ -144,7 +144,7 @@ func TestNativeBalancesNeedAMulticallContract(t *testing.T) {
 	if _, err := plain.Balances(context.Background(), Block{Height: 10, Hash: blockA}, []BalanceQuery{{Token: NativeToken, Holder: alice}}); err == nil {
 		t.Fatal("Balances() native without multicall error = nil")
 	}
-	for _, chainID := range []uint64{1, 56, 8453} {
+	for _, chainID := range []uint64{1, 56, 8453, 4663} {
 		if client, _ := New(Options{URL: "http://127.0.0.1:1", ChainID: chainID}); !client.NativeBalances() {
 			t.Fatalf("chain %d NativeBalances() = false", chainID)
 		}

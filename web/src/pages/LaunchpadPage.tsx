@@ -1,11 +1,12 @@
-import { keepPreviousData, useQuery } from "@tanstack/react-query";
+import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useEffect } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { CopyButton, ProgressBar, Status, Tabs, TokenAvatar } from "../components/common";
 import { api, type LaunchpadColumn, type LaunchpadToken } from "../lib/api";
 import type { Chain } from "../lib/chains";
 import { formatAge, formatInteger, formatPrice, formatProgress, formatUsd, shortAddress } from "../lib/format";
 import { useNow } from "../lib/hooks";
-import { formatRaised, LAUNCHPAD_PROTOCOLS, protocolLabel } from "../lib/launchpad";
+import { formatRaised, progressBasis, protocolLabel, unlistedProtocol } from "../lib/launchpad";
 
 const COLUMNS: { value: LaunchpadColumn; title: string; hint: string }[] = [
   { value: "new", title: "🆕 新币", hint: "按发射时间倒序" },
@@ -15,18 +16,27 @@ const COLUMNS: { value: LaunchpadColumn; title: string; hint: string }[] = [
 
 const PAGE = 50;
 const POLL = 5_000;
+// PROTOCOL_POLL refreshes a non-empty platform list; an empty one polls with
+// the columns, and a column holding a token of an unlisted platform refreshes
+// it at once.
+const PROTOCOL_POLL = 60_000;
 
 // LaunchpadPage shows launchpad tokens in three columns: new launches,
 // curves filling up and curves that moved to a DEX. market-api has no live
 // channel for them yet, so each column polls.
 export function LaunchpadPage({ chain }: { chain: Chain }) {
   const [params, setParams] = useSearchParams();
-  const protocols = LAUNCHPAD_PROTOCOLS.filter((item) => item.chains.includes(chain.id));
+  const listed = useQuery({
+    queryKey: ["launchpad-protocols", chain.id],
+    queryFn: () => api.launchpadProtocols(chain.id),
+    refetchInterval: (query) => (query.state.data?.length ? PROTOCOL_POLL : POLL),
+  });
+  const protocols = listed.data ?? [];
   const requested = params.get("protocol") ?? "";
-  const protocol = protocols.some((item) => item.value === requested) ? requested : "";
+  const protocol = protocols.includes(requested) ? requested : "";
   const now = useNow(1000);
 
-  const options = [{ value: "", label: "全部" }, ...protocols.map((item) => ({ value: item.value, label: item.label }))];
+  const options = [{ value: "", label: "全部" }, ...protocols.map((value) => ({ value, label: protocolLabel(value) }))];
   return (
     <div className="page">
       <div className="toolbar">
@@ -41,12 +51,19 @@ export function LaunchpadPage({ chain }: { chain: Chain }) {
           }}
         />
         <span className="muted toolbar-right">
-          {protocols.length === 0 ? `${chain.name} 上还没有接入发射平台` : "每 5 秒刷新"}
+          {listed.isSuccess && protocols.length === 0 ? `${chain.name} 上还没有发射平台代币` : "每 5 秒刷新"}
         </span>
       </div>
       <div className="launchpad-columns">
         {COLUMNS.map((column) => (
-          <LaunchpadColumnCard key={column.value} chain={chain} column={column} protocol={protocol} now={now} />
+          <LaunchpadColumnCard
+            key={column.value}
+            chain={chain}
+            column={column}
+            protocol={protocol}
+            protocols={listed.isSuccess ? protocols : null}
+            now={now}
+          />
         ))}
       </div>
     </div>
@@ -57,14 +74,17 @@ function LaunchpadColumnCard({
   chain,
   column,
   protocol,
+  protocols,
   now,
 }: {
   chain: Chain;
   column: (typeof COLUMNS)[number];
   protocol: string;
+  protocols: string[] | null;
   now: number;
 }) {
   const navigate = useNavigate();
+  const client = useQueryClient();
   const list = useQuery({
     queryKey: ["launchpad", chain.id, column.value, protocol],
     queryFn: () => api.launchpadList(chain.id, column.value, { protocol, limit: PAGE }),
@@ -72,6 +92,10 @@ function LaunchpadColumnCard({
     refetchInterval: POLL,
   });
   const tokens = list.data?.tokens ?? [];
+  const stale = protocols !== null && unlistedProtocol(tokens, protocols);
+  useEffect(() => {
+    if (stale) void client.invalidateQueries({ queryKey: ["launchpad-protocols", chain.id] });
+  }, [stale, client, chain.id]);
   return (
     <section className="card launchpad-column">
       <div className="card-head">
@@ -124,6 +148,7 @@ function LaunchpadCard({
             </Link>
             <span className="badge">{protocolLabel(token.protocol)}</span>
             {token.status === "completed" && <span className="badge warn">待迁移</span>}
+            {token.direct && <span className="badge">直发</span>}
           </div>
           <div className="token-sub muted" onClick={(event) => event.stopPropagation()}>
             {token.name && <span className="ellipsis">{token.name}</span>}
@@ -135,7 +160,7 @@ function LaunchpadCard({
           {formatAge(age, now)}
         </span>
       </div>
-      <div className="launchpad-progress">
+      <div className="launchpad-progress" title={progressBasis(token)}>
         <ProgressBar fraction={token.progress} done={token.status !== "bonding"} />
         <span className="mono">{formatProgress(token.progress)}</span>
       </div>
@@ -143,7 +168,7 @@ function LaunchpadCard({
         <span title="曲线已募集">💰 {formatRaised(chain, token)}</span>
         <span title="价格">{token.price_usd === null ? "—" : `$${formatPrice(token.price_usd)}`}</span>
         <span title="24h 成交额">Vol {formatUsd(token.volume_24h_usd)}</span>
-        <span title="曲线成交 买/卖">
+        <span title={token.direct ? "成交 买/卖" : "曲线成交 买/卖"}>
           <span className="up">{formatInteger(token.buys)}</span>/<span className="down">{formatInteger(token.sells)}</span>
         </span>
         {token.holders !== null && <span title="持有人">👥 {formatInteger(token.holders)}</span>}

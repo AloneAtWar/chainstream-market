@@ -34,16 +34,20 @@ func wireApp(contextContext context.Context, bootstrap *conf.Bootstrap, logger *
 	registryReader := data.NewRegistryReader(dataData)
 	rankingReader := data.NewRankingReader(dataData)
 	liquidityReader := data.NewLiquidityReader(dataData)
+	walletReader := data.NewWalletReader(dataData)
+	labelCache, cleanup2 := data.NewLabelCache(contextContext, dataData, bootstrap, logger)
 	launchpadReader := data.NewLaunchpadReader(dataData)
-	hub, err := data.NewHub(bootstrap, logger)
+	hub, err := data.NewHub(bootstrap, labelCache, logger)
 	if err != nil {
+		cleanup2()
 		cleanup()
 		return nil, nil, err
 	}
-	handler := service.NewHandler(api, reader, transferReader, holderReader, registryReader, rankingReader, liquidityReader, launchpadReader, hub, logger)
+	handler := service.NewHandler(api, reader, transferReader, holderReader, registryReader, rankingReader, liquidityReader, walletReader, labelCache, launchpadReader, hub, logger)
 	v := server.NewServers(api, metrics, handler, hub, logger)
 	app := newApp(v)
 	return app, func() {
+		cleanup2()
 		cleanup()
 	}, nil
 }

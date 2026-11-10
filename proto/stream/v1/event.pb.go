@@ -373,10 +373,11 @@ type BlockEvent struct {
 	// exact mode, or the node head when it was read (this block or a later
 	// one) in latest mode. Consumers replace whatever they kept for each pool.
 	PoolBalances []*PoolBalanceSnapshot `protobuf:"bytes,19,rep,name=pool_balances,json=poolBalances,proto3" json:"pool_balances,omitempty"`
-	// launchpad_events are the block's bonding-curve lifecycle facts (four.meme,
-	// Flap): token launches, curves that sold out, and curves whose liquidity
-	// moved to a DEX pool. Curve trades are ordinary trades whose pool_state
-	// carries the curve.
+	// launchpad_events are the block's launchpad lifecycle facts: token
+	// launches, curves that sold out, and curves whose liquidity moved to a DEX
+	// pool (four.meme, Flap, Pons), plus direct launches into a DEX pool with no
+	// curve (Bankr, Long.xyz, Clanker, pools.trade). Curve trades are ordinary
+	// trades whose pool_state carries the curve.
 	LaunchpadEvents []*LaunchpadEvent `protobuf:"bytes,20,rep,name=launchpad_events,json=launchpadEvents,proto3" json:"launchpad_events,omitempty"`
 	unknownFields   protoimpl.UnknownFields
 	sizeCache       protoimpl.SizeCache
@@ -565,9 +566,19 @@ type LaunchpadEvent struct {
 	MetaUri string `protobuf:"bytes,14,opt,name=meta_uri,json=metaUri,proto3" json:"meta_uri,omitempty"`
 	// target_pool_id, base_amount and quote_amount are set on MIGRATED.
 	// target_pool_id is empty when the event does not identify the pool.
-	TargetPoolId  string `protobuf:"bytes,15,opt,name=target_pool_id,json=targetPoolId,proto3" json:"target_pool_id,omitempty"`
-	BaseAmount    string `protobuf:"bytes,16,opt,name=base_amount,json=baseAmount,proto3" json:"base_amount,omitempty"`
-	QuoteAmount   string `protobuf:"bytes,17,opt,name=quote_amount,json=quoteAmount,proto3" json:"quote_amount,omitempty"`
+	TargetPoolId string `protobuf:"bytes,15,opt,name=target_pool_id,json=targetPoolId,proto3" json:"target_pool_id,omitempty"`
+	BaseAmount   string `protobuf:"bytes,16,opt,name=base_amount,json=baseAmount,proto3" json:"base_amount,omitempty"`
+	QuoteAmount  string `protobuf:"bytes,17,opt,name=quote_amount,json=quoteAmount,proto3" json:"quote_amount,omitempty"`
+	// direct is set on CREATED for a token launched straight into a DEX pool,
+	// with no curve. Such a launch has no COMPLETED or MIGRATED; its trades are
+	// the ordinary trades of trading_pool_id, which is empty when the launch
+	// transaction does not identify the pool.
+	Direct        bool   `protobuf:"varint,18,opt,name=direct,proto3" json:"direct,omitempty"`
+	TradingPoolId string `protobuf:"bytes,19,opt,name=trading_pool_id,json=tradingPoolId,proto3" json:"trading_pool_id,omitempty"`
+	// launch_start and launch_end are the platform's launch window in unix
+	// seconds (the Long.xyz epoch), or 0 when it has none.
+	LaunchStart   int64 `protobuf:"varint,20,opt,name=launch_start,json=launchStart,proto3" json:"launch_start,omitempty"`
+	LaunchEnd     int64 `protobuf:"varint,21,opt,name=launch_end,json=launchEnd,proto3" json:"launch_end,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -719,6 +730,34 @@ func (x *LaunchpadEvent) GetQuoteAmount() string {
 		return x.QuoteAmount
 	}
 	return ""
+}
+
+func (x *LaunchpadEvent) GetDirect() bool {
+	if x != nil {
+		return x.Direct
+	}
+	return false
+}
+
+func (x *LaunchpadEvent) GetTradingPoolId() string {
+	if x != nil {
+		return x.TradingPoolId
+	}
+	return ""
+}
+
+func (x *LaunchpadEvent) GetLaunchStart() int64 {
+	if x != nil {
+		return x.LaunchStart
+	}
+	return 0
+}
+
+func (x *LaunchpadEvent) GetLaunchEnd() int64 {
+	if x != nil {
+		return x.LaunchEnd
+	}
+	return 0
 }
 
 // PoolBalanceSnapshot is a multi-token pool's real balances and curve
@@ -2236,7 +2275,7 @@ const file_stream_v1_event_proto_rawDesc = "" +
 	"\x0etick_snapshots\x18\x12 \x03(\v2\x1b.stream.v1.PoolTickSnapshotR\rtickSnapshots\x12C\n" +
 	"\rpool_balances\x18\x13 \x03(\v2\x1e.stream.v1.PoolBalanceSnapshotR\fpoolBalances\x12D\n" +
 	"\x10launchpad_events\x18\x14 \x03(\v2\x19.stream.v1.LaunchpadEventR\x0flaunchpadEventsJ\x04\b\n" +
-	"\x10\vJ\x04\b\v\x10\fR\fblock_pricesR\x10reference_prices\"\x96\x04\n" +
+	"\x10\vJ\x04\b\v\x10\fR\fblock_pricesR\x10reference_prices\"\x98\x05\n" +
 	"\x0eLaunchpadEvent\x121\n" +
 	"\x04type\x18\x01 \x01(\x0e2\x1d.stream.v1.LaunchpadEventTypeR\x04type\x12\x1a\n" +
 	"\bprotocol\x18\x02 \x01(\tR\bprotocol\x12\x17\n" +
@@ -2256,7 +2295,12 @@ const file_stream_v1_event_proto_rawDesc = "" +
 	"\x0etarget_pool_id\x18\x0f \x01(\tR\ftargetPoolId\x12\x1f\n" +
 	"\vbase_amount\x18\x10 \x01(\tR\n" +
 	"baseAmount\x12!\n" +
-	"\fquote_amount\x18\x11 \x01(\tR\vquoteAmount\"\xf7\x03\n" +
+	"\fquote_amount\x18\x11 \x01(\tR\vquoteAmount\x12\x16\n" +
+	"\x06direct\x18\x12 \x01(\bR\x06direct\x12&\n" +
+	"\x0ftrading_pool_id\x18\x13 \x01(\tR\rtradingPoolId\x12!\n" +
+	"\flaunch_start\x18\x14 \x01(\x03R\vlaunchStart\x12\x1d\n" +
+	"\n" +
+	"launch_end\x18\x15 \x01(\x03R\tlaunchEnd\"\xf7\x03\n" +
 	"\x13PoolBalanceSnapshot\x12\x17\n" +
 	"\apool_id\x18\x01 \x01(\tR\x06poolId\x12\x1a\n" +
 	"\bprotocol\x18\x02 \x01(\tR\bprotocol\x12!\n" +
