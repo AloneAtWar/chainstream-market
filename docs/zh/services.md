@@ -181,7 +181,7 @@ go run ./cmd/market-launchpad -conf configs/market-launchpad.yaml   # 需要 pos
 支撑 GMGN / OKX 式的三栏：新币、发射中、已迁移。chainstream-evm 解析 four.meme（BSC）、Flap（BSC、Base、Robinhood Chain）
 和 Pons（Robinhood Chain）的 bonding curve，区块里带有 `launchpad_events`（`CREATED`、`COMPLETED`、`MIGRATED`）和曲线交易：
 曲线交易就是作用在作用域池 `<manager>:<token>` 上的普通 swap，其 `pool_state.curve` 是交易后的曲线状态。它还解析直发平台：
-发射即进入 Uniswap v4 池、没有曲线的 Bankr、Long.xyz、Clanker 和 pools.trade（Robinhood Chain）。
+发射即进入 Uniswap v4 池、没有曲线的 Bankr、Long.xyz、Clanker 和 pools.trade（Robinhood Chain），以及 Bankr、Clanker 和 Zora（Base，Zora 即 Base app 的内容币和创作者币）。
 
 - **生命周期**：`bonding`（曲线交易中）→ `completed`（已打满，待迁移）→ `migrated`（已迁移到 DEX）。状态只前进不后退；
   迁移时记录目标 DEX 池。非 `bonding` 状态但没有交易上报进度的代币按 100% 计。
@@ -211,7 +211,7 @@ go run ./cmd/market-launchpad -conf configs/market-launchpad.yaml   # 需要 pos
   按进度倒序（直发代币按计算出的进度）。长时间没有成交的代币会退出这一栏。
 - `migrated`（已迁移）：`migrated_age`（默认 72h）内迁移的代币，按迁移时间倒序。
 
-时间窗口可写秒数或 Go duration（如 `6h`），最多 720h。`protocol`（`fourmeme`、`flap`、`pons`、`bankr`、`longxyz`、`clanker`、`poolstrade`）可筛选平台，`limit` 默认 50（最多 1000）。
+时间窗口可写秒数或 Go duration（如 `6h`），最多 720h。`protocol`（`fourmeme`、`flap`、`pons`、`bankr`、`longxyz`、`clanker`、`poolstrade`、`zora`）可筛选平台，`limit` 默认 50（最多 1000）。
 每个代币带有小数形式的进度、原始曲线数值、计价币的符号和小数位、registry 的名称和符号（兜底），以及被 market-rankings 收录后的 USD 价格、
 24h 成交额和持有人数。`head_time` 是窗口起算的链上时间。目前三栏靠轮询刷新，还没有实时推送频道。
 

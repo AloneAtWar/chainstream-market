@@ -64,6 +64,7 @@ describe("direct launches", () => {
   it("names the platform and what the progress measures", () => {
     const direct = { ...curve(bsc.wrappedNative, "0", null, null), protocol: "longxyz", direct: true };
     expect(protocolLabel("longxyz")).toBe("Long.xyz");
+    expect(protocolLabel("zora")).toBe("Zora");
     expect(protocolLabel("unknown")).toBe("unknown");
     expect(progressBasis(direct)).toBe("市值 / 目标市值");
     expect(progressBasis({ ...direct, launch_start: 1, launch_end: 2 })).toBe("发射窗口进度");
