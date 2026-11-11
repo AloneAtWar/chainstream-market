@@ -13,6 +13,7 @@ type HoldingRow struct {
 	Token   string
 	Holder  string
 	Balance string
+	AsOf    int64 `gorm:"column:as_of_height"`
 }
 
 // Holdings decodes rows.
@@ -23,7 +24,9 @@ func Holdings(rows []HoldingRow) ([]model.Holding, error) {
 		if !ok {
 			return nil, fmt.Errorf("postgres store: read holdings: invalid balance %q", row.Balance)
 		}
-		holdings[index] = model.Holding{HolderKey: model.HolderKey{Token: row.Token, Holder: row.Holder}, Balance: value}
+		holdings[index] = model.Holding{
+			HolderKey: model.HolderKey{Token: row.Token, Holder: row.Holder}, Balance: value, AsOf: row.AsOf,
+		}
 	}
 	return holdings, nil
 }

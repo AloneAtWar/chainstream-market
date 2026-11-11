@@ -13,19 +13,24 @@ import (
 
 // Node answers eth_call balanceOf from a table of balances per block hash.
 // Unknown balances read as zero. Calls to a reverting token fail on-chain;
-// calls at a missing block fail like a node without that state.
+// calls at a missing block fail like a node without that state. Calls by
+// block number or the latest tag, and eth_getBlockByNumber, use the heights
+// set with SetHead.
 type Node struct {
 	*httptest.Server
 	mu        sync.Mutex
 	balances  map[string]map[string]*big.Int
 	reverting map[string]bool
 	missing   map[string]bool
+	hashes    map[int64]string
+	head      int64
 	calls     int
 }
 
 func NewNode() *Node {
 	node := &Node{
 		balances: make(map[string]map[string]*big.Int), reverting: make(map[string]bool), missing: make(map[string]bool),
+		hashes: make(map[int64]string),
 	}
 	node.Server = httptest.NewServer(http.HandlerFunc(node.serve))
 	return node
@@ -39,6 +44,16 @@ func (node *Node) SetBalance(blockHash, token, holder string, balance int64) {
 		node.balances[blockHash] = make(map[string]*big.Int)
 	}
 	node.balances[blockHash][key(token, holder)] = big.NewInt(balance)
+}
+
+// SetHead makes the block with blockHash at height the latest block.
+//
+// SetHead 把 height 处哈希为 blockHash 的块设为最新块。
+func (node *Node) SetHead(height int64, blockHash string) {
+	node.mu.Lock()
+	defer node.mu.Unlock()
+	node.hashes[height] = blockHash
+	node.head = height
 }
 
 func (node *Node) Revert(token string) {
@@ -64,7 +79,41 @@ func key(token, holder string) string { return strings.ToLower(token) + "/" + st
 
 type call struct {
 	ID     int               `json:"id"`
+	Method string            `json:"method"`
 	Params []json.RawMessage `json:"params"`
+}
+
+// blockHash resolves an eth_call block argument: an EIP-1898 object with a
+// block hash, a block number, or the latest tag. It returns the height too,
+// -1 when the argument named a hash.
+func (node *Node) blockHash(raw json.RawMessage) (string, int64) {
+	var tag string
+	if json.Unmarshal(raw, &tag) == nil {
+		height := node.head
+		if tag != "latest" {
+			if _, err := fmt.Sscanf(tag, "0x%x", &height); err != nil {
+				return "", -1
+			}
+		}
+		return node.hashes[height], height
+	}
+	var block struct {
+		BlockHash string `json:"blockHash"`
+	}
+	_ = json.Unmarshal(raw, &block) //nolint:errcheck // malformed calls read as empty
+	return block.BlockHash, -1
+}
+
+// blockReply answers eth_getBlockByNumber with a header-only block.
+func (node *Node) blockReply(raw json.RawMessage) map[string]any {
+	hash, height := node.blockHash(raw)
+	if hash == "" {
+		return nil
+	}
+	return map[string]any{
+		"number": fmt.Sprintf("0x%x", height), "hash": hash, "timestamp": "0x1",
+		"parentHash": "0x" + strings.Repeat("0", 64), "gasUsed": "0x0", "gasLimit": "0x0", "transactions": []any{},
+	}
 }
 
 func (node *Node) serve(writer http.ResponseWriter, request *http.Request) {
@@ -77,22 +126,24 @@ func (node *Node) serve(writer http.ResponseWriter, request *http.Request) {
 	defer node.mu.Unlock()
 	replies := make([]map[string]any, len(calls))
 	for index, current := range calls {
-		var target struct{ To, Data string }
-		var block struct {
-			BlockHash string `json:"blockHash"`
-		}
-		_ = json.Unmarshal(current.Params[0], &target) //nolint:errcheck // malformed calls read as empty
-		_ = json.Unmarshal(current.Params[1], &block)  //nolint:errcheck // malformed calls read as empty
-		node.calls++
 		reply := map[string]any{"jsonrpc": "2.0", "id": current.ID}
+		if current.Method == "eth_getBlockByNumber" {
+			reply["result"] = node.blockReply(current.Params[0])
+			replies[index] = reply
+			continue
+		}
+		var target struct{ To, Data string }
+		_ = json.Unmarshal(current.Params[0], &target) //nolint:errcheck // malformed calls read as empty
+		blockHash, _ := node.blockHash(current.Params[1])
+		node.calls++
 		holder := "0x" + target.Data[len(target.Data)-40:]
 		switch {
-		case node.missing[block.BlockHash]:
+		case node.missing[blockHash]:
 			reply["error"] = map[string]any{"code": -32000, "message": "missing trie node"}
 		case node.reverting[strings.ToLower(target.To)]:
 			reply["error"] = map[string]any{"code": 3, "message": "execution reverted"}
 		default:
-			balance := node.balances[block.BlockHash][key(target.To, holder)]
+			balance := node.balances[blockHash][key(target.To, holder)]
 			if balance == nil {
 				balance = new(big.Int)
 			}

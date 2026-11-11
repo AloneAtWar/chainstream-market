@@ -17,9 +17,17 @@ import (
 
 // A concentrated-liquidity pool's token amounts come from its tick table, not
 // from virtual reserves at the active liquidity: chainstream-evm snapshots a
-// pool's table at the parent of the block it first trades in, and each later
-// mint and burn carries its tick range. Between ranges, the price is all that
-// moves, so the amounts follow from the table at the latest swap's price.
+// pool's table when it first trades, and each later mint and burn carries its
+// tick range. Between ranges, the price is all that moves, so the amounts
+// follow from the table at the latest swap's price.
+//
+// A snapshot includes every event at or below its snapshot_height: the parent
+// block in chainstream-evm's exact mode, the node head (this block or a later
+// one) in latest mode. Ranges and swaps at or below it are already in the
+// table and are skipped.
+//
+// 快照已包含 snapshot_height 及以下的全部事件（exact 模式是父块，latest 模式是读取时的链头，
+// 可能等于或高于携带它的区块），这些高度的区间和 swap 不再叠加。
 
 // tickKey names one initialized tick of a pool.
 type tickKey struct {
@@ -63,15 +71,22 @@ func validateDepthBands(options *Options) error {
 	return nil
 }
 
-// applySnapshots replaces the tick tables of the pools the block seeds. A
-// snapshot was read at the parent block, so the block's own ranges apply on
-// top of it.
+// applySnapshots replaces the tick tables of the pools the block seeds.
+// Ranges above a snapshot's height, this block's own included when it was read
+// at the parent, apply on top of it. A snapshot older than the parent block
+// misses events already processed and is ignored.
 //
-// applySnapshots 用区块携带的 tick 快照替换池子的 tick 表（快照在父区块读取，本块的区间变化叠加在其上）。
+// applySnapshots 用区块携带的 tick 快照替换池子的 tick 表，高于快照高度的区间变化叠加在其上；
+// 快照高度低于父块时会漏掉已经处理过的事件，直接忽略。
 func (processor *Processor) applySnapshots(height int64, block *streamv1.BlockEvent, changed map[string]struct{}) {
 	for _, snapshot := range block.GetTickSnapshots() {
 		id := normalize(snapshot.GetPoolId())
 		if id == "" {
+			continue
+		}
+		if snapshot.GetSnapshotHeight() < height-1 {
+			processor.options.Logger.Warn("ignoring tick snapshot older than the parent block",
+				"pool", id, "height", height, "snapshot_height", snapshot.GetSnapshotHeight())
 			continue
 		}
 		record := model.CLAMMPool{
@@ -120,7 +135,7 @@ func (processor *Processor) applyRange(height int64, trade *streamv1.Trade, chan
 	}
 	id := normalize(trade.GetPoolId())
 	record, ok := processor.clamm.get(id)
-	if !ok || record.Stale {
+	if !ok || record.Stale || height <= record.SnapshotHeight {
 		return
 	}
 	changed[id] = struct{}{}
@@ -142,6 +157,7 @@ func (processor *Processor) applyRange(height int64, trade *streamv1.Trade, chan
 //
 // checkSwap 用 swap 后的价格移动池子，并校验事件给出的活跃流动性是否等于 tick 表中
 // 当前 tick 以下 liquidityNet 之和；不一致说明表已失真，标记为 stale，直到下次快照。
+// 快照高度及以下的 swap 已经反映在快照的表和价格里，跳过。
 func (processor *Processor) checkSwap(height int64, trade *streamv1.Trade, changed map[string]struct{}) {
 	state := trade.GetPoolState()
 	if trade.GetAction() != streamv1.TradeAction_TRADE_ACTION_SWAP || state.GetSqrtPriceX96() == "" {
@@ -149,7 +165,7 @@ func (processor *Processor) checkSwap(height int64, trade *streamv1.Trade, chang
 	}
 	id := normalize(trade.GetPoolId())
 	record, ok := processor.clamm.get(id)
-	if !ok || record.Stale {
+	if !ok || record.Stale || height <= record.SnapshotHeight {
 		return
 	}
 	changed[id] = struct{}{}
@@ -206,6 +222,20 @@ func (processor *Processor) setTick(height int64, id string, tick int32, net str
 		processor.poolTicks[id] = make(map[int32]struct{})
 	}
 	processor.poolTicks[id][tick] = struct{}{}
+}
+
+// staleRevertedSnapshots marks stale the tables read above rollbackTo: a
+// latest-mode snapshot carried by a kept block can reflect a reverted one.
+//
+// staleRevertedSnapshots：回滚后，读取高度高于 rollbackTo 的 tick 表（latest 模式下由保留区块带来、
+// 却读自被回滚区块的快照）标记为 stale，直到下次快照。
+func (processor *Processor) staleRevertedSnapshots(rollbackTo int64) {
+	for _, id := range slices.Sorted(maps.Keys(processor.clamm.values)) {
+		record := processor.clamm.values[id]
+		if !record.Stale && record.SnapshotHeight > rollbackTo {
+			processor.markStale(rollbackTo, id, record, "snapshot read above the rollback height")
+		}
+	}
 }
 
 // rebuildTicks indexes the tick journal by pool after a restore or revert.

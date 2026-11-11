@@ -52,24 +52,38 @@ type fixture struct {
 	t *testing.T
 	// skipNative turns native balances off on the next restart.
 	skipNative bool
-	repo       *holderRepo
-	node       *rpctest.Node
-	indexer    *biz.Indexer
-	offset     int64
+	// exact reads balances by block hash instead of at the latest block.
+	exact   bool
+	repo    *holderRepo
+	node    *rpctest.Node
+	indexer *biz.Indexer
+	offset  int64
 }
 
+// newFixture reads balances by block hash.
 func newFixture(t *testing.T, reconcileEvery int64) *fixture {
+	t.Helper()
+	return startFixture(t, reconcileEvery, true)
+}
+
+// newLatestFixture reads balances at the node's latest block.
+func newLatestFixture(t *testing.T, reconcileEvery int64) *fixture {
+	t.Helper()
+	return startFixture(t, reconcileEvery, false)
+}
+
+func startFixture(t *testing.T, reconcileEvery int64, exact bool) *fixture {
 	t.Helper()
 	node := rpctest.NewNode()
 	t.Cleanup(node.Close)
-	fixture := &fixture{t: t, repo: openRepo(t), node: node}
+	fixture := &fixture{t: t, repo: openRepo(t), node: node, exact: exact}
 	fixture.restart(reconcileEvery)
 	return fixture
 }
 
 func (f *fixture) restart(reconcileEvery int64) {
 	f.t.Helper()
-	client, err := rpc.New(rpc.Options{URL: f.node.URL, NativeBalanceContract: multicall})
+	client, err := rpc.New(rpc.Options{URL: f.node.URL, NativeBalanceContract: multicall, Exact: f.exact})
 	if err != nil {
 		f.t.Fatalf("rpc.New() error = %v", err)
 	}
@@ -318,4 +332,70 @@ func TestIndexerReconcilesTokensWhenNativeBalancesAreOff(t *testing.T) {
 		f.mustApply(height, "")
 	}
 	assertBalances(t, f.balances(token), map[string]int64{alice: 1010})
+}
+
+// head makes the node's latest block height on fork, with balances set on it.
+func (f *fixture) head(height int64, fork string) string {
+	hash := hashOf(height, fork)
+	f.node.SetHead(height, hash)
+	return hash
+}
+
+// A balance read at a latest block ahead of the applied one already includes
+// the transfers up to that block, so they are not added again.
+func TestLatestReadsSkipTransfersTheReadIncludes(t *testing.T) {
+	f := newLatestFixture(t, 0)
+	// The node is at 103: Alice's mint at 100 and her 300 at 102 are in.
+	f.node.SetBalance(f.head(103, ""), token, alice, 1300)
+	f.mustApply(100, "", transfer(token, zeroAddress, alice, 1000))
+	assertBalances(t, f.balances(token), map[string]int64{alice: 1300})
+	f.mustApply(101, "")
+	// Bob first appears at 102; the node is still at 103, where he has 0.
+	f.mustApply(102, "", transfer(token, bob, alice, 300))
+	assertBalances(t, f.balances(token), map[string]int64{alice: 1300, bob: 0})
+	f.mustApply(103, "")
+	f.head(104, "")
+	f.mustApply(104, "", transfer(token, zeroAddress, alice, 50))
+	assertBalances(t, f.balances(token), map[string]int64{alice: 1350, bob: 0})
+}
+
+// After a revert below the block a balance was read at, the balance may come
+// from the reverted branch, so it is read again when next touched, and the
+// revert of that read restores the need to read it.
+func TestLatestReadsAreReadAgainAfterARevert(t *testing.T) {
+	f := newLatestFixture(t, 0)
+	f.node.SetBalance(f.head(103, "a"), token, alice, 1300)
+	f.mustApply(100, "", transfer(token, zeroAddress, alice, 1000))
+	f.mustApply(101, "")
+	f.revert(101)
+	assertBalances(t, f.balances(token), map[string]int64{alice: 1300})
+
+	// The new branch only gave Alice 7 more than the mint.
+	f.node.SetBalance(f.head(102, "b"), token, alice, 1007)
+	f.mustApply(102, "b", transfer(token, zeroAddress, alice, 7))
+	assertBalances(t, f.balances(token), map[string]int64{alice: 1007})
+	f.mustApply(103, "b", transfer(token, zeroAddress, alice, 1))
+	assertBalances(t, f.balances(token), map[string]int64{alice: 1008})
+
+	f.revert(101)
+	holdings, err := f.repo.Holdings(context.Background(), 1, []model.HolderKey{{Token: token, Holder: alice}})
+	if err != nil || len(holdings) != 1 || holdings[0].Balance.Int64() != 1300 || holdings[0].AsOf != model.AsOfReread {
+		t.Fatalf("holdings after second revert = %+v, %v; want 1300 to read again", holdings, err)
+	}
+}
+
+// Reconciliation at the latest block replaces the balance and moves AsOf, so
+// the transfers it already includes are not added again.
+func TestLatestReconciliationMovesAsOf(t *testing.T) {
+	f := newLatestFixture(t, 4)
+	f.node.SetBalance(f.head(101, ""), token, alice, 1000)
+	f.mustApply(101, "", transfer(token, zeroAddress, alice, 1000))
+	f.mustApply(102, "")
+	f.mustApply(103, "")
+	// The node is at 105: a rebase added 10 and a transfer at 105 added 5.
+	f.node.SetBalance(f.head(105, ""), token, alice, 1015)
+	f.mustApply(104, "")
+	assertBalances(t, f.balances(token), map[string]int64{alice: 1015})
+	f.mustApply(105, "", transfer(token, zeroAddress, alice, 5))
+	assertBalances(t, f.balances(token), map[string]int64{alice: 1015})
 }

@@ -91,11 +91,16 @@ func (live *Live) ApplyDefaults() {
 	}
 }
 
-// ApplyChainDefaults names each chain's live topic after its topic.
+// ApplyChainDefaults names each chain's live topic after its topic and
+// reads its state at the latest block unless state_reads says otherwise.
 func ApplyChainDefaults(chains []*Chain) {
 	for _, chain := range chains {
 		if strings.TrimSpace(chain.LiveTopic) == "" && chain.Topic != "" {
 			chain.LiveTopic = chain.Topic + liveTopicSuffix
+		}
+		chain.StateReads = strings.ToLower(strings.TrimSpace(chain.StateReads))
+		if chain.StateReads == "" {
+			chain.StateReads = StateReadsLatest
 		}
 	}
 }

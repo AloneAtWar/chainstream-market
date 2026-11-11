@@ -34,10 +34,10 @@ func (emptyRepo) CommitHolders(context.Context, chainsync.Checkpoint, model.Hold
 // zeroBalances answers every balanceOf with zero.
 type zeroBalances struct{}
 
-func (zeroBalances) BalancesAt(_ context.Context, _ string, queries []rpc.BalanceQuery) ([]*big.Int, error) {
-	balances := make([]*big.Int, len(queries))
+func (zeroBalances) Balances(_ context.Context, block rpc.Block, queries []rpc.BalanceQuery) ([]rpc.Balance, error) {
+	balances := make([]rpc.Balance, len(queries))
 	for index := range balances {
-		balances[index] = new(big.Int)
+		balances[index] = rpc.Balance{Amount: new(big.Int), Height: block.Height}
 	}
 	return balances, nil
 }

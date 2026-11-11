@@ -360,14 +360,18 @@ type BlockEvent struct {
 	// transfers are missing, and beacon-chain withdrawals are never included.
 	NativeTouched []string `protobuf:"bytes,17,rep,name=native_touched,json=nativeTouched,proto3" json:"native_touched,omitempty"`
 	// tick_snapshots seed concentrated-liquidity pools first seen in this block
-	// (or due for a periodic re-read): each pool's complete tick table read at
-	// the parent block, before this block's trades. Consumers load a snapshot
-	// and then apply this block's liquidity_range trades on top of it.
+	// (or due for a periodic re-read): each pool's complete tick table as of
+	// its snapshot_height. In exact mode that is the parent block, before this
+	// block's trades; in latest mode it is the node head when it was read,
+	// which can be this block or a later one. Consumers load a snapshot and
+	// then apply only the liquidity_range trades of blocks above its
+	// snapshot_height.
 	TickSnapshots []*PoolTickSnapshot `protobuf:"bytes,18,rep,name=tick_snapshots,json=tickSnapshots,proto3" json:"tick_snapshots,omitempty"`
 	// pool_balances are the real balances and curve parameters of the
-	// multi-token pools (Curve, Balancer) with any event in this block, read at
-	// this block's hash, after all of its events. Consumers replace whatever
-	// they kept for each pool.
+	// multi-token pools (Curve, Balancer) with any event in this block, as of
+	// their snapshot_height: this block's hash, after all of its events, in
+	// exact mode, or the node head when it was read (this block or a later
+	// one) in latest mode. Consumers replace whatever they kept for each pool.
 	PoolBalances []*PoolBalanceSnapshot `protobuf:"bytes,19,rep,name=pool_balances,json=poolBalances,proto3" json:"pool_balances,omitempty"`
 	// launchpad_events are the block's launchpad lifecycle facts: token
 	// launches, curves that sold out, and curves whose liquidity moved to a DEX
@@ -1073,7 +1077,8 @@ func (x *DerivedToken) GetRate() string {
 }
 
 // PoolTickSnapshot is a concentrated-liquidity pool's initialized ticks and
-// price at snapshot_height. A consumer replaces any table it kept for the pool.
+// price at snapshot_height, including every event at or below that height. A
+// consumer replaces any table it kept for the pool.
 type PoolTickSnapshot struct {
 	state          protoimpl.MessageState `protogen:"open.v1"`
 	PoolId         string                 `protobuf:"bytes,1,opt,name=pool_id,json=poolId,proto3" json:"pool_id,omitempty"`

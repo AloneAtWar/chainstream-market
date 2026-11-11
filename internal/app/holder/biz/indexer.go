@@ -1,32 +1,42 @@
 // Package biz is holder-indexer's business layer: it tracks ERC-20 balances per holder from a chain topic's
 // transfers.
 //
-// A holding is seeded with balanceOf the first time it appears, read at the
-// hash of the block it appears in, so it already includes that block's
-// transfers. From then on each block adds its net transfers. Tokens whose
-// balances move without a Transfer, such as rebasing or fee-on-transfer
-// tokens, drift from the sum of transfers, so every ReconcileEvery blocks
-// the least recently verified holdings are checked against balanceOf again
-// and corrected.
+// A holding is seeded with balanceOf the first time it appears, so it
+// already includes that block's transfers. From then on each block adds its
+// net transfers. Tokens whose balances move without a Transfer, such as
+// rebasing or fee-on-transfer tokens, drift from the sum of transfers, so
+// every ReconcileEvery blocks the least recently verified holdings are
+// checked against balanceOf again and corrected.
+//
+// Balances are read either at the applied block's hash (exact) or at the
+// latest block no older than it (latest), which needs no historical state
+// and is all TRON nodes serve. Either way every holding records the block
+// whose post-state its balance includes (Holding.AsOf), and the transfers of
+// blocks up to it are not added again: a balance read at the latest block
+// already contains them. After a revert, a balance read at a block above the
+// rollback may come from the reverted branch, so it is read again when next
+// touched.
 //
 // Native coin balances (ETH, BNB) are kept the same way under the token
 // rpc.NativeToken when NativeBalances is set. Gas, rewards and L2 fees move
 // them without a transfer, so instead of summing transfers every address in
-// the block's native_touched is read again at the block's hash, and the
-// difference from the stored balance is applied as a verified delta.
+// the block's native_touched is read again, and the difference from the
+// stored balance is applied as a verified delta.
 //
 // Balances live only in the store, never in memory, and every change is
 // stored as an undoable delta, so a reorg subtracts what the reverted blocks
 // added.
 //
 // holder-indexer 业务层：根据链 topic 维护每个持有人的 ERC-20（及可选原生币）余额。
-//   - 播种：(代币, 持有人) 首次出现时，在该区块哈希处读取 balanceOf，已包含本块转账；
-//   - 累加：之后每个区块只叠加净转账；
+//   - 读取：exact 按当前块哈希读，latest 在不早于当前块的 latest 读（不需要历史状态，TRON
+//     只支持这种）；每个持仓记下余额已包含到的块高 AsOf，该块高及以前的转账不再叠加；
+//   - 播种：(代币, 持有人) 首次出现时读取 balanceOf，已包含本块转账；
+//   - 累加：之后每个块高大于 AsOf 的区块叠加净转账；
 //   - 对账：每 ReconcileEvery 个块，挑最久未校验的持仓重新读 balanceOf 修正
-//     （处理 rebase、转账收费等不产生 Transfer 的余额变化）；
-//   - 原生币：不累加转账，而是对 native_touched 中的地址在区块哈希处重读余额，
-//     差值作为已校验的 delta；
-//   - 重组：所有变化都以可撤销 delta 存储，回滚时减去被回滚区块加上的部分。
+//     （处理 rebase、转账收费等不产生 Transfer 的余额变化），AsOf 改为实际读取块高；
+//   - 原生币：不累加转账，而是对 native_touched 中的地址重读余额，差值作为已校验的 delta；
+//   - 重组：所有变化都以可撤销 delta 存储，回滚时减去被回滚区块加上的部分；AsOf 高于回滚点的
+//     余额可能来自被回滚的分支，下次被触及时重新读取。
 //
 // 余额只存在于 PostgreSQL，内存不随持有人数量增长。
 package biz
@@ -50,11 +60,17 @@ import (
 // ErrReorgTooDeep means a revert reaches below the retained undo history.
 var ErrReorgTooDeep = errors.New("holders: reorg deeper than retained history")
 
-const zeroAddress = "0x0000000000000000000000000000000000000000"
+const (
+	zeroAddress = "0x0000000000000000000000000000000000000000"
+	// tronZeroAddress is the zero address in TRON's base58 form, which
+	// TRC-20 mints and burns move balances to and from.
+	tronZeroAddress = "T9yD14Nj9j7xAB4dbGeiX9h8unkKHxuWwb"
+)
 
-// Balances reads balanceOf at a block; *rpc.Client implements it.
+// Balances reads balanceOf for a block, reporting the block each balance was
+// read at; *rpc.Client implements it.
 type Balances interface {
-	BalancesAt(ctx context.Context, blockHash string, queries []rpc.BalanceQuery) ([]*big.Int, error)
+	Balances(ctx context.Context, block rpc.Block, queries []rpc.BalanceQuery) ([]rpc.Balance, error)
 }
 
 // HolderRepo persists holder balances. CommitHolders applies a change and
@@ -130,7 +146,8 @@ func (indexer *Indexer) Restore(ctx context.Context, chainID uint64) (chainsync.
 
 // Apply 汇总本块净转账，为新持仓播种、按周期对账、刷新原生币余额，生成待提交的 delta。
 func (indexer *Indexer) Apply(ctx context.Context, block *streamv1.BlockEvent) error {
-	height, hash := block.GetBlockHeight(), block.GetBlockHash()
+	height := block.GetBlockHeight()
+	at := rpc.Block{Height: height, Hash: block.GetBlockHash()}
 	deltas := netTransfers(block.GetTransfers())
 	var native []model.HolderKey
 	if indexer.options.NativeBalances {
@@ -147,50 +164,32 @@ func (indexer *Indexer) Apply(ctx context.Context, block *streamv1.BlockEvent) e
 	if err != nil {
 		return fmt.Errorf("load holdings: %w", err)
 	}
-	stored := make(map[model.HolderKey]*big.Int, len(known))
+	stored := make(map[model.HolderKey]model.Holding, len(known))
 	for _, holding := range known {
-		stored[holding.HolderKey] = holding.Balance
+		stored[holding.HolderKey] = holding
 	}
 	change := model.HolderChange{Height: height}
-	// read holds every key whose balance is read at this block: new
-	// holdings, and every native holding the block touched.
+	// read holds every key whose balance is read for this block: new
+	// holdings, holdings to read again after a revert, and every native
+	// holding the block touched.
 	var read []model.HolderKey
 	for _, key := range keys {
-		if _, ok := stored[key]; ok && key.Token != rpc.NativeToken {
-			if deltas[key].Sign() != 0 {
+		if holding, ok := stored[key]; ok && key.Token != rpc.NativeToken && holding.AsOf >= 0 {
+			// A balance read at this block or later already includes it.
+			if holding.AsOf < height && deltas[key].Sign() != 0 {
 				change.Deltas = append(change.Deltas, model.HolderDelta{HolderKey: key, Delta: deltas[key]})
 			}
 			continue
 		}
 		read = append(read, key)
 	}
-	balances, err := indexer.balances(ctx, hash, read)
+	balances, err := indexer.balances(ctx, at, read)
 	if err != nil {
 		return fmt.Errorf("seed holdings: %w", err)
 	}
 	for index, key := range read {
-		balance, existing := balances[index], stored[key]
-		switch {
-		case key.Token == rpc.NativeToken && existing != nil:
-			if balance != nil && balance.Cmp(existing) != 0 {
-				change.Deltas = append(change.Deltas, model.HolderDelta{
-					HolderKey: key, Delta: new(big.Int).Sub(balance, existing), Verified: true,
-				})
-			}
-		case key.Token == rpc.NativeToken:
-			// Senders and fee recipients are touched by every block; only
-			// addresses that hold something are kept.
-			if balance != nil && balance.Sign() > 0 {
-				change.Created = append(change.Created, model.HolderSeed{Holding: model.Holding{HolderKey: key, Balance: balance}, Verified: true})
-			}
-		default:
-			seed := model.HolderSeed{Holding: model.Holding{HolderKey: key, Balance: balance}, Verified: true}
-			if seed.Balance == nil {
-				// balanceOf failed; the block's net transfers are the best guess.
-				seed.Balance, seed.Verified = deltas[key], false
-			}
-			change.Created = append(change.Created, seed)
-		}
+		change.Created, change.Deltas = indexer.applyRead(key, balances[index], stored, deltas[key], height,
+			change.Created, change.Deltas)
 	}
 
 	if every := indexer.options.ReconcileEvery; every > 0 && height%every == 0 {
@@ -198,7 +197,7 @@ func (indexer *Indexer) Apply(ctx context.Context, block *streamv1.BlockEvent) e
 		for _, key := range keys {
 			touched[key] = struct{}{}
 		}
-		corrections, reconcileErr := indexer.reconcile(ctx, hash, touched)
+		corrections, reconcileErr := indexer.reconcile(ctx, at, touched)
 		if reconcileErr != nil {
 			return fmt.Errorf("reconcile: %w", reconcileErr)
 		}
@@ -211,9 +210,49 @@ func (indexer *Indexer) Apply(ctx context.Context, block *streamv1.BlockEvent) e
 	return nil
 }
 
+// applyRead turns one balance read for key into a seed or a verified delta.
+// delta is the block's net transfers of key, used when balanceOf failed.
+func (indexer *Indexer) applyRead(key model.HolderKey, balance rpc.Balance, stored map[model.HolderKey]model.Holding,
+	delta *big.Int, height int64, created []model.HolderSeed, deltas []model.HolderDelta,
+) ([]model.HolderSeed, []model.HolderDelta) {
+	existing, ok := stored[key]
+	native := key.Token == rpc.NativeToken
+	switch {
+	case ok && balance.Amount == nil:
+		// balanceOf failed on a holding read again after a revert: the
+		// block's net transfers are the best guess and it stays unread.
+		if !native && delta.Sign() != 0 {
+			deltas = append(deltas, model.HolderDelta{HolderKey: key, Delta: delta})
+		}
+	case ok:
+		difference := new(big.Int).Sub(balance.Amount, existing.Balance)
+		// A holding read again after a revert records its new AsOf even
+		// when the balance did not change.
+		if difference.Sign() != 0 || existing.AsOf < 0 {
+			deltas = append(deltas, model.HolderDelta{HolderKey: key, Delta: difference, Verified: true, AsOf: balance.Height})
+		}
+	case native:
+		// Senders and fee recipients are touched by every block; only
+		// addresses that hold something are kept.
+		if balance.Amount != nil && balance.Amount.Sign() > 0 {
+			created = append(created, model.HolderSeed{
+				Holding: model.Holding{HolderKey: key, Balance: balance.Amount, AsOf: balance.Height}, Verified: true,
+			})
+		}
+	case balance.Amount == nil:
+		// balanceOf failed; the block's net transfers are the best guess.
+		created = append(created, model.HolderSeed{Holding: model.Holding{HolderKey: key, Balance: delta, AsOf: height}})
+	default:
+		created = append(created, model.HolderSeed{
+			Holding: model.Holding{HolderKey: key, Balance: balance.Amount, AsOf: balance.Height}, Verified: true,
+		})
+	}
+	return created, deltas
+}
+
 // reconcile checks the least recently verified holdings that this block did
 // not touch and returns the corrections that make them match balanceOf.
-func (indexer *Indexer) reconcile(ctx context.Context, hash string, touched map[model.HolderKey]struct{}) ([]model.HolderDelta, error) {
+func (indexer *Indexer) reconcile(ctx context.Context, at rpc.Block, touched map[model.HolderKey]struct{}) ([]model.HolderDelta, error) {
 	// Native holdings are only reconciled while native balances are on.
 	// They are left out by the query, since holdings kept from before
 	// native balances were turned off are never verified again and would
@@ -235,7 +274,7 @@ func (indexer *Indexer) reconcile(ctx context.Context, hash string, touched map[
 	for index, holding := range stale {
 		keys[index] = holding.HolderKey
 	}
-	actual, err := indexer.balances(ctx, hash, keys)
+	actual, err := indexer.balances(ctx, at, keys)
 	if err != nil {
 		return nil, err
 	}
@@ -243,8 +282,9 @@ func (indexer *Indexer) reconcile(ctx context.Context, hash string, touched map[
 	drifted := 0
 	for index, holding := range stale {
 		correction := model.HolderDelta{HolderKey: holding.HolderKey, Delta: new(big.Int), Verified: true}
-		if actual[index] != nil {
-			correction.Delta.Sub(actual[index], holding.Balance)
+		if actual[index].Amount != nil {
+			correction.Delta.Sub(actual[index].Amount, holding.Balance)
+			correction.AsOf = actual[index].Height
 		}
 		if correction.Delta.Sign() != 0 {
 			drifted++
@@ -257,7 +297,7 @@ func (indexer *Indexer) reconcile(ctx context.Context, hash string, touched map[
 	return corrections, nil
 }
 
-func (indexer *Indexer) balances(ctx context.Context, hash string, keys []model.HolderKey) ([]*big.Int, error) {
+func (indexer *Indexer) balances(ctx context.Context, at rpc.Block, keys []model.HolderKey) ([]rpc.Balance, error) {
 	if len(keys) == 0 {
 		return nil, nil
 	}
@@ -265,7 +305,14 @@ func (indexer *Indexer) balances(ctx context.Context, hash string, keys []model.
 	for index, key := range keys {
 		queries[index] = rpc.BalanceQuery{Token: key.Token, Holder: key.Holder}
 	}
-	return indexer.options.Balances.BalancesAt(ctx, hash, queries)
+	balances, err := indexer.options.Balances.Balances(ctx, at, queries)
+	if err != nil {
+		return nil, err
+	}
+	if len(balances) != len(keys) {
+		return nil, fmt.Errorf("%d balances for %d holdings", len(balances), len(keys))
+	}
+	return balances, nil
 }
 
 func (indexer *Indexer) Revert(_ context.Context, rollbackTo int64) error {
@@ -291,7 +338,7 @@ func (indexer *Indexer) Commit(ctx context.Context, checkpoint chainsync.Checkpo
 func netTransfers(transfers []*streamv1.TokenTransfer) map[model.HolderKey]*big.Int {
 	deltas := make(map[model.HolderKey]*big.Int)
 	add := func(token, holder string, amount *big.Int) {
-		if holder == zeroAddress || holder == "" {
+		if holder == zeroAddress || holder == tronZeroAddress || holder == "" {
 			return
 		}
 		key := model.HolderKey{Token: token, Holder: holder}
@@ -321,7 +368,7 @@ func nativeTouched(addresses []string) []model.HolderKey {
 	seen := make(map[string]struct{}, len(addresses))
 	for _, address := range addresses {
 		holder := normalize(address)
-		if _, ok := seen[holder]; ok || holder == "" || holder == zeroAddress {
+		if _, ok := seen[holder]; ok || holder == "" || holder == zeroAddress || holder == tronZeroAddress {
 			continue
 		}
 		seen[holder] = struct{}{}
@@ -330,7 +377,15 @@ func nativeTouched(addresses []string) []model.HolderKey {
 	return keys
 }
 
-func normalize(address string) string { return strings.ToLower(strings.TrimSpace(address)) }
+// normalize lowercases hex addresses. TRON base58 addresses are case
+// sensitive and keep their case.
+func normalize(address string) string {
+	address = strings.TrimSpace(address)
+	if strings.HasPrefix(address, "0x") || strings.HasPrefix(address, "0X") {
+		return strings.ToLower(address)
+	}
+	return address
+}
 
 func compareKeys(left, right model.HolderKey) int {
 	return cmp.Or(cmp.Compare(left.Token, right.Token), cmp.Compare(left.Holder, right.Holder))

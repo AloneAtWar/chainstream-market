@@ -450,7 +450,6 @@ internal/pkg/rpc/client.go	New
 internal/pkg/rpc/client.go	Client.NativeBalances
 internal/pkg/rpc/client.go	BalanceQuery
 internal/pkg/rpc/client.go	NativeToken
-internal/pkg/rpc/client.go	Client.BalancesAt
 internal/pkg/rpc/client.go	Call
 internal/pkg/rpc/client.go	Client.CallLatest
 internal/pkg/rpc/rpctest	package rpctest

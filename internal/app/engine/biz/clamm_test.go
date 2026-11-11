@@ -222,3 +222,62 @@ func TestDepthBPSByFeeTier(t *testing.T) {
 		}
 	}
 }
+
+// TestLatestSnapshotSkipsEventsItIncludes chainstream-evm 的 latest 模式快照读自链头（高于携带它的区块）：
+// 快照高度及以下的 mint/burn 和 swap 已经包含在表里，不再叠加或校验；更高的照常叠加。
+func TestLatestSnapshotSkipsEventsItIncludes(t *testing.T) {
+	processor := newTestProcessor(t)
+	ctx := context.Background()
+	price := clSqrtAt(-269400)
+	liquidity := "1000000000000000000"
+	ticks := map[int32]string{-270000: liquidity, -268800: "-" + liquidity}
+
+	// Read at 102, carried by block 100: block 100's swap reports liquidity
+	// from before a mint the table already holds.
+	block := testBlock(100, 0, clSwap(clPool, clSqrtAt(-269500), "1", "-269500"))
+	block.TickSnapshots = []*streamv1.PoolTickSnapshot{clSnapshot(102, price, 3000, ticks)}
+	if _, err := processor.Apply(ctx, block); err != nil {
+		t.Fatalf("Apply(100) error = %v", err)
+	}
+	record, _ := processor.clamm.get(clPool)
+	if record.Stale || record.SnapshotHeight != 102 || record.SqrtPriceX96 != price {
+		t.Fatalf("after snapshot: %+v", record)
+	}
+	// Block 101's mint is already in the table.
+	if _, err := processor.Apply(ctx, testBlock(101, 12, clMint(clPool, -269460, -269340, "5"))); err != nil {
+		t.Fatalf("Apply(101) error = %v", err)
+	}
+	if len(processor.poolTicks[clPool]) != 2 {
+		t.Fatalf("mint at or below the snapshot was applied: %v", processor.poolTicks[clPool])
+	}
+	// Block 103's mint is not.
+	if _, err := processor.Apply(ctx, testBlock(103, 24, clMint(clPool, -269460, -269340, "5"))); err != nil {
+		t.Fatalf("Apply(103) error = %v", err)
+	}
+	if record, _ := processor.clamm.get(clPool); record.Stale || len(processor.poolTicks[clPool]) != 4 {
+		t.Fatalf("after mint above the snapshot: %+v, %v", record, processor.poolTicks[clPool])
+	}
+
+	// A rollback below the read height leaves a table from the reverted
+	// branch, so it turns stale until the next snapshot.
+	if err := processor.Revert(ctx, 101); err != nil {
+		t.Fatalf("Revert() error = %v", err)
+	}
+	if record, _ := processor.clamm.get(clPool); !record.Stale {
+		t.Fatalf("table read at 102 survived a rollback to 101: %+v", record)
+	}
+}
+
+// TestTickSnapshotOlderThanParentIsIgnored 快照高度低于父块会漏掉已处理的事件，直接忽略。
+func TestTickSnapshotOlderThanParentIsIgnored(t *testing.T) {
+	processor := newTestProcessor(t)
+	block := testBlock(100, 0)
+	block.TickSnapshots = []*streamv1.PoolTickSnapshot{clSnapshot(98, clSqrtAt(-269400), 3000,
+		map[int32]string{-270000: "1", -268800: "-1"})}
+	if _, err := processor.Apply(context.Background(), block); err != nil {
+		t.Fatalf("Apply() error = %v", err)
+	}
+	if _, ok := processor.clamm.get(clPool); ok {
+		t.Fatal("snapshot read at 98 was applied to block 100")
+	}
+}

@@ -7,6 +7,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/AloneAtWar/oh-my-blockchain/chain/evm"
+
 	"github.com/AloneAtWar/chainstream-market/internal/pkg/rpc/rpctest"
 )
 
@@ -19,53 +21,58 @@ const (
 	missing = "0x000000000000000000000000000000000000000000000000000000000000dead"
 )
 
-func TestBalancesAtBatchesAndDecodes(t *testing.T) {
+func TestBalancesBatchesAndDecodes(t *testing.T) {
 	node := rpctest.NewNode()
 	defer node.Close()
 	node.SetBalance(blockA, token, alice, 42)
 	node.Revert(broken)
-	client, err := New(Options{URL: node.URL, BatchSize: 2})
+	client, err := New(Options{URL: node.URL, BatchSize: 2, Exact: true})
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
 	}
-	balances, err := client.BalancesAt(context.Background(), blockA, []BalanceQuery{
+	balances, err := client.Balances(context.Background(), Block{Height: 10, Hash: blockA}, []BalanceQuery{
 		{Token: token, Holder: alice}, {Token: token, Holder: bob}, {Token: broken, Holder: alice},
 	})
 	if err != nil {
-		t.Fatalf("BalancesAt() error = %v", err)
+		t.Fatalf("Balances() error = %v", err)
 	}
-	if balances[0].Int64() != 42 || balances[1].Sign() != 0 || balances[2] != nil {
+	if balances[0].Amount.Int64() != 42 || balances[1].Amount.Sign() != 0 || balances[2].Amount != nil {
 		t.Fatalf("balances = %v", balances)
+	}
+	for _, balance := range balances {
+		if balance.Height != 10 {
+			t.Fatalf("exact balance height = %d, want 10", balance.Height)
+		}
 	}
 	if node.Calls() != 3 {
 		t.Fatalf("calls = %d", node.Calls())
 	}
 }
 
-func TestBalancesAtFailsWithoutState(t *testing.T) {
+func TestBalancesFailsWithoutState(t *testing.T) {
 	node := rpctest.NewNode()
 	defer node.Close()
 	node.Missing(missing)
-	client, _ := New(Options{URL: node.URL})
-	if _, err := client.BalancesAt(context.Background(), missing, []BalanceQuery{{Token: token, Holder: alice}}); err == nil {
-		t.Fatal("BalancesAt() without block state error = nil")
+	client, _ := New(Options{URL: node.URL, Exact: true})
+	if _, err := client.Balances(context.Background(), Block{Height: 10, Hash: missing}, []BalanceQuery{{Token: token, Holder: alice}}); err == nil {
+		t.Fatal("Balances() without block state error = nil")
 	}
-	if _, err := client.BalancesAt(context.Background(), blockA, []BalanceQuery{{Token: token, Holder: "0x12"}}); err == nil {
-		t.Fatal("BalancesAt() with a bad holder error = nil")
+	if _, err := client.Balances(context.Background(), Block{Height: 10, Hash: blockA}, []BalanceQuery{{Token: token, Holder: "0x12"}}); err == nil {
+		t.Fatal("Balances() with a bad holder error = nil")
 	}
 }
 
-func TestBalancesAtReportsBatchErrors(t *testing.T) {
+func TestBalancesReportsBatchErrors(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
 		_, _ = writer.Write([]byte(`{"jsonrpc":"2.0","id":null,"error":{"code":-32600,"message":"batch too large"}}`)) //nolint:errcheck // test server
 	}))
 	defer server.Close()
-	client, _ := New(Options{URL: server.URL})
-	if _, err := client.BalancesAt(context.Background(), blockA, []BalanceQuery{{Token: token, Holder: alice}}); err == nil {
-		t.Fatal("BalancesAt() against a node rejecting the batch error = nil")
+	client, _ := New(Options{URL: server.URL, Exact: true})
+	if _, err := client.Balances(context.Background(), Block{Height: 10, Hash: blockA}, []BalanceQuery{{Token: token, Holder: alice}}); err == nil {
+		t.Fatal("Balances() against a node rejecting the batch error = nil")
 	}
-	if _, err := client.BalancesAt(context.Background(), "0xa", []BalanceQuery{{Token: token, Holder: alice}}); err == nil {
-		t.Fatal("BalancesAt() with a short block hash error = nil")
+	if _, err := client.Balances(context.Background(), Block{Height: 10, Hash: "0xa"}, []BalanceQuery{{Token: token, Holder: alice}}); err == nil {
+		t.Fatal("Balances() with a short block hash error = nil")
 	}
 	if _, err := New(Options{}); err == nil {
 		t.Fatal("New() without url error = nil")
@@ -108,23 +115,23 @@ func TestCallLatestDecodesRevertsAndEmptyCode(t *testing.T) {
 	}
 }
 
-func TestBalancesAtReadsNativeBalancesWithGetEthBalance(t *testing.T) {
+func TestBalancesReadsNativeBalancesWithGetEthBalance(t *testing.T) {
 	const multicall = "0xca11bde05977b3631167028862be2a173976ca11"
 	node := rpctest.NewNode()
 	defer node.Close()
 	node.SetBalance(blockA, token, alice, 42)
 	node.SetBalance(blockA, multicall, alice, 7)
-	client, err := New(Options{URL: node.URL, NativeBalanceContract: multicall})
+	client, err := New(Options{URL: node.URL, NativeBalanceContract: multicall, Exact: true})
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
 	}
-	balances, err := client.BalancesAt(context.Background(), blockA, []BalanceQuery{
+	balances, err := client.Balances(context.Background(), Block{Height: 10, Hash: blockA}, []BalanceQuery{
 		{Token: token, Holder: alice}, {Token: NativeToken, Holder: alice}, {Token: NativeToken, Holder: bob},
 	})
 	if err != nil {
-		t.Fatalf("BalancesAt() error = %v", err)
+		t.Fatalf("Balances() error = %v", err)
 	}
-	if balances[0].Int64() != 42 || balances[1].Int64() != 7 || balances[2].Sign() != 0 {
+	if balances[0].Amount.Int64() != 42 || balances[1].Amount.Int64() != 7 || balances[2].Amount.Sign() != 0 {
 		t.Fatalf("balances = %v", balances)
 	}
 }
@@ -134,12 +141,62 @@ func TestNativeBalancesNeedAMulticallContract(t *testing.T) {
 	if plain.NativeBalances() {
 		t.Fatal("plain node NativeBalances() = true")
 	}
-	if _, err := plain.BalancesAt(context.Background(), blockA, []BalanceQuery{{Token: NativeToken, Holder: alice}}); err == nil {
-		t.Fatal("BalancesAt() native without multicall error = nil")
+	if _, err := plain.Balances(context.Background(), Block{Height: 10, Hash: blockA}, []BalanceQuery{{Token: NativeToken, Holder: alice}}); err == nil {
+		t.Fatal("Balances() native without multicall error = nil")
 	}
 	for _, chainID := range []uint64{1, 56, 8453, 4663} {
 		if client, _ := New(Options{URL: "http://127.0.0.1:1", ChainID: chainID}); !client.NativeBalances() {
 			t.Fatalf("chain %d NativeBalances() = false", chainID)
 		}
+	}
+}
+
+// Latest reads run at the latest block no older than the applied one and
+// report the block they ran at; a head behind the block is an error.
+func TestBalancesLatestReportsTheReadBlock(t *testing.T) {
+	const blockB = "0x000000000000000000000000000000000000000000000000000000000000000b"
+	node := rpctest.NewNode()
+	defer node.Close()
+	node.SetBalance(blockB, token, alice, 50)
+	node.SetHead(11, blockB)
+	client, err := New(Options{URL: node.URL})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	balances, err := client.Balances(context.Background(), Block{Height: 10, Hash: blockA}, []BalanceQuery{
+		{Token: token, Holder: alice}, {Token: token, Holder: bob},
+	})
+	if err != nil {
+		t.Fatalf("Balances() error = %v", err)
+	}
+	if balances[0].Amount.Int64() != 50 || balances[0].Height != 11 || balances[1].Amount.Sign() != 0 || balances[1].Height != 11 {
+		t.Fatalf("balances = %+v, want alice 50 read at 11", balances)
+	}
+	if _, err := client.Balances(context.Background(), Block{Height: 12, Hash: blockA}, []BalanceQuery{
+		{Token: token, Holder: alice},
+	}); err == nil {
+		t.Fatal("Balances() for a block above the head error = nil")
+	}
+}
+
+func TestTronHoldersAreBase58AndExactIsRefused(t *testing.T) {
+	if _, err := New(Options{URL: "http://127.0.0.1:1", ChainID: uint64(evm.TRON), Exact: true}); err == nil {
+		t.Fatal("New() exact on TRON error = nil")
+	}
+	tron, err := New(Options{URL: "http://127.0.0.1:1", ChainID: uint64(evm.TRON)})
+	if err != nil {
+		t.Fatalf("New() TRON error = %v", err)
+	}
+	// TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t is USDT on TRON, 0xa614f803b6fd780986a42c78ec9c7f77e6ded13c.
+	holder, err := tron.hexAddress("TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t")
+	if err != nil || holder.Hex() != "0xa614f803B6FD780986A42c78Ec9c7f77e6DeD13C" {
+		t.Fatalf("hexAddress() = %s, %v", holder.Hex(), err)
+	}
+	if _, err := tron.hexAddress("TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6T"); err == nil {
+		t.Fatal("hexAddress() with a bad checksum error = nil")
+	}
+	plain, _ := New(Options{URL: "http://127.0.0.1:1"})
+	if _, err := plain.hexAddress("TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t"); err == nil {
+		t.Fatal("hexAddress() base58 off TRON error = nil")
 	}
 }

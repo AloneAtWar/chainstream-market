@@ -715,15 +715,24 @@ type Chain struct {
 	Name    string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
 	ChainId uint64                 `protobuf:"varint,2,opt,name=chain_id,json=chainId,proto3" json:"chain_id,omitempty"`
 	Topic   string                 `protobuf:"bytes,3,opt,name=topic,proto3" json:"topic,omitempty"`
-	// rpc_url is a JSON-RPC endpoint holder-indexer reads balanceOf from. It
-	// must serve state by block hash for blocks the indexer is applying, which
-	// near the head any full node does.
+	// rpc_url is a JSON-RPC endpoint holder-indexer reads balanceOf from.
+	// With state_reads latest any full node works; with exact it must serve
+	// state by block hash for every block the indexer applies, which far
+	// behind the head only an archive node does.
 	RpcUrl string `protobuf:"bytes,4,opt,name=rpc_url,json=rpcUrl,proto3" json:"rpc_url,omitempty"`
 	// live_topic carries this chain's live updates when live.enabled is set;
 	// it defaults to the topic name with a "-live" suffix.
 	LiveTopic string `protobuf:"bytes,5,opt,name=live_topic,json=liveTopic,proto3" json:"live_topic,omitempty"`
 	// feeds are the Chainlink USD feeds trusted on this chain.
-	Feeds         []*Feed `protobuf:"bytes,6,rep,name=feeds,proto3" json:"feeds,omitempty"`
+	Feeds []*Feed `protobuf:"bytes,6,rep,name=feeds,proto3" json:"feeds,omitempty"`
+	// state_reads is how holder-indexer reads balances: latest (the default)
+	// reads them at the latest block no older than the block being applied
+	// and records the block they were read at, so the transfers up to that
+	// block are not added again; exact reads them at the applied block's
+	// hash. TRON nodes only serve latest.
+	// state_reads 是 holder-indexer 读余额的方式：latest（默认）在不早于当前块的 latest 读，
+	// 并记下实际读到的块高，之后不再叠加该块高及以前的转账；exact 按当前块哈希读。TRON 只支持 latest。
+	StateReads    string `protobuf:"bytes,7,opt,name=state_reads,json=stateReads,proto3" json:"state_reads,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -798,6 +807,13 @@ func (x *Chain) GetFeeds() []*Feed {
 		return x.Feeds
 	}
 	return nil
+}
+
+func (x *Chain) GetStateReads() string {
+	if x != nil {
+		return x.StateReads
+	}
+	return ""
 }
 
 // Feed maps a USD-denominated Chainlink feed to a token it prices. Give either
@@ -951,7 +967,7 @@ const file_pkg_config_common_proto_rawDesc = "" +
 	"\bdatabase\x18\x04 \x01(\x05R\bdatabase\x12<\n" +
 	"\fdial_timeout\x18\x05 \x01(\v2\x19.google.protobuf.DurationR\vdialTimeout\"\x1d\n" +
 	"\aMetrics\x12\x12\n" +
-	"\x04addr\x18\x01 \x01(\tR\x04addr\"\xac\x01\n" +
+	"\x04addr\x18\x01 \x01(\tR\x04addr\"\xcd\x01\n" +
 	"\x05Chain\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x19\n" +
 	"\bchain_id\x18\x02 \x01(\x04R\achainId\x12\x14\n" +
@@ -959,7 +975,9 @@ const file_pkg_config_common_proto_rawDesc = "" +
 	"\arpc_url\x18\x04 \x01(\tR\x06rpcUrl\x12\x1d\n" +
 	"\n" +
 	"live_topic\x18\x05 \x01(\tR\tliveTopic\x12&\n" +
-	"\x05feeds\x18\x06 \x03(\v2\x10.pkg.config.FeedR\x05feeds\"\x8a\x01\n" +
+	"\x05feeds\x18\x06 \x03(\v2\x10.pkg.config.FeedR\x05feeds\x12\x1f\n" +
+	"\vstate_reads\x18\a \x01(\tR\n" +
+	"stateReads\"\x8a\x01\n" +
 	"\x04Feed\x12\x14\n" +
 	"\x05proxy\x18\x01 \x01(\tR\x05proxy\x12\x18\n" +
 	"\aaddress\x18\x02 \x01(\tR\aaddress\x12\x14\n" +

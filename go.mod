@@ -9,6 +9,7 @@ require (
 	github.com/AloneAtWar/oh-my-blockchain v0.7.1-0.20261110085415-cac108d91357
 	github.com/ClickHouse/clickhouse-go/v2 v2.49.0
 	github.com/alicebob/miniredis/v2 v2.37.0
+	github.com/btcsuite/btcutil v1.0.3-0.20201208143702-a53e38424cce
 	github.com/coder/websocket v1.8.14
 	github.com/ethereum/go-ethereum v1.17.4
 	github.com/go-kratos/kratos/v2 v2.9.2
@@ -35,7 +36,6 @@ require (
 	github.com/andybalholm/brotli v1.2.6 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/bits-and-blooms/bitset v1.20.0 // indirect
-	github.com/btcsuite/btcutil v1.0.3-0.20201208143702-a53e38424cce // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/consensys/gnark-crypto v0.18.1 // indirect
 	github.com/crate-crypto/go-eth-kzg v1.5.0 // indirect
