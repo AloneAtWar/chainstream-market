@@ -53,10 +53,10 @@ metrics:
   addr: ""
 
 # One chainstream-evm topic per chain, each consumed in order. state_reads
-# picks how balanceOf is read: latest (the default) reads at the latest
-# block no older than the applied one and records the block read, so any
-# full node works and TRON is supported; exact reads at the applied block's
-# hash (EIP-1898), which far behind the head needs an archive node, e.g.
+# picks how balanceOf is read: latest (the default) resolves a head no older
+# than the applied block, records its height and hash, and pins ordinary EVM
+# calls to that hash; TRON checks the head stays unchanged instead. exact reads
+# at the applied block's hash (EIP-1898), which far behind the head needs an archive node, e.g.
 #   - {name: eth, chain_id: 1, topic: chainstream-eth, rpc_url: ..., state_reads: exact}
 chains:
   - {name: eth, chain_id: 1, topic: chainstream-eth, rpc_url: http://127.0.0.1:8545}

@@ -25,6 +25,7 @@ type Node struct {
 	hashes    map[int64]string
 	head      int64
 	calls     int
+	blockArgs []string
 }
 
 func NewNode() *Node {
@@ -73,6 +74,15 @@ func (node *Node) Calls() int {
 	node.mu.Lock()
 	defer node.mu.Unlock()
 	return node.calls
+}
+
+// BlockArgs returns the block argument of every eth_call.
+//
+// BlockArgs 返回每次 eth_call 的区块参数。
+func (node *Node) BlockArgs() []string {
+	node.mu.Lock()
+	defer node.mu.Unlock()
+	return append([]string(nil), node.blockArgs...)
 }
 
 func key(token, holder string) string { return strings.ToLower(token) + "/" + strings.ToLower(holder) }
@@ -136,6 +146,7 @@ func (node *Node) serve(writer http.ResponseWriter, request *http.Request) {
 		_ = json.Unmarshal(current.Params[0], &target) //nolint:errcheck // malformed calls read as empty
 		blockHash, _ := node.blockHash(current.Params[1])
 		node.calls++
+		node.blockArgs = append(node.blockArgs, string(current.Params[1]))
 		holder := "0x" + target.Data[len(target.Data)-40:]
 		switch {
 		case node.missing[blockHash]:

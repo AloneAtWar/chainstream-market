@@ -117,3 +117,40 @@ func TestHolderCountsBackfill(t *testing.T) {
 	}
 	assertHolderCounts(t, repo, map[string]int64{"0xaa": 2})
 }
+
+func TestHolderReadHashesAreRestoredAndChecked(t *testing.T) {
+	repo := openRepo(t)
+	seed := holderSeed(token, alice, 10)
+	seed.AsOf, seed.AsOfHash, seed.Verified = 10, "a10", true
+	commitHolders(t, repo, model.HolderChange{Height: 10, Created: []model.HolderSeed{seed}})
+	delta := holderDelta(token, alice, 5)
+	delta.Verified, delta.AsOf, delta.AsOfHash = true, 12, "a12"
+	commitHolders(t, repo, model.HolderChange{Height: 11, Deltas: []model.HolderDelta{delta}})
+
+	keys := []model.HolderKey{{Token: token, Holder: alice}}
+	holdings, err := repo.Holdings(context.Background(), 1, keys)
+	if err != nil || len(holdings) != 1 || holdings[0].AsOf != 12 || holdings[0].AsOfHash != "a12" {
+		t.Fatalf("holding after delta = %+v, %v", holdings, err)
+	}
+	commitHolders(t, repo, model.HolderChange{Reverted: true, RevertTo: 10})
+	holdings, err = repo.Holdings(context.Background(), 1, keys)
+	if err != nil || len(holdings) != 1 || holdings[0].Balance.Int64() != 10 ||
+		holdings[0].AsOf != 10 || holdings[0].AsOfHash != "a10" {
+		t.Fatalf("holding after revert = %+v, %v", holdings, err)
+	}
+
+	if err := repo.InvalidateForkReads(context.Background(), 1, 10, "a10"); err != nil {
+		t.Fatalf("InvalidateForkReads() with matching hash error = %v", err)
+	}
+	holdings, _ = repo.Holdings(context.Background(), 1, keys)
+	if len(holdings) != 1 || holdings[0].AsOf != 10 || holdings[0].AsOfHash != "a10" {
+		t.Fatalf("holding with matching hash = %+v", holdings)
+	}
+	if err := repo.InvalidateForkReads(context.Background(), 1, 10, "b10"); err != nil {
+		t.Fatalf("InvalidateForkReads() with another fork error = %v", err)
+	}
+	holdings, _ = repo.Holdings(context.Background(), 1, keys)
+	if len(holdings) != 1 || holdings[0].AsOf != model.AsOfReread || holdings[0].AsOfHash != "" {
+		t.Fatalf("holding after fork invalidation = %+v", holdings)
+	}
+}

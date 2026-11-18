@@ -5,8 +5,8 @@
 // retries and multicall aggregation.
 //
 // rpc 包通过 oh-my-blockchain 的 EVM SDK 读取合约状态（批量、重试、multicall 聚合）：
-// 余额按区块哈希锁定（EIP-1898，exact）或在不早于当前块的 latest 读取并报告实际块高
-// （latest），以及最新区块上的调用，并加上索引器的失败规则与指标。
+// 余额按区块哈希锁定（EIP-1898，exact），或在解析不早于当前块的链头后按其哈希锁定
+// （普通 EVM latest）；TRON latest 校验调用前后链头高度和哈希。返回值包含实际执行块证据。
 // calldata 一律用 abigen 绑定编解码，不手写 selector。TRON 的 base58 地址在打包前转成 hex。
 package rpc
 
@@ -124,24 +124,30 @@ type Block struct {
 // nil when the call itself failed on-chain: the token reverted, has no
 // code, or returned something that is not a uint256.
 //
-// Balance 是一次余额读取的结果和它所属的块高（余额是该块执行后的状态）；调用在链上失败时 Amount 为 nil。
+// Balance 是一次余额读取的结果和它所属的区块（余额是该块执行后的状态）；调用在链上失败时 Amount 为 nil。
 type Balance struct {
 	Amount *big.Int
 	Height int64
+	Hash   string
 }
 
-// Balances returns balanceOf for each query. Exact clients read the state
-// after block, pinned by its hash, so a reorg makes the answer fail rather
-// than silently come from another fork; every Height is block.Height.
-// Latest clients read the latest block no older than block and report the
-// block each answer was executed at, which needs no historical state.
-// Native balances are read with the multicall contract's getEthBalance, so
-// they batch with balanceOf. Any failure other than an on-chain one, such as
-// a node without the block's state, is returned as an error, and so is a
-// native query on a chain without native balances.
+const (
+	latestReadAttempts   = 3
+	latestReadRetryDelay = 300 * time.Millisecond
+)
+
+// Balances returns balanceOf for each query and the execution block's height
+// and hash. Exact clients read at block's hash. Ordinary EVM latest clients
+// resolve a head no older than block and pin calls to that head's hash. TRON
+// cannot pin calls by hash, so it accepts a latest read only when the head's
+// height and hash are unchanged before and after the calls. Pinning does not
+// make an unfinalized block final; reverts are still handled by the indexer.
+// Native balances use the multicall contract's getEthBalance and batch with
+// balanceOf. Node failures are returned, while an on-chain failure gives a nil
+// Amount.
 //
-// Balances 读取每个查询的 balanceOf：exact 按区块哈希锁定，Height 都是 block.Height；
-// latest 在不早于 block 的 latest 读取并报告每个结果实际执行的块高，不需要历史状态。
+// Balances 读取每个查询的 balanceOf，并返回实际执行块的高度和哈希。普通 EVM 的
+// latest 先解析不早于当前块的链头再按哈希锁定；TRON 通过调用前后高度和哈希不变来确认。
 func (client *Client) Balances(ctx context.Context, block Block, queries []BalanceQuery) ([]Balance, error) {
 	requests := make([]evmsdk.RPCCallReq, len(queries))
 	for index, query := range queries {
@@ -163,29 +169,104 @@ func (client *Client) Balances(ctx context.Context, block Block, queries []Balan
 			}
 			requests[index].Address, requests[index].Calldata = client.native, common.Bytes2Hex(calldata)
 		}
-		if client.exact {
-			requests[index].BlockHash = block.Hash
-		} else {
-			requests[index].Read = evmsdk.StateRead{
-				Requirement: evmsdk.ReadAtLeast, QueryAt: evmsdk.LatestBlockNumber, MinimumHeight: block.Height,
-			}
-		}
 	}
-	results, heights, err := client.callAt(ctx, requests)
+	if len(requests) == 0 {
+		return []Balance{}, nil
+	}
+	if client.tron && !client.exact {
+		results, read, err := client.callTronLatest(ctx, block.Height, requests)
+		if err != nil {
+			return nil, fmt.Errorf("rpc: balanceOf at %d %s: %w", block.Height, block.Hash, err)
+		}
+		return decodeBalances(results, read), nil
+	}
+	read := Block{Height: block.Height, Hash: strings.ToLower(block.Hash)}
+	if !client.exact {
+		head, err := client.latestHead(ctx, block.Height)
+		if err != nil {
+			return nil, fmt.Errorf("rpc: balanceOf at %d %s: %w", block.Height, block.Hash, err)
+		}
+		read = Block{Height: head.Number, Hash: head.Hash.Hex()}
+	}
+	for index := range requests {
+		requests[index].BlockHash = read.Hash
+	}
+	results, _, err := client.callAt(ctx, requests)
 	if err != nil {
 		return nil, fmt.Errorf("rpc: balanceOf at %d %s: %w", block.Height, block.Hash, err)
 	}
+	return decodeBalances(results, read), nil
+}
+
+func decodeBalances(results [][]byte, block Block) []Balance {
 	balances := make([]Balance, len(results))
 	for index, result := range results {
-		balances[index].Height = block.Height
-		if !client.exact {
-			balances[index].Height = heights[index]
-		}
+		balances[index].Height, balances[index].Hash = block.Height, block.Hash
 		if balance, err := tokenABI.UnpackBalanceOf(result); err == nil {
 			balances[index].Amount = balance
 		}
 	}
-	return balances, nil
+	return balances
+}
+
+func (client *Client) latestHead(ctx context.Context, minimum int64) (evmsdk.BlockHead, error) {
+	reader, ok := client.sdk.(evmsdk.BlockHeadReader)
+	if !ok {
+		return evmsdk.BlockHead{}, fmt.Errorf("rpc: %T cannot read block heads", client.sdk)
+	}
+	for attempt := 0; ; attempt++ {
+		head, err := reader.GetBlockHeadByTag(ctx, evmsdk.LatestBlockNumber)
+		if err != nil {
+			return evmsdk.BlockHead{}, err
+		}
+		if head.Number >= minimum {
+			if head.Hash == (common.Hash{}) {
+				return evmsdk.BlockHead{}, errors.New("rpc: latest block has no hash")
+			}
+			return head, nil
+		}
+		if attempt == latestReadAttempts-1 {
+			return evmsdk.BlockHead{}, fmt.Errorf("%w: latest block %d precedes minimum %d",
+				evmsdk.ErrStateReadUnstable, head.Number, minimum)
+		}
+		timer := time.NewTimer(latestReadRetryDelay)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return evmsdk.BlockHead{}, ctx.Err()
+		case <-timer.C:
+		}
+	}
+}
+
+func (client *Client) callTronLatest(ctx context.Context, minimum int64, requests []evmsdk.RPCCallReq) (
+	[][]byte, Block, error,
+) {
+	var unstable error
+	for range latestReadAttempts {
+		before, err := client.latestHead(ctx, minimum)
+		if err != nil {
+			return nil, Block{}, err
+		}
+		for index := range requests {
+			requests[index].BlockHeight = evmsdk.LatestBlockNumber
+		}
+		results, _, err := client.callAt(ctx, requests)
+		if err != nil {
+			return nil, Block{}, err
+		}
+		after, err := client.latestHead(ctx, minimum)
+		if err != nil {
+			return nil, Block{}, err
+		}
+		if before != after {
+			unstable = fmt.Errorf("%w: latest changed from %d %s to %d %s", evmsdk.ErrStateReadUnstable,
+				before.Number, before.Hash, after.Number, after.Hash)
+			continue
+		}
+		return results, Block{Height: before.Number, Hash: before.Hash.Hex()}, nil
+	}
+	return nil, Block{}, unstable
 }
 
 // hexAddress parses a holder: a 0x address, or on TRON a base58 one, which

@@ -10,10 +10,11 @@ import (
 // HoldingRow is a holder_balances row read with balance as text.
 // holder-indexer writes it and market-api reads it.
 type HoldingRow struct {
-	Token   string
-	Holder  string
-	Balance string
-	AsOf    int64 `gorm:"column:as_of_height"`
+	Token    string
+	Holder   string
+	Balance  string
+	AsOf     int64  `gorm:"column:as_of_height"`
+	AsOfHash string `gorm:"column:as_of_hash"`
 }
 
 // Holdings decodes rows.
@@ -26,6 +27,7 @@ func Holdings(rows []HoldingRow) ([]model.Holding, error) {
 		}
 		holdings[index] = model.Holding{
 			HolderKey: model.HolderKey{Token: row.Token, Holder: row.Holder}, Balance: value, AsOf: row.AsOf,
+			AsOfHash: row.AsOfHash,
 		}
 	}
 	return holdings, nil

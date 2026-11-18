@@ -3,11 +3,14 @@ package rpc
 import (
 	"context"
 	"encoding/json"
+	"math/big"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
 	"github.com/AloneAtWar/oh-my-blockchain/chain/evm"
+	evmsdk "github.com/AloneAtWar/oh-my-blockchain/chain/evm/sdk"
+	"github.com/ethereum/go-ethereum/common"
 
 	"github.com/AloneAtWar/chainstream-market/internal/pkg/rpc/rpctest"
 )
@@ -18,6 +21,7 @@ const (
 	alice   = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	bob     = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 	blockA  = "0x000000000000000000000000000000000000000000000000000000000000000a"
+	blockB  = "0x000000000000000000000000000000000000000000000000000000000000000b"
 	missing = "0x000000000000000000000000000000000000000000000000000000000000dead"
 )
 
@@ -40,8 +44,8 @@ func TestBalancesBatchesAndDecodes(t *testing.T) {
 		t.Fatalf("balances = %v", balances)
 	}
 	for _, balance := range balances {
-		if balance.Height != 10 {
-			t.Fatalf("exact balance height = %d, want 10", balance.Height)
+		if balance.Height != 10 || balance.Hash != blockA {
+			t.Fatalf("exact balance block = (%d, %s), want (10, %s)", balance.Height, balance.Hash, blockA)
 		}
 	}
 	if node.Calls() != 3 {
@@ -154,7 +158,6 @@ func TestNativeBalancesNeedAMulticallContract(t *testing.T) {
 // Latest reads run at the latest block no older than the applied one and
 // report the block they ran at; a head behind the block is an error.
 func TestBalancesLatestReportsTheReadBlock(t *testing.T) {
-	const blockB = "0x000000000000000000000000000000000000000000000000000000000000000b"
 	node := rpctest.NewNode()
 	defer node.Close()
 	node.SetBalance(blockB, token, alice, 50)
@@ -169,8 +172,14 @@ func TestBalancesLatestReportsTheReadBlock(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Balances() error = %v", err)
 	}
-	if balances[0].Amount.Int64() != 50 || balances[0].Height != 11 || balances[1].Amount.Sign() != 0 || balances[1].Height != 11 {
-		t.Fatalf("balances = %+v, want alice 50 read at 11", balances)
+	if balances[0].Amount.Int64() != 50 || balances[0].Height != 11 || balances[0].Hash != blockB ||
+		balances[1].Amount.Sign() != 0 || balances[1].Height != 11 || balances[1].Hash != blockB {
+		t.Fatalf("balances = %+v, want alice 50 read at 11 %s", balances, blockB)
+	}
+	for _, argument := range node.BlockArgs() {
+		if argument != `{"blockHash":"`+blockB+`"}` {
+			t.Fatalf("latest eth_call block argument = %s, want hash %s", argument, blockB)
+		}
 	}
 	if _, err := client.Balances(context.Background(), Block{Height: 12, Hash: blockA}, []BalanceQuery{
 		{Token: token, Holder: alice},
@@ -198,5 +207,47 @@ func TestTronHoldersAreBase58AndExactIsRefused(t *testing.T) {
 	plain, _ := New(Options{URL: "http://127.0.0.1:1"})
 	if _, err := plain.hexAddress("TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t"); err == nil {
 		t.Fatal("hexAddress() base58 off TRON error = nil")
+	}
+}
+
+type tronHeadRead struct {
+	heads []evmsdk.BlockHead
+	calls int
+}
+
+func (read *tronHeadRead) GetBlockHeadByTag(context.Context, evmsdk.BlockNumber) (evmsdk.BlockHead, error) {
+	head := read.heads[0]
+	read.heads = read.heads[1:]
+	return head, nil
+}
+
+func (read *tronHeadRead) CallContract(_ context.Context, requests []evmsdk.RPCCallReq) ([]evmsdk.RPCCallResp, error) {
+	read.calls++
+	responses := make([]evmsdk.RPCCallResp, len(requests))
+	for index, request := range requests {
+		if request.BlockHeight != evmsdk.LatestBlockNumber {
+			return nil, evmsdk.ErrStateReadUnstable
+		}
+		responses[index] = evmsdk.RPCCallResp{Success: true, ReturnData: common.LeftPadBytes(big.NewInt(50).Bytes(), 32)}
+	}
+	return responses, nil
+}
+
+func TestTronLatestRetriesSameHeightHashChange(t *testing.T) {
+	headA := evmsdk.BlockHead{Number: 11, Hash: common.HexToHash(blockA)}
+	headB := evmsdk.BlockHead{Number: 11, Hash: common.HexToHash(blockB)}
+	read := &tronHeadRead{heads: []evmsdk.BlockHead{headA, headB, headB, headB}}
+	client := &Client{sdk: read, tron: true}
+	balances, err := client.Balances(context.Background(), Block{Height: 10, Hash: blockA}, []BalanceQuery{
+		{Token: token, Holder: alice},
+	})
+	if err != nil {
+		t.Fatalf("Balances() error = %v", err)
+	}
+	if read.calls != 2 {
+		t.Fatalf("eth_call attempts = %d, want 2", read.calls)
+	}
+	if len(balances) != 1 || balances[0].Amount.Int64() != 50 || balances[0].Height != 11 || balances[0].Hash != headB.Hash.Hex() {
+		t.Fatalf("balances = %+v, want 50 at %d %s", balances, headB.Number, headB.Hash)
 	}
 }

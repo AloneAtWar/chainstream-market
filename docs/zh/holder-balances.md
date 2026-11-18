@@ -9,11 +9,7 @@
 
 本文**不讨论**另外三类容易混淆的数据：`market-wallet` 的成本账本 `wallet_positions`、Curve/Balancer 池的余额快照、ClickHouse 的原始转账表 `raw_transfers`。它们不是这里所说的持有人余额，也不参与 `holder-indexer` 的余额计算。
 
-代码基线：
-
-- `chainstream-market`：`3e79001ad957c7556eaae1fa39a284f20afab93b`；
-- `chainstream-evm`：`955cdea4e2a1d75a5a2d2ba97ca652ada7a7f5a4`；
-- OMB：两个项目的 `go.mod` 均指向 `cac108d91357ae1be7d15c51c11db291393d9aa5`。
+本文描述当前 `holder-indexer` 实现，具体行为以文末代码索引和相应测试为准。
 
 ## 1. 先看整条链路：为什么不能只把转账加起来
 
@@ -102,6 +98,12 @@ CREATE INDEX IF NOT EXISTS holder_balances_verified
 ALTER TABLE holder_balances
     ADD COLUMN IF NOT EXISTS as_of_height BIGINT NOT NULL DEFAULT 0;
 
+ALTER TABLE holder_balances
+    ADD COLUMN IF NOT EXISTS as_of_hash TEXT;
+
+CREATE INDEX IF NOT EXISTS holder_balances_as_of
+    ON holder_balances (chain_id, as_of_height) WHERE as_of_height >= 0;
+
 CREATE TABLE IF NOT EXISTS holder_undo (
     chain_id      BIGINT NOT NULL,
     block_height  BIGINT NOT NULL,
@@ -115,6 +117,9 @@ CREATE TABLE IF NOT EXISTS holder_undo (
 
 ALTER TABLE holder_undo
     ADD COLUMN IF NOT EXISTS prev_as_of BIGINT NOT NULL DEFAULT 0;
+
+ALTER TABLE holder_undo
+    ADD COLUMN IF NOT EXISTS prev_as_of_hash TEXT;
 
 DO $$
 BEGIN
@@ -146,6 +151,7 @@ END $$;
 | `balance` | 当前保存的原始单位余额。它可能是链上读取值，也可能是读取失败时按转账估算的值。 |
 | `verified_height` | 最近一次把“已验证”变化提交进库的**索引器应用块高**，并不总是 RPC 真正执行的块高。成功 seed / 重读 / 对账时更新；新建估算行或普通转账累加不更新；重组失效时清为 `NULL`。失败的对账调用也会推进它，见第 5 节。 |
 | `as_of_height` | **余额高水位**：这份 `balance` 已包含该块及之前的转账，之后不得重复叠加。成功链上读取时是实际执行块高；读取失败、用本块净转账估算时是当前应用块高；`-1` 表示读取点可能已被重组，必须重读。旧数据迁移时默认 `0`。 |
+| `as_of_hash` | `as_of_height` 对应块的哈希，用来证明余额来自哪条分支。普通 EVM latest 和 exact 都由实际哈希固定调用产生；TRON 由前后一致的链头确认。历史迁移行可为 `NULL`，在同高度校验时会被保守失效。 |
 
 为什么要把 `verified_height` 和 `as_of_height` 分开？看一个默认 `latest` 模式的例子：
 
@@ -158,11 +164,12 @@ balanceOf(Alice) 实际在块 105 执行，返回 1015
 verified_height = 104   -- 这次验证是在应用块 104 时提交的
 as_of_height    = 105   -- 1015 已包含块 105 的转账
 balance         = 1015
+as_of_hash      = 块 105 的哈希
 ```
 
 如果只存一个“校验高度”，就无法同时回答“对账调度多久没检查它”和“未来哪些转账已经包含在余额里”这两件事。
 
-还要注意：`as_of_height` 是**去重高水位**，不是 finalized 标志，也没有配套保存该高度的块哈希。
+还要注意：`as_of_height` / `as_of_hash` 是**去重坐标和分支证据**，不是 finalized 标志。
 
 ### 2.4 `holder_undo`：不是旧余额快照，而是可逆操作
 
@@ -175,6 +182,7 @@ balance         = 1015
 | `created` | 这一块是否新建了持仓。为真时回滚直接删除整行，而不是尝试恢复一个“不存在的旧余额”。 |
 | `prev_verified` | 本块修改前的 `verified_height`，回滚时恢复。 |
 | `prev_as_of` | 本块修改前的 `as_of_height`，回滚时恢复。 |
+| `prev_as_of_hash` | 本块修改前的 `as_of_hash`，与旧高度一起恢复；缺少它会让回滚后的高度和哈希分属不同分支。 |
 
 为什么对账也要写 undo？假设块 104 对账发现 rebase 多了 10 个币，当前余额从 1000 修成 1010。若块 104 随后被孤立，这 10 个币的修正也必须一起撤销，否则旧分支的对账结果会污染新分支。
 
@@ -257,7 +265,7 @@ balance         = 1015
 | `balanceOf` 执行 revert、地址无代码、返回空或无法解码为 `uint256` | 新 ERC-20 持仓用本块净转账作为估算初值，`verified_height = NULL` | 某些代币不标准，不能让一个坏合约卡死整条链 |
 | 已存在且因重组需要重读的 ERC-20 持仓，本次 `balanceOf` 失败 | 加本块非零净转账，`as_of_height` 仍为 `-1`，以后仍需重读 | 暂时保留可用估算，但不伪装成已恢复可信 |
 | 原生币读取失败 | 新地址不建行；已有地址不生成修正 | 没有可靠的逐笔原生币总额可替代，尤其还有 gas 和奖励 |
-| 节点没有指定块/状态、请求超时、RPC 错误、latest 低于当前应用块、无法证明实际执行高度 | 整次读取报错，当前块不提交，索引器停止或重试 | 此时继续猜会永久错账 |
+| 节点没有指定块/状态、请求超时、RPC 错误、latest 低于当前应用块、无法证明实际执行高度和哈希 | 整次读取报错，当前块不提交，索引器停止或重试 | 此时继续猜会永久错账 |
 
 OMB 对失败的批次默认最多尝试三次。合约自身 revert 与“节点缺少历史状态”不会被混为一谈：前者可以降级，后者必须阻止提交。
 
@@ -450,7 +458,7 @@ BlockEvent  { block_height: R + 2, ... }
 1. **删除新建持仓**：删除 `holder_undo` 中 `block_height > R AND created = true` 对应的余额行，并修正人数；
 2. **撤销已有持仓的增量**：按持仓汇总 `sum(delta)`，从当前余额中减去；同时取这些块中最早的 `prev_verified`、`prev_as_of` 恢复；
 3. **删除已经消费的 undo**：删除 `block_height > R` 的记录；
-4. **失效可能来自旧分支的读取**：把其余 `as_of_height > R` 的行设为 `as_of_height = -1, verified_height = NULL`；
+4. **失效可能来自旧分支的读取**：把其余 `as_of_height > R` 的行设为 `as_of_height = -1, as_of_hash = NULL, verified_height = NULL`；
 5. 按裁剪边界清理过旧 undo，并保存新的检查点。
 
 先删 created 行再做 delta update 是有意的：同一持仓若先在被回滚块中创建、后又在更高块修改，整行都应消失，后面的 delta 不应再作用到它身上。
@@ -480,6 +488,7 @@ Alice = 1100 - (-100) = 1200
 ```text
 balance = 1300
 as_of_height = 103
+as_of_hash = hash(A103)
 holder checkpoint 的应用高度 = 100
 ```
 
@@ -534,6 +543,29 @@ pruned_through = max(F, H - history_depth)
 
 这条通知只增加失效处理，不改变检查点高度和哈希；当前 offset 仍照常提交。回归测试同时覆盖 revert 等于、高于检查点，以及 A101 被孤立后在 B101 重读的场景。
 
+### 6.8 怎样找到更早写入、但读取高度恰好是当前块的记录
+
+latest 在应用块 100 时可能写入 `as_of_height = 103`。仅靠持仓主键无法在处理块 103 时找到它，因此当前实现还有部分索引：
+
+```sql
+CREATE INDEX IF NOT EXISTS holder_balances_as_of
+    ON holder_balances (chain_id, as_of_height) WHERE as_of_height >= 0;
+```
+
+每块在加载 transfers / native_touched 涉及的持仓之前，先执行：
+
+```sql
+UPDATE holder_balances
+SET as_of_height = -1, as_of_hash = NULL, verified_height = NULL
+WHERE chain_id = ?
+  AND as_of_height = ?
+  AND as_of_hash IS DISTINCT FROM ?;
+```
+
+后两个参数是当前块高和 `BlockEvent.block_hash`。PostgreSQL 通过索引找到同高度记录：哈希相同说明未来读取确实对应当前块；哈希不同（包括无法证明匹配的历史 `NULL`）则先标为待重读。这样本块触碰的持仓在随后加载时自然进入现有 `as_of_height = -1` 重读路径，未触碰的持仓只失效、不立即制造 RPC 峰值。
+
+该 UPDATE 只降低可信度、不修改余额值，所以如果后续块应用失败，重放时再次执行也安全。正常哈希一致时不更新行；真正分叉时才批量失效。它与 revert 失效互为兜底：revert 尽早标记，当前块哈希检查防止遗漏后误用旧分支余额。
+
 ## 7. 当前如何获取余额
 
 “获取余额”有两条完全不同的路径：
@@ -575,6 +607,7 @@ Balances(
 type Balance struct {
     Amount *big.Int // 链上调用失败时为 nil
     Height int64    // 实际状态包含到的块高
+    Hash   string   // 实际执行块的哈希
 }
 ```
 
@@ -646,57 +679,40 @@ OMB 使用 EIP-1898 的区块参数调用 `eth_call`。它内部以 `BlockNumber
 state_reads: latest
 ```
 
-每个请求构造成：
-
-```go
-evmsdk.RPCCallReq{
-    Address:  tokenOrMulticall,
-    Calldata: calldata,
-    Read: evmsdk.StateRead{
-        Requirement:   evmsdk.ReadAtLeast,
-        QueryAt:       evmsdk.LatestBlockNumber,
-        MinimumHeight: block.Height,
-    },
-}
-```
-
-参数含义：
-
-- `QueryAt = latest`：希望读节点当前链头；
-- `MinimumHeight = 当前应用块高 N`：实际执行高度必须 `H >= N`；
-- `ReadAtLeast`：允许 H 大于 N，不要求 `H == N`。
-
 普通 EVM 节点上的过程是：
 
-1. OMB 用 `eth_getBlockByNumber("latest", ...)` 把 latest 解析成具体高度 H；
-2. 若 `H < N`，返回 `ErrStateReadUnstable`，不拿旧状态冒充当前块状态；
-3. 在 H 上执行直接或聚合后的 `eth_call`；
-4. 从具体请求高度或 multicall 返回的 `blockNumber` 取得执行证据；
-5. 再次校验 `H >= N`，把 H 交给 `holder-indexer` 写入 `as_of_height`。
+1. 通过 OMB 的 `GetBlockHeadByTag(latest)`，在同一次 `eth_getBlockByNumber("latest", false)` 应答中取得 `(H, hashH)`；
+2. 检查 `H >= N`，N 是当前应用块高；不满足则报 `ErrStateReadUnstable`，不拿旧状态冒充；
+3. 把每个请求构造成 `RPCCallReq{Address, Calldata, BlockHash: hashH}`；
+4. 用 EIP-1898 按 hashH 执行直接或聚合后的 `eth_call`；
+5. 返回 `Balance{Height: H, Hash: hashH}`，并写入 `as_of_height` / `as_of_hash`。
 
-不同批次可能把 latest 解析成不同的 H；每个结果都携带自己的执行高度，业务层不会假设所有持仓共享同一个全局快照。
+也就是说，latest 现在不是只按高度 H 调用，而是**先解析链头，再按解析出的哈希固定调用**。这样即使链头在执行期间前进，结果仍属于同一个已知块；如果 hashH 随后被孤立，revert 和同高度哈希检查能识别它。
 
-TRON 只能把 `eth_call` 的区块参数写成 `"latest"`。OMB 通过 multicall 报告的块高确认执行位置；无法从合约得到块高时，会比较执行前后的 latest 高度，只有二者不变才接受，否则报不稳定读取并重试。这里证明的仍是高度，不是哈希。
+TRON 不支持 EIP-1898，只能把 `eth_call` 的区块参数写成 `"latest"`，因此采用另一套约束：
 
-**代价与收益**：不需要 archive 状态，落后很多块也能追数据；但追块期间的余额和人数可能“超前”于当前应用高度，而且每个持仓的高水位可以不同。
+1. 调用前读取 `(H, hashH)`，要求 `H >= N`；
+2. 在 latest 执行调用；
+3. 调用后再次读取链头，只有高度和哈希都不变才接受结果，否则最多重试三轮；
+4. 成功后仍保存 `(H, hashH)`。
+
+这能识别“相同高度、不同哈希”的竞态，但前后一致仍不是 EIP-1898 那样不可争议的单次执行证明；极端情况下连续重组又返回原哈希，仍要靠 revert 和对账兜底。
+
+**代价与收益**：普通 EVM 不需要 archive 状态，解析链头后按当前块哈希读取也不需要旧时代状态；落后很多块仍能追数据。追块期间的余额和人数可能“超前”于当前应用高度，而且每个持仓的高水位可以不同。
 
 ### 7.5 latest 是否验证指定块哈希
 
-**没有。**
+**普通 EVM 会，TRON 使用前后一致性校验。**
 
-虽然 OMB 的通用 `StateRead` 已支持 `ExpectedHash`，multicall 也有 `BlockInfoHash` 模式，但 `chainstream-market` 当前这条 latest 路径：
+当前实现不再依赖调用方设置 `StateRead.ExpectedHash`，而是在 `internal/pkg/rpc` 直接完成：
 
-- 没有设置 `ExpectedHash`；
-- 默认 multicall 只要求返回块高（`BlockInfoNumber`）；
-- `internal/pkg/rpc` 只读取 `Execution.BlockNumber`，不保存或校验 `Execution.BlockHash`；
-- `holder_balances` 也没有 `as_of_hash` 字段。
+- 普通 EVM latest 和 exact 都把实际区块哈希放进 EIP-1898 请求；
+- latest 的高度和哈希来自同一次区块头应答，不是执行后按高度猜一个哈希；
+- 每次结果都携带 Height 和 Hash，并持久化到 `holder_balances.as_of_height` / `as_of_hash`；
+- 当前块到达时，通过 `(chain_id, as_of_height)` 索引检查同高度记录的哈希是否一致；
+- TRON 比较调用前后的高度和哈希，但不能按哈希固定执行，保证弱于普通 EVM。
 
-因此下面两件事都可能发生：
-
-1. latest 在执行前后发生同高度重组，余额来自另一条分支，但高度仍满足 `H >= N`；
-2. 即使读取当下完全正确，H 是未 finalized 块，之后仍可能正常发生重组。
-
-**块高合法不代表分支合法，分支合法也不代表永远 finalized。** 这是三个不同层次的问题。
+因此要把三个问题分开：**块高是否合法、读取属于哪个分支、该分支是否已经 finalized。** 哈希解决第二个问题，不自动解决第三个问题。
 
 ### 7.6 是否可能获取到“之后会被回滚的余额”
 
@@ -705,30 +721,30 @@ TRON 只能把 `eth_call` 的区块参数写成 `"latest"`。OMB 通过 multical
 | 模式 | 读取绑定 | 是否可能读到未 finalized 状态 | 当前主要修复方式 |
 | --- | --- | --- | --- |
 | `exact` | 当前应用块的哈希 | 会；当前应用块本身就可能尚未 finalized | revert + undo 精确撤销 |
-| `latest` | 高度至少为 N 的当前链头，未绑定哈希 | 会，而且可能比当前应用块更靠前 | revert + undo + `as_of_height = -1` + 重读 / 对账 |
+| `latest` | 高度至少为 N 的链头及其哈希；TRON 为前后一致的链头 | 会，而且可能比当前应用块更靠前 | revert + undo + 同高度哈希校验 + 重读 / 对账 |
 
 当前系统的定位是“低延迟跟随链头，重组后纠正”，不是“只展示永不变更的余额”。这与 `chainstream-evm` 不等待 finalized 就发布事实的整体取舍一致。
 
 现有缓解手段包括：
 
-- exact 用块哈希防止同高度误读另一条分支；
-- latest 用实际执行高水位避免重复累加；
-- 所有变更进入 undo；
-- 对可能来自旧分支的 latest 余额标 `-1`；
+- exact 和普通 EVM latest 用块哈希防止同高度误读另一条分支；
+- latest 用实际执行高水位避免重复累加，并保存执行哈希；
+- 所有变更进入 undo，旧高度和旧哈希一起恢复；
+- 对可能来自旧分支的余额标 `-1`；
+- 当前块到达时再次检查同高度、异哈希记录；
 - 用周期对账修正残余漂移。
 
 但第 6.6 节说明的可见窗口仍然存在，所以不能把它描述成“任何时刻、任何重组形态下，API 都立即返回新规范链余额”。
 
 ### 7.7 如果业务完全不能接受会回滚的余额，怎么解决
 
-需要根据业务要求增加更强的读取或展示层，不能只把 `latest` 换成 `exact`：
+哈希固定解决的是“知道余额来自哪条分支”，不是“这条分支永不改变”。严格业务仍需要更强的读取或展示层：
 
 1. **只读 finalized 块**：先取得 finalized 高度及对应块哈希，再按该哈希做 EIP-1898 `balanceOf` / `getEthBalance`。读取的是已最终确定的状态，而不是当前 latest。离 finalized 很远时仍需要能服务该状态的节点。
 2. **建立 finalized 余额视图**：持续消费流，但只对外暴露已经 finalized 的版本；链头视图和 finalized 视图分开，避免用一份可提前量的当前表同时承担两种语义。
-3. **加强 latest 的执行证据**：在 OMB 层解析 latest 时保留其哈希，配合 `ExpectedHash` 或 multicall 的块哈希证据检查实际执行分支，并在余额行保存 `as_of_hash`。这能发现“解析 latest 与执行之间换分支”，但仍不能把未 finalized 块变成 finalized。
-4. **补齐失效传播和 API 语义**：对每条 revert 都失效高于 R 的读取高水位；API 至少返回 `as_of_height`、`verified_height`、`stale`，或者过滤 `as_of_height = -1` 的行。这样调用方不必把待重读值误认为可信现值。
+3. **补齐 API 的失效语义**：API 至少返回 `as_of_height`、`as_of_hash`、`verified_height`、`stale`，或者过滤 `as_of_height = -1` 的行。这样调用方不必把待重读值误认为可信现值。
 
-以上是为了严格一致性可做的改造方向，**不是当前已上线的完整能力**。
+前两项是严格 finalized 能力的改造方向，**不是当前已上线的完整能力**。
 
 ### 7.8 对外 API 怎样读取余额
 
@@ -769,14 +785,14 @@ LIMIT ?;
 | 回滚是否与余额人数、检查点原子提交？ | 是，在同一个 PostgreSQL 事务内。 |
 | 是否支持任意深度回滚？ | 否。低于已裁剪历史会停止；history_depth 至少要覆盖上游 scanner.cache_size。 |
 | exact 是否验证块哈希？ | 是，调用直接按 EIP-1898 块哈希执行；但它不是 canonical/finality 证明。 |
-| latest 是否验证块哈希？ | 否，只证明实际执行高度满足下界。 |
+| latest 是否验证块哈希？ | 普通 EVM 会先解析链头再按哈希执行；TRON 校验调用前后高度和哈希不变。仍会保存实际执行哈希。 |
 | 是否可能返回之后会重组的余额？ | 会。当前采用低延迟 + 事后撤销 / 重读 / 对账。 |
 | revert 后 API 是否立即隐藏待重读余额？ | 否，API 不过滤也不暴露 `as_of_height = -1`。 |
 | 是否已有严格的 finalized-only 持有人余额 API？ | 没有。需要额外视图或按 finalized 块哈希查询。 |
 
 一句话概括当前设计：
 
-> 用链上读取解决“起点不为零”，用净转账解决“不能每块读所有人”，用对账解决“事件解释不了全部变化”，用 undo 解决“分支可以撤销”，再用 `as_of_height` 把 latest 的未来读取和增量账本接起来；代价是它是分持仓、分高度的最终一致视图，而不是一个始终 finalized 的全局快照。
+> 用链上读取解决“起点不为零”，用净转账解决“不能每块读所有人”，用对账解决“事件解释不了全部变化”，用 undo 解决“分支可以撤销”，再用 `as_of_height` / `as_of_hash` 把 latest 的未来读取、实际分支和增量账本接起来；代价是它是分持仓、分高度的最终一致视图，而不是一个始终 finalized 的全局快照。
 
 ## 9. 关键配置与代码索引
 
@@ -798,7 +814,7 @@ chains:
     chain_id: 1
     topic: chainstream-eth
     rpc_url: http://127.0.0.1:8545
-    # latest：普通全节点可追块，但可能超前且未绑定哈希
+    # latest：普通全节点可追块；普通 EVM 解析链头后按哈希固定，可能超前于应用块
     # exact：按块哈希，深历史需要 archive 节点
     state_reads: latest
 ```
@@ -807,14 +823,15 @@ chains:
 
 | 关注点 | 仓库与位置 |
 | --- | --- |
-| 四张表完整 DDL | `chainstream-market/internal/pkg/pgdb/schema.go:39-91` |
-| 每块 key 选择、seed、增量、重读、对账 | `chainstream-market/internal/app/holder/biz/indexer.go:147-316` |
-| 净转账、零地址、地址规范化 | `chainstream-market/internal/app/holder/biz/indexer.go:336-388` |
-| 回滚深度检查 | `chainstream-market/internal/app/holder/biz/indexer.go:318-334` |
-| 余额、人数、undo、检查点的事务提交与回滚 SQL | `chainstream-market/internal/app/holder/data/holder.go:73-177` |
-| `as_of_height` 的模型语义 | `chainstream-market/internal/pkg/model/holder.go:14-32` |
-| RPC 请求参数、EIP-1898 / ReadAtLeast、返回值解码 | `chainstream-market/internal/pkg/rpc/client.go:104-188` |
-| 节点错误与合约执行失败的分类 | `chainstream-market/internal/pkg/rpc/client.go:223-261` |
+| 四张表完整 DDL | `chainstream-market/internal/pkg/pgdb/schema.go:39-95` |
+| 每块 key 选择、异分支失效、seed、增量、重读、对账 | `chainstream-market/internal/app/holder/biz/indexer.go:150-323` |
+| 净转账、零地址、地址规范化 | `chainstream-market/internal/app/holder/biz/indexer.go:353-405` |
+| 回滚深度检查与未应用块 revert 通知 | `chainstream-market/internal/app/holder/biz/indexer.go:325-341` |
+| 余额、人数、哈希、undo、检查点的事务提交与回滚 SQL | `chainstream-market/internal/app/holder/data/holder.go:73-213` |
+| `as_of_height` / `as_of_hash` 的模型语义 | `chainstream-market/internal/pkg/model/holder.go:14-32` |
+| RPC 请求参数、EIP-1898、执行高度与哈希 | `chainstream-market/internal/pkg/rpc/client.go:123-207` |
+| TRON latest 前后哈希确认 | `chainstream-market/internal/pkg/rpc/client.go:228-254` |
+| 节点错误与合约执行失败的分类 | `chainstream-market/internal/pkg/rpc/client.go:287-329` |
 | 下游重复块、parent hash、revert 处理 | `chainstream-market/internal/pkg/chainsync/engine.go:123-213` |
 | undo 裁剪公式 | `chainstream-market/internal/pkg/chainsync/prune.go:1-19` |
 | API 的 Top Holders 和人数查询 | `chainstream-market/internal/app/api/data/holders.go:22-42` |
@@ -822,9 +839,8 @@ chains:
 | 上游块、revert、native_touched 的线协议 | `chainstream-evm/api/stream/v1/event.proto:8-79` |
 | 上游 native_touched 的构造 | `chainstream-evm/internal/biz/stream/native.go:14-76` |
 | 上游回滚发布和游标提交顺序 | `chainstream-evm/internal/biz/chain/consumer.go:60-143` |
-| OMB `StateRead`、`ExpectedHash` 定义 | `oh-my-blockchain/chain/evm/sdk/state_read.go:11-76` |
-| OMB latest 解析、执行高度校验、ExpectedHash 校验 | `oh-my-blockchain/chain/evm/sdk/impl/state_read.go:198-383` |
-| OMB TRON latest 执行高度确认 | `oh-my-blockchain/chain/evm/sdk/impl/state_read_latest.go:72-122` |
+| OMB 链头高度与哈希的同次应答 | `oh-my-blockchain/chain/evm/sdk/impl/basic_block_tag.go:26-60` |
 | OMB EIP-1898 `requireCanonical=false` 的实际调用参数 | `oh-my-blockchain/chain/evm/sdk/impl/basic_block_hash.go:12-18` |
 | OMB multicall 默认块信息级别 | `oh-my-blockchain/chain/evm/sdk/multicall/option.go:3-36` |
-| latest 去重、回滚重读、对账高水位的现有测试 | `chainstream-market/internal/app/holder/data/indexer_test.go:337-401` |
+| latest 去重、回滚重读、同高度异分支和对账测试 | `chainstream-market/internal/app/holder/data/indexer_test.go:344-449` |
+| undo 哈希恢复与匹配／异分支失效测试 | `chainstream-market/internal/app/holder/data/holder_test.go:121-157` |
