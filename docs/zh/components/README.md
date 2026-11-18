@@ -6,9 +6,19 @@
 
 ## 阅读顺序
 
-1. 先读[整体架构](../architecture.md)，理解链 topic、共享顺序消费循环和存储边界。
+1. 先读[整体架构](../architecture.md)，理解链 topic、共享顺序消费循环和双数据库表所有权边界。
 2. 按关注的数据选择组件：行情看 `market-engine`，原始事实看 `ch-loader`，接口和推送看 `market-api`。
-3. 排查重组或重启问题时，重点看各页的“一致性与边界”以及 `*_checkpoints`、`*_undo` 字段。
+3. 排查重组或重启问题时，重点看[全链路区块重组（Reorg）专题](../reorg-consistency.md)以及各页的“一致性与边界”与 `*_checkpoints`、`*_undo` 字段。
+
+## 深度设计专题
+
+| 专题文档 | 核心内容 |
+| --- | --- |
+| [market-engine 定价与 K 线深度专题](../market-engine.md) | 价格图与 `beats` 深度选池数值推演、CLAMM Tick 表与深度带、Curve/Balancer、迟到小数位与双高度回填 |
+| [持有人余额深度专题](../holder-balances.md) | 混合余额模型、完整 DDL、`as_of_height` 超前读取去重、周期对账、`exact`/`latest` 块哈希绑定与重组修复 |
+| [钱包成本账本与聪明钱专题](../wallet-ledger.md) | 移动加权平均成本法完整推演、Live 分片补缺、跨库崩溃恢复与两阶段 Invalidation、三坐标增量日汇总 |
+| [全链路区块重组（Reorg）与一致性专题](../reorg-consistency.md) | 上游分叉检测、8 组件回滚对比矩阵、PG 镜像/增量 Undo 与 CH 多时间线删除范式、`ErrReorgTooDeep` 边界 |
+| [运行、多链接入与运维排障手册](../operations.md) | Docker Compose 拓扑、新增一条链 6 步清单、ClickHouse TTL 冷热分层生命周期、Prometheus 指标与常见故障排障 |
 
 ## 八个组件
 

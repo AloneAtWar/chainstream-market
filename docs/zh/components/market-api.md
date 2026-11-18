@@ -120,6 +120,122 @@ direct launch 的伪进度由 API 查询时根据 launch window 或 rankings FDV
 - 转账整页返回 `next={before_height,before_log_index}`；钱包流水还包含 `before_operation_index`，避免同一块 / 同一日志的分页遗漏。
 - 小数值和原始大整数都用字符串，调用方不要用二进制浮点做财务计算。
 
+### 3.2 典型接口响应与跨块游标翻页示例
+
+#### 1. 代币最新价格与定价路径（`GET /v1/chains/1/tokens/0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2/price`）
+
+```json
+{
+  "chain_id": 1,
+  "token": "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2",
+  "block_height": 20000100,
+  "block_time": 1730000000,
+  "price_usd": "2512.34567890123456789",
+  "source": "graph",
+  "hops": 1,
+  "liquidity_usd": "48523100.12"
+}
+```
+
+#### 2. 集中流动性池 Tick 区间分布与价格带深度（`GET /v1/chains/1/pools/{pool}/liquidity?band_bps=100`）
+
+```json
+{
+  "chain_id": 1,
+  "pool_id": "0x88e6a0c2ddd26feeb64f039a2c41296fcb3f5640",
+  "protocol": "uniswap_v3",
+  "tokens": [
+    "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
+    "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2"
+  ],
+  "decimals": [6, 18],
+  "usable": true,
+  "current_tick": 198012,
+  "sqrt_price_x96": "1583920192837465102938475",
+  "band_bps": 100,
+  "totals": [
+    {"raw": "28450120000000", "value": "28450120"},
+    {"raw": "11320000000000000000000", "value": "11320"}
+  ],
+  "depth": [
+    {"raw": "1420000000000", "value": "1420000"},
+    {"raw": "565000000000000000000", "value": "565"}
+  ],
+  "ranges": [
+    {
+      "tick_lower": 197900,
+      "tick_upper": 198100,
+      "liquidity": "94827162534123987123",
+      "amounts": [
+        {"raw": "412000000000", "value": "412000"},
+        {"raw": "164000000000000000000", "value": "164"}
+      ]
+    }
+  ]
+}
+```
+
+#### 3. 钱包账本流水与三元游标无损翻页（`GET /v1/chains/1/wallets/{wallet}/trades?limit=2`）
+
+由于同一区块、甚至同一条合约日志（如聚合批量路由）可能拆出多笔池操作，仅靠 `before_height` 翻页会漏掉同块剩余记录。当返回条数等于 `limit` 时，响应会附带 `next` 三元游标：
+
+```json
+{
+  "trades": [
+    {
+      "block_height": 20000105,
+      "block_time": 1730000060,
+      "transaction_hash": "0xabc...",
+      "log_index": 42,
+      "operation_index": 1,
+      "token": "0x6982508145454ce325ddbe47a25d4ec3d2311933",
+      "side": "sell",
+      "event": "reduce",
+      "amount": "500000000",
+      "value_usd": "5200.00",
+      "price_usd": "0.0000104",
+      "realized_usd": "1450.00",
+      "cost_sold_usd": "3750.00",
+      "counted": true,
+      "hold_seconds": 0,
+      "quantity_after": "1500000000",
+      "cost_after": "11250.00"
+    },
+    {
+      "block_height": 20000105,
+      "block_time": 1730000060,
+      "transaction_hash": "0xabc...",
+      "log_index": 42,
+      "operation_index": 0,
+      "token": "0x6982508145454ce325ddbe47a25d4ec3d2311933",
+      "side": "buy",
+      "event": "add",
+      "amount": "1000000000",
+      "value_usd": "10000.00",
+      "price_usd": "0.0000100",
+      "realized_usd": "0",
+      "cost_sold_usd": "0",
+      "counted": false,
+      "hold_seconds": 0,
+      "quantity_after": "2000000000",
+      "cost_after": "15000.00"
+    }
+  ],
+  "next": {
+    "before_height": 20000105,
+    "before_log_index": 42,
+    "before_operation_index": 0
+  }
+}
+```
+
+下一页请求只需把 `next` 的三个字段原样拼入 Query 参数：
+`GET /v1/chains/1/wallets/{wallet}/trades?limit=2&before_height=20000105&before_log_index=42&before_operation_index=0`。
+
+### 3.3 Web 前端六大视图与 API / WebSocket 映射
+
+![Web 前端六大页面与 market-api 接口 / 实时频道映射](../../../generated-images/web-ui-dataflow.png)
+
 ## 4. WebSocket 实时推送
 
 ### 4.1 发布与扇出流程

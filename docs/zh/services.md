@@ -15,7 +15,7 @@
 | market-wallet | [钱包成本账本、统计与标签](components/market-wallet.md) |
 | ch-loader | [原始事实归档与回填底座](components/ch-loader.md) |
 
-market-engine 另有[独立组件手册](components/market-engine.md)和[定价与 K 线深度专题](market-engine.md)。
+market-engine 另有[独立组件手册](components/market-engine.md)和[定价与 K 线深度专题](market-engine.md)；此外建议结合阅读[持有人余额深度专题](holder-balances.md)、[钱包成本账本与聪明钱专题](wallet-ledger.md)以及[全链路区块重组（Reorg）一致性专题](reorg-consistency.md)。
 
 ## market-api
 

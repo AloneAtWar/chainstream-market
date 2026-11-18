@@ -4,6 +4,8 @@ Market data services built on the [chainstream-evm](https://github.com/AloneAtWa
 
 中文文档：[docs/zh](docs/zh/README.md)
 
+![chainstream-market architecture](generated-images/system-architecture-overview.png)
+
 ## Layout
 
 | Path | What it is |

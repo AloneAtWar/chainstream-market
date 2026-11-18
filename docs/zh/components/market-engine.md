@@ -47,11 +47,17 @@
 
 ### 2.2 USD 价格图
 
+![market-engine USD 价格图传播、深度选池与交易定方向](../../../generated-images/market-engine-price-graph.png)
+
 1. USD 稳定币作为锚点；有可信 Chainlink 答案时使用答案，否则按 $1。
 2. Curve 基础池 LP、Balancer V3 ERC4626 等按已定价底层资产和汇率优先定价。
 3. 其它代币从已定价对手方沿池子传播，最多 `max_hops` 跳。
 4. 候选边优先比较价格带内可成交深度，再比较对手方余额；对手方储备 USD 价值须达到 `min_liquidity_usd`。
 5. 记录价格来源和路径，禁止通过“本身又由该代币定价”的对手方形成循环。
+
+集中流动性池（CLAMM）的 Tick 表维护与价格带深度计算如下：
+
+![集中流动性 Tick 表维护与价格带深度计算](../../../generated-images/market-engine-clamm-depth.png)
 
 ### 2.3 定方向、估值与 K 线
 
@@ -62,6 +68,8 @@
 - 新桶从前一桶 close 开盘，因此空档不会被画成无依据的跳变；空桶本身不写库。
 
 ### 2.4 迟到精度与回填
+
+![迟到代币小数位挂起、回填与双高度回滚](../../../generated-images/market-engine-late-backfill.png)
 
 新代币的前几笔交易可能还没有 decimals。engine 不丢弃它们，而是：
 

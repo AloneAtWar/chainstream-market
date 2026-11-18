@@ -14,6 +14,8 @@
 
 ![market-wallet 实时账本、补缺与统计](../../../generated-images/market-wallet-flow.png)
 
+更完整的移动加权平均成本数值推演、跨 ClickHouse / PostgreSQL 崩溃恢复两阶段 Invalidation 以及三坐标增量日汇总推导，见 **[钱包成本账本、Live 追块补缺与聪明钱统计专题](../wallet-ledger.md)**。
+
 ## 1. 前置依赖
 
 market-wallet 不是直接读原始链 topic 的独立索引器，它依赖 market-engine 已经完成定方向和 USD 估值：
@@ -50,6 +52,8 @@ market-wallet 不是直接读原始链 topic 的独立索引器，它依赖 mark
 没有账本流水时，统计 refresher 不做任何事。
 
 ## 3. 核心账本算法
+
+![移动加权平均成本账本与五类持仓事件](../../../generated-images/market-wallet-cost-ledger.png)
 
 ### 3.1 哪些交易进入账本
 
@@ -304,6 +308,8 @@ INSERT wallet_trades → PostgreSQL TX(positions + undo + checkpoint)
 记录 TTL 为 30 天；`wallet_stats` 版本另有 7 天 TTL 兜底。
 
 ## 7. 增量统计的巧思
+
+![跨库崩溃恢复与三坐标增量统计刷新](../../../generated-images/market-wallet-recovery-invalidation.png)
 
 首次汇总重算最长窗口。后续轮次不会盲目全量，也不会只看“最新一天”，而是取以下候选中最早的受影响日，并截断在最长窗口内：
 
