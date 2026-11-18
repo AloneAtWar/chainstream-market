@@ -13,6 +13,7 @@ chainstream-evm 只发布链上"事实"（每块的交易、转账、资产、�
 | [architecture.md](architecture.md) | 整体数据流、八个组件的职责、目录结构与分层约定、共享的顺序消费循环（chainsync） |
 | [market-engine.md](market-engine.md) | 定价与 K 线：池子状态、价格图、交易定方向、集中流动性 tick 表、Chainlink、异常交易、迟到的代币小数位与回填、存储与状态 |
 | [services.md](services.md) | market-api 接口、实时推送协议、holder-indexer、market-registry、market-launchpad、market-rankings、market-wallet（聪明钱）、ch-loader |
+| [holder-balances.md](holder-balances.md) | 持有人余额的完整 DDL、初始化、增量、对账、回滚、exact/latest 链上读取及块哈希与最终性边界 |
 | [operations.md](operations.md) | 本地完整环境、配置、开发命令、指标、Web 前端 |
 
 英文版完整说明见仓库根目录 [README.md](../../README.md)；两者不一致时以英文 README 和代码为准。
