@@ -143,6 +143,7 @@ go run ./cmd/holder-indexer -conf configs/holder-indexer.yaml   # 需要 postgre
   没有已知 multicall 合约的链（如本地开发链）记录警告并跳过原生币。
 - **重组**：每次变化都以可撤销增量保存，回滚时减去被回滚区块加上的量，并删除它们新建的持仓。
   回滚后 `as_of_height` 仍高于回滚点的持仓，余额可能读自被回滚的分支：下次被触及时重新读取，未被触及的优先对账。
+  即使 `rollback_to` 等于或高于当前检查点、没有已应用块需要撤销，holder-indexer 也会通过 `UnappliedReverter` 执行这项失效处理。
 
 | 表 | 内容 |
 | --- | --- |

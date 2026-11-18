@@ -384,6 +384,26 @@ func TestLatestReadsAreReadAgainAfterARevert(t *testing.T) {
 	}
 }
 
+// A latest read can include a block above the checkpoint. A revert to the
+// checkpoint must invalidate that read even though there are no applied deltas.
+func TestLatestReadsAreInvalidatedByUnappliedRevert(t *testing.T) {
+	f := newLatestFixture(t, 0)
+	f.node.SetBalance(f.head(101, "a"), token, alice, 1300)
+	f.mustApply(100, "", transfer(token, zeroAddress, alice, 1000))
+	if err := f.indexer.RevertUnapplied(context.Background(), 100); err != nil {
+		t.Fatalf("RevertUnapplied() error = %v", err)
+	}
+	f.commit(100, hashOf(100, ""))
+	holdings, err := f.repo.Holdings(context.Background(), 1, []model.HolderKey{{Token: token, Holder: alice}})
+	if err != nil || len(holdings) != 1 || holdings[0].AsOf != model.AsOfReread {
+		t.Fatalf("holdings after unapplied revert = %+v, %v", holdings, err)
+	}
+
+	f.node.SetBalance(f.head(101, "b"), token, alice, 1007)
+	f.mustApply(101, "b", transfer(token, zeroAddress, alice, 7))
+	assertBalances(t, f.balances(token), map[string]int64{alice: 1007})
+}
+
 // Reconciliation at the latest block replaces the balance and moves AsOf, so
 // the transfers it already includes are not added again.
 func TestLatestReconciliationMovesAsOf(t *testing.T) {

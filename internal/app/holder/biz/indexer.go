@@ -323,6 +323,14 @@ func (indexer *Indexer) Revert(_ context.Context, rollbackTo int64) error {
 	return nil
 }
 
+// RevertUnapplied invalidates balances read beyond the checkpoint even when
+// there are no applied block changes to undo.
+//
+// RevertUnapplied 在没有已应用块变化需要撤销时，仍失效读取高度超过检查点的余额。
+func (indexer *Indexer) RevertUnapplied(ctx context.Context, rollbackTo int64) error {
+	return indexer.Revert(ctx, rollbackTo)
+}
+
 func (indexer *Indexer) Commit(ctx context.Context, checkpoint chainsync.Checkpoint) error {
 	change := indexer.pending
 	change.PrunedThrough = indexer.prunedThrough
@@ -392,3 +400,4 @@ func compareKeys(left, right model.HolderKey) int {
 }
 
 var _ chainsync.Handler = (*Indexer)(nil)
+var _ chainsync.UnappliedReverter = (*Indexer)(nil)

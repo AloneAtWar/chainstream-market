@@ -164,16 +164,23 @@ func (engine *Engine) handle(ctx context.Context, checkpoint Checkpoint, message
 	return next, nil
 }
 
-// revert：revert 可能被重复投递，回滚高度不低于已应用高度时无事可做；否则调用
-// Handler.Revert，并把检查点高度降到 rollback_to、清空哈希（下一个块不再校验 parent）。
+// revert：revert 可能被重复投递。回滚高度不低于已应用高度时，普通 Handler 无事可做，
+// UnappliedReverter 仍可失效超前读取；否则调用 Handler.Revert，并把检查点高度降到
+// rollback_to、清空哈希（下一个块不再校验 parent）。
 func (engine *Engine) revert(ctx context.Context, checkpoint Checkpoint, revert *streamv1.BlockRevert, next *Checkpoint) error {
 	if revert.GetChainId() != engine.chainID {
 		return fmt.Errorf("%w: revert chain %d", ErrChainMismatch, revert.GetChainId())
 	}
 	rollbackTo := revert.GetRollbackTo()
 	// Reverts may be redelivered; one at or above the applied height has
-	// nothing left to undo.
+	// nothing left to undo. A handler with reads ahead of its checkpoint can
+	// still invalidate them.
 	if !applied(checkpoint) || rollbackTo >= checkpoint.Height {
+		if reverter, ok := engine.handler.(UnappliedReverter); ok {
+			if err := reverter.RevertUnapplied(ctx, rollbackTo); err != nil {
+				return fmt.Errorf("revert unapplied to %d: %w", rollbackTo, err)
+			}
+		}
 		return nil
 	}
 	if err := engine.handler.Revert(ctx, rollbackTo); err != nil {

@@ -63,8 +63,9 @@ type Handler interface {
 处理规则：
 
 - **offset ≤ 检查点**：已处理过，跳过。
-- **BlockRevert**：回滚高度 ≥ 已应用高度时无事可做（revert 可能重复投递）；否则调用 `Handler.Revert`，检查点高度降到
-  `rollback_to`。
+- **BlockRevert**：回滚高度 ≥ 已应用高度时，普通 Handler 无事可做（revert 可能重复投递）；实现了
+  `UnappliedReverter` 的 holder-indexer 仍会失效读取高度高于 `rollback_to` 的余额。回滚高度更低时调用
+  `Handler.Revert`，检查点高度降到 `rollback_to`。
 - **BlockEvent**：必须紧接上一个已应用的块。高度 ≤ 已应用高度视为上游重试导致的重复投递，跳过；跳高度或 parent hash
   对不上（且之前没有 revert）说明数据异常，**引擎停止**，而不是带着错误数据继续。
 - **每条记录之后**调用 `Handler.Commit`，保存检查点（offset、高度、哈希）以及该记录带来的全部变化。重启后从下一条未提交

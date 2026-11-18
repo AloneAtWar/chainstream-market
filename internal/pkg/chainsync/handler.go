@@ -25,6 +25,16 @@ type Handler interface {
 	Commit(ctx context.Context, checkpoint Checkpoint) error
 }
 
+// UnappliedReverter handles a revert with no applied blocks to undo. It lets a
+// handler invalidate external reads beyond its checkpoint without changing the
+// no-op behavior of ordinary handlers.
+//
+// UnappliedReverter 处理没有已应用块需要撤销的 revert，使持有超前外部读取的
+// Handler 也能失效这些读取，同时不改变普通 Handler 的空操作语义。
+type UnappliedReverter interface {
+	RevertUnapplied(ctx context.Context, rollbackTo int64) error
+}
+
 // Checkpoint is the last chain-topic record the engine fully applied.
 //
 // Checkpoint 是最后一条被完整应用的记录：topic offset、区块高度和哈希。

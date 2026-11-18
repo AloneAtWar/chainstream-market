@@ -511,17 +511,15 @@ pruned_through = max(F, H - history_depth)
 
 配置要求 `holders.history_depth >= chainstream-evm.scanner.cache_size`。否则上游仍能检测并发出某个深度的 revert，下游却已经删掉了对应的 undo。
 
-### 6.6 当前实现的两个可见边界
-
-#### 边界一：标记失效不等于 API 立即不可见
+### 6.6 标记失效不等于 API 立即不可见
 
 `market-api` 只按 `balance > 0` 查询，不检查 `as_of_height = -1`，响应里也不返回 `as_of_height` / `verified_height`。因此在“revert 已提交、该地址尚未重读”的窗口里，旧数值仍可能出现在持有人列表中。
 
 如果该地址之后一直没有被触碰，且对账被关闭，这个状态可能长期存在。当前设计提供的是最终修复，不是重组瞬间的强一致展示。
 
-#### 边界二：等于当前检查点的 revert 可能漏掉 latest 高水位失效
+### 6.7 没有已应用块需要撤销时，仍然要失效
 
-这是从当前分支条件可以直接推演出的特殊场景：
+考虑 latest 特有的时间线：
 
 ```text
 1. holder-indexer 已应用并提交到块 100。
@@ -530,14 +528,11 @@ pruned_through = max(F, H - history_depth)
 4. 此时 holder-indexer 的应用检查点仍是 100。
 ```
 
-通用 `chainsync.revert` 把 `rollback_to >= checkpoint.Height` 当作“没有已应用块需要撤销”，不会调用 `Handler.Revert`。因此第 6.2 节的 `as_of_height > rollback_to` 失效逻辑也不会运行。
+此时没有块 101 的 undo 需要撤销，但 `as_of_height = 101` 的余额仍然必须失效。否则替换块 B101 到来时，普通增量规则会误以为旧 A101 的余额已经包含 B101 的转账。
 
-随后替换块 B101 到来时，该持仓已有 `as_of_height = 101`，普通增量规则会认为“B101 的转账已经包含在余额里”，既不重读也不累加。旧 A101 的基数可能继续保留：
+因此 `chainsync` 为这种情况提供可选的 `UnappliedReverter` 通知：普通 Handler 在 `rollback_to >= checkpoint.Height` 时仍保持无事可做；`holder-indexer` 则通过 `RevertUnapplied` 复用同一套 `CommitHolders` 回滚事务，执行第 6.2 节第 4 步的失效 SQL。回滚点高于检查点时也会通知，因为 latest 的读取高水位可能已经越过它。
 
-- 开启对账时，之后的周期对账仍能纠正；
-- 关闭对账时，若没有其他事件迫使它重读，偏差可能长期保留。
-
-现有测试覆盖了“回滚低于已应用高度后重读”，但没有覆盖这个“latest 读取领先一块、revert 正好到检查点”的组合。若要让该路径也即时自愈，合理修正是：**即使无需撤销已应用块，也应对每条有效 revert 执行 `as_of_height > rollback_to` 的失效处理**，并增加上述时间线的端到端测试。这是改进建议，不是当前代码已有的行为。
+这条通知只增加失效处理，不改变检查点高度和哈希；当前 offset 仍照常提交。回归测试同时覆盖 revert 等于、高于检查点，以及 A101 被孤立后在 B101 重读的场景。
 
 ## 7. 当前如何获取余额
 
@@ -722,7 +717,7 @@ TRON 只能把 `eth_call` 的区块参数写成 `"latest"`。OMB 通过 multical
 - 对可能来自旧分支的 latest 余额标 `-1`；
 - 用周期对账修正残余漂移。
 
-但第 6.6 节说明的两个边界仍然存在，所以不能把它描述成“任何时刻、任何重组形态下，API 都立即返回新规范链余额”。
+但第 6.6 节说明的可见窗口仍然存在，所以不能把它描述成“任何时刻、任何重组形态下，API 都立即返回新规范链余额”。
 
 ### 7.7 如果业务完全不能接受会回滚的余额，怎么解决
 
