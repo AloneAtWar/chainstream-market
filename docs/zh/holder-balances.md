@@ -11,6 +11,8 @@
 
 本文描述当前 `holder-indexer` 实现，具体行为以文末代码索引和相应测试为准。
 
+只需要组件职责、基本流程和字段速查时，可先读 [holder-indexer 组件手册](components/holder-indexer.md)；本文继续深入所有关键边界。
+
 ## 1. 先看整条链路：为什么不能只把转账加起来
 
 ```text

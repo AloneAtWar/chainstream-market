@@ -1,7 +1,11 @@
 # market-engine：定价与 K 线
 
-market-engine 每条链一个进程，按 offset 顺序读该链的 topic，把 chainstream-evm 发布的原始交易变成
+market-engine 为每条链运行独立的顺序消费循环，按 offset 读该链的 topic，把 chainstream-evm 发布的原始交易变成
 **定好方向、带 USD 价值的交易**、**代币价格**和 **K 线**，写入 ClickHouse，并把实时消息发到 live topic。
+
+![market-engine 数据流](../../generated-images/market-engine-flow.png)
+
+若需要逐表逐字段字典和组件级启动 / 提交流程，见 [market-engine 组件手册](components/market-engine.md)。
 
 代码位置：
 

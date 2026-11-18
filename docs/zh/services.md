@@ -3,6 +3,20 @@
 本页介绍 market-engine 之外的七个组件：market-api（含实时推送）、holder-indexer、market-registry、market-launchpad、market-rankings、market-wallet 和 ch-loader。
 除 market-api 和 market-rankings 外，它们都通过 [chainsync](architecture.md) 各自按 offset 顺序读链 topic、维护自己的检查点。
 
+需要**逐表逐字段说明、完整基本流程和设计边界**时，阅读对应的独立组件手册：
+
+| 组件 | 独立手册 |
+| --- | --- |
+| market-api | [统一查询与实时推送](components/market-api.md) |
+| holder-indexer | [持有人余额与人数](components/holder-indexer.md) |
+| market-registry | [代币与池子元数据](components/market-registry.md) |
+| market-launchpad | [发射平台生命周期与三栏](components/market-launchpad.md) |
+| market-rankings | [代币榜单读模型](components/market-rankings.md) |
+| market-wallet | [钱包成本账本、统计与标签](components/market-wallet.md) |
+| ch-loader | [原始事实归档与回填底座](components/ch-loader.md) |
+
+market-engine 另有[独立组件手册](components/market-engine.md)和[定价与 K 线深度专题](market-engine.md)。
+
 ## market-api
 
 ```sh
