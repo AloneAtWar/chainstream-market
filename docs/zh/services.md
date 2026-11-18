@@ -126,8 +126,10 @@ go run ./cmd/holder-indexer -conf configs/holder-indexer.yaml   # 需要 postgre
 代码：`internal/app/holder`。维护见过的每一笔 ERC-20 持仓，可选维护原生币余额。
 
 - **读取方式（`chains[].state_reads`）**：
-  - `latest`（默认）：在不早于当前块的 latest 读余额，并记下实际读到的块高 `as_of_height`。不需要历史状态，普通全节点即可，
-    落后很多块追赶时也能跑；TRON 只支持这种。追块期间中间高度的持有人数会"超前"，追平后正确。
+  - `latest`（默认）：解析不早于当前块的链头，记下实际块高和块哈希 `as_of_height` / `as_of_hash`。普通 EVM 再按该哈希做
+    EIP-1898 调用；TRON 只支持 latest，会交叉检查 multicall 报告的执行高度，并要求调用前后链头高度和哈希不变。
+    两种 latest 路径都要求：链头高度恰好等于当前应用块时，链头哈希必须与 `BlockEvent.block_hash` 相同，否则按不稳定读取重试。无需历史状态，普通全节点即可追块；
+    追块期间中间高度的持有人数会"超前"，追平后正确。
   - `exact`：按当前块哈希读（EIP-1898），逐块精确；落后超过全节点保留的状态（约 128 块）时需要 archive 节点。
   - 两种方式规则相同：每个持仓的余额已包含到 `as_of_height`，块高不超过它的转账不再叠加；exact 下它就是读取的块。
 - **初始化（seeding）**：某个 `(token, holder)` 第一次出现时读取 `balanceOf`，所以初值已包含本块转账和 indexer 启动前的历史。
@@ -143,6 +145,8 @@ go run ./cmd/holder-indexer -conf configs/holder-indexer.yaml   # 需要 postgre
   没有已知 multicall 合约的链（如本地开发链）记录警告并跳过原生币。
 - **重组**：每次变化都以可撤销增量保存，回滚时减去被回滚区块加上的量，并删除它们新建的持仓。
   回滚后 `as_of_height` 仍高于回滚点的持仓，余额可能读自被回滚的分支：下次被触及时重新读取，未被触及的优先对账。
+  即使 `rollback_to` 等于或高于当前检查点、没有已应用块需要撤销，holder-indexer 也会通过 `UnappliedReverter` 执行这项失效处理。
+  此外，`(chain_id, as_of_height)` 索引会在读取高度真正到达时检查块哈希；同高度不同分支的持仓先失效，再应用本块转账，undo 同时恢复旧高度和旧哈希。
 
 | 表 | 内容 |
 | --- | --- |

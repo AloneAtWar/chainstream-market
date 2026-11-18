@@ -3,6 +3,7 @@ package chainsync
 import (
 	"context"
 	"errors"
+	"slices"
 	"testing"
 
 	"github.com/AloneAtWar/chainstream-market/internal/pkg/source"
@@ -100,12 +101,22 @@ func (handler *headerHandler) Commit(_ context.Context, checkpoint Checkpoint) e
 	return nil
 }
 
+type unappliedRevertHandler struct {
+	*headerHandler
+	reverted []int64
+}
+
+func (handler *unappliedRevertHandler) RevertUnapplied(_ context.Context, rollbackTo int64) error {
+	handler.reverted = append(handler.reverted, rollbackTo)
+	return nil
+}
+
 type run struct {
 	start int64
 	err   error
 }
 
-func runEngine(t *testing.T, handler *headerHandler, messages []source.Message) run {
+func runEngine(t *testing.T, handler Handler, messages []source.Message) run {
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -206,6 +217,25 @@ func TestEngineSkipsRedeliveredRecords(t *testing.T) {
 	}
 	if got := heights(handler); len(got) != 3 || got[102] != "a102" {
 		t.Fatalf("blocks = %v", got)
+	}
+}
+
+func TestEngineNotifiesUnappliedReverter(t *testing.T) {
+	handler := &unappliedRevertHandler{headerHandler: newHeaderHandler()}
+	result := runEngine(t, handler, encode(t, 0,
+		block(100, "a100", "a99"),
+		revert(100),
+		revert(101),
+		block(101, "b101", "a100"),
+	))
+	if result.err != nil {
+		t.Fatalf("Run() error = %v", result.err)
+	}
+	if !slices.Equal(handler.reverted, []int64{100, 101}) {
+		t.Fatalf("unapplied reverts = %v, want [100 101]", handler.reverted)
+	}
+	if checkpoint := handler.checkpoint; checkpoint.Offset != 3 || checkpoint.Height != 101 || checkpoint.Hash != "b101" {
+		t.Fatalf("checkpoint = %+v", checkpoint)
 	}
 }
 

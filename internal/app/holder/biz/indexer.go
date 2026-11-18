@@ -81,6 +81,8 @@ type HolderRepo interface {
 	LoadHolderCheckpoint(ctx context.Context, chainID uint64) (chainsync.Checkpoint, int64, bool, error)
 	// Holdings returns the stored holdings among keys.
 	Holdings(ctx context.Context, chainID uint64, keys []model.HolderKey) ([]model.Holding, error)
+	// InvalidateForkReads marks holdings read at height on another branch for rereading.
+	InvalidateForkReads(ctx context.Context, chainID uint64, height int64, hash string) error
 	// StaleHoldings returns up to limit holdings, least recently verified
 	// first, leaving out those of skipToken unless it is empty.
 	StaleHoldings(ctx context.Context, chainID uint64, limit int, skipToken string) ([]model.Holding, error)
@@ -147,7 +149,10 @@ func (indexer *Indexer) Restore(ctx context.Context, chainID uint64) (chainsync.
 // Apply 汇总本块净转账，为新持仓播种、按周期对账、刷新原生币余额，生成待提交的 delta。
 func (indexer *Indexer) Apply(ctx context.Context, block *streamv1.BlockEvent) error {
 	height := block.GetBlockHeight()
-	at := rpc.Block{Height: height, Hash: block.GetBlockHash()}
+	at := rpc.Block{Height: height, Hash: strings.ToLower(block.GetBlockHash())}
+	if err := indexer.options.Repo.InvalidateForkReads(ctx, indexer.options.ChainID, height, at.Hash); err != nil {
+		return fmt.Errorf("invalidate fork reads: %w", err)
+	}
 	deltas := netTransfers(block.GetTransfers())
 	var native []model.HolderKey
 	if indexer.options.NativeBalances {
@@ -188,7 +193,7 @@ func (indexer *Indexer) Apply(ctx context.Context, block *streamv1.BlockEvent) e
 		return fmt.Errorf("seed holdings: %w", err)
 	}
 	for index, key := range read {
-		change.Created, change.Deltas = indexer.applyRead(key, balances[index], stored, deltas[key], height,
+		change.Created, change.Deltas = indexer.applyRead(key, balances[index], stored, deltas[key], at,
 			change.Created, change.Deltas)
 	}
 
@@ -213,7 +218,7 @@ func (indexer *Indexer) Apply(ctx context.Context, block *streamv1.BlockEvent) e
 // applyRead turns one balance read for key into a seed or a verified delta.
 // delta is the block's net transfers of key, used when balanceOf failed.
 func (indexer *Indexer) applyRead(key model.HolderKey, balance rpc.Balance, stored map[model.HolderKey]model.Holding,
-	delta *big.Int, height int64, created []model.HolderSeed, deltas []model.HolderDelta,
+	delta *big.Int, block rpc.Block, created []model.HolderSeed, deltas []model.HolderDelta,
 ) ([]model.HolderSeed, []model.HolderDelta) {
 	existing, ok := stored[key]
 	native := key.Token == rpc.NativeToken
@@ -229,22 +234,24 @@ func (indexer *Indexer) applyRead(key model.HolderKey, balance rpc.Balance, stor
 		// A holding read again after a revert records its new AsOf even
 		// when the balance did not change.
 		if difference.Sign() != 0 || existing.AsOf < 0 {
-			deltas = append(deltas, model.HolderDelta{HolderKey: key, Delta: difference, Verified: true, AsOf: balance.Height})
+			deltas = append(deltas, model.HolderDelta{HolderKey: key, Delta: difference, Verified: true, AsOf: balance.Height, AsOfHash: balance.Hash})
 		}
 	case native:
 		// Senders and fee recipients are touched by every block; only
 		// addresses that hold something are kept.
 		if balance.Amount != nil && balance.Amount.Sign() > 0 {
 			created = append(created, model.HolderSeed{
-				Holding: model.Holding{HolderKey: key, Balance: balance.Amount, AsOf: balance.Height}, Verified: true,
+				Holding: model.Holding{HolderKey: key, Balance: balance.Amount, AsOf: balance.Height, AsOfHash: balance.Hash}, Verified: true,
 			})
 		}
 	case balance.Amount == nil:
 		// balanceOf failed; the block's net transfers are the best guess.
-		created = append(created, model.HolderSeed{Holding: model.Holding{HolderKey: key, Balance: delta, AsOf: height}})
+		created = append(created, model.HolderSeed{Holding: model.Holding{
+			HolderKey: key, Balance: delta, AsOf: block.Height, AsOfHash: block.Hash,
+		}})
 	default:
 		created = append(created, model.HolderSeed{
-			Holding: model.Holding{HolderKey: key, Balance: balance.Amount, AsOf: balance.Height}, Verified: true,
+			Holding: model.Holding{HolderKey: key, Balance: balance.Amount, AsOf: balance.Height, AsOfHash: balance.Hash}, Verified: true,
 		})
 	}
 	return created, deltas
@@ -284,7 +291,7 @@ func (indexer *Indexer) reconcile(ctx context.Context, at rpc.Block, touched map
 		correction := model.HolderDelta{HolderKey: holding.HolderKey, Delta: new(big.Int), Verified: true}
 		if actual[index].Amount != nil {
 			correction.Delta.Sub(actual[index].Amount, holding.Balance)
-			correction.AsOf = actual[index].Height
+			correction.AsOf, correction.AsOfHash = actual[index].Height, actual[index].Hash
 		}
 		if correction.Delta.Sign() != 0 {
 			drifted++
@@ -321,6 +328,14 @@ func (indexer *Indexer) Revert(_ context.Context, rollbackTo int64) error {
 	}
 	indexer.pending = model.HolderChange{Reverted: true, RevertTo: rollbackTo}
 	return nil
+}
+
+// RevertUnapplied invalidates balances read beyond the checkpoint even when
+// there are no applied block changes to undo.
+//
+// RevertUnapplied 在没有已应用块变化需要撤销时，仍失效读取高度超过检查点的余额。
+func (indexer *Indexer) RevertUnapplied(ctx context.Context, rollbackTo int64) error {
+	return indexer.Revert(ctx, rollbackTo)
 }
 
 func (indexer *Indexer) Commit(ctx context.Context, checkpoint chainsync.Checkpoint) error {
@@ -392,3 +407,4 @@ func compareKeys(left, right model.HolderKey) int {
 }
 
 var _ chainsync.Handler = (*Indexer)(nil)
+var _ chainsync.UnappliedReverter = (*Indexer)(nil)
