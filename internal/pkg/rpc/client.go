@@ -139,15 +139,16 @@ const (
 // Balances returns balanceOf for each query and the execution block's height
 // and hash. Exact clients read at block's hash. Ordinary EVM latest clients
 // resolve a head no older than block and pin calls to that head's hash. TRON
-// cannot pin calls by hash, so it accepts a latest read only when the head's
-// height and hash are unchanged before and after the calls. Pinning does not
+// cannot pin calls by hash, so it cross-checks reported execution heights and
+// accepts a latest read only when the head's height and hash are unchanged
+// before and after the calls. Pinning does not
 // make an unfinalized block final; reverts are still handled by the indexer.
 // Native balances use the multicall contract's getEthBalance and batch with
 // balanceOf. Node failures are returned, while an on-chain failure gives a nil
 // Amount.
 //
 // Balances 读取每个查询的 balanceOf，并返回实际执行块的高度和哈希。普通 EVM 的
-// latest 先解析不早于当前块的链头再按哈希锁定；TRON 通过调用前后高度和哈希不变来确认。
+// latest 先解析不早于当前块的链头再按哈希锁定；TRON 交叉检查执行高度，并校验调用前后高度和哈希不变。
 func (client *Client) Balances(ctx context.Context, block Block, queries []BalanceQuery) ([]Balance, error) {
 	requests := make([]evmsdk.RPCCallReq, len(queries))
 	for index, query := range queries {
@@ -251,9 +252,21 @@ func (client *Client) callTronLatest(ctx context.Context, minimum int64, request
 		for index := range requests {
 			requests[index].BlockHeight = evmsdk.LatestBlockNumber
 		}
-		results, _, err := client.callAt(ctx, requests)
+		results, heights, err := client.callAt(ctx, requests)
 		if err != nil {
 			return nil, Block{}, err
+		}
+		mismatched := false
+		for index, height := range heights {
+			if height >= 0 && height != before.Number {
+				unstable = fmt.Errorf("%w: call %d executed at %d, head was %d %s", evmsdk.ErrStateReadUnstable,
+					index, height, before.Number, before.Hash)
+				mismatched = true
+				break
+			}
+		}
+		if mismatched {
+			continue
 		}
 		after, err := client.latestHead(ctx, minimum)
 		if err != nil {
@@ -303,8 +316,8 @@ func (client *Client) CallLatest(ctx context.Context, calls []Call) ([][]byte, e
 
 // callAt runs requests and applies the failure rules: a revert or empty
 // return data is a nil result, any other node error fails the whole call.
-// It also returns the block each request executed at, or -1 when the
-// request named no state read; a state read without one is an error.
+// It returns execution heights whenever the mechanism reports them, or -1
+// when unavailable; a configured state read requires that evidence.
 func (client *Client) callAt(ctx context.Context, requests []evmsdk.RPCCallReq) ([][]byte, []int64, error) {
 	if len(requests) == 0 {
 		return nil, nil, nil
@@ -320,12 +333,14 @@ func (client *Client) callAt(ctx context.Context, requests []evmsdk.RPCCallReq) 
 	heights := make([]int64, len(responses))
 	for index, response := range responses {
 		heights[index] = -1
-		if !requests[index].Read.IsZero() {
-			execution := response.Execution
-			if execution == nil || execution.BlockNumber == nil || !execution.BlockNumber.IsInt64() {
-				return nil, nil, fmt.Errorf("call %s: no execution height for a latest read", requests[index].Address)
+		if execution := response.Execution; execution != nil && execution.BlockNumber != nil {
+			if !execution.BlockNumber.IsInt64() || execution.BlockNumber.Sign() < 0 {
+				return nil, nil, fmt.Errorf("call %s: invalid execution height", requests[index].Address)
 			}
 			heights[index] = execution.BlockNumber.Int64()
+		}
+		if !requests[index].Read.IsZero() && heights[index] < 0 {
+			return nil, nil, fmt.Errorf("call %s: no execution height for a latest read", requests[index].Address)
 		}
 		if !response.Success {
 			if response.Err != nil && !evmsdk.IsExecutionReverted(response.Err) {

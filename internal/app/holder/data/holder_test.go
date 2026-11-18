@@ -121,10 +121,13 @@ func TestHolderCountsBackfill(t *testing.T) {
 func TestHolderReadHashesAreRestoredAndChecked(t *testing.T) {
 	repo := openRepo(t)
 	seed := holderSeed(token, alice, 10)
-	seed.AsOf, seed.AsOfHash, seed.Verified = 10, "a10", true
-	commitHolders(t, repo, model.HolderChange{Height: 10, Created: []model.HolderSeed{seed}})
+	seed.AsOf, seed.AsOfHash, seed.Verified = 9, "A09", true
+	if err := repo.CommitHolders(context.Background(), chainsync.Checkpoint{ChainID: 1, Height: 10, Hash: "A10"},
+		model.HolderChange{Height: 10, Created: []model.HolderSeed{seed}}); err != nil {
+		t.Fatalf("CommitHolders() with mixed-case hashes error = %v", err)
+	}
 	delta := holderDelta(token, alice, 5)
-	delta.Verified, delta.AsOf, delta.AsOfHash = true, 12, "a12"
+	delta.Verified, delta.AsOf, delta.AsOfHash = true, 12, "A12"
 	commitHolders(t, repo, model.HolderChange{Height: 11, Deltas: []model.HolderDelta{delta}})
 
 	keys := []model.HolderKey{{Token: token, Holder: alice}}
@@ -139,7 +142,7 @@ func TestHolderReadHashesAreRestoredAndChecked(t *testing.T) {
 		t.Fatalf("holding after revert = %+v, %v", holdings, err)
 	}
 
-	if err := repo.InvalidateForkReads(context.Background(), 1, 10, "a10"); err != nil {
+	if err := repo.InvalidateForkReads(context.Background(), 1, 10, "A10"); err != nil {
 		t.Fatalf("InvalidateForkReads() with matching hash error = %v", err)
 	}
 	holdings, _ = repo.Holdings(context.Background(), 1, keys)

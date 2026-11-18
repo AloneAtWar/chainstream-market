@@ -127,7 +127,7 @@ go run ./cmd/holder-indexer -conf configs/holder-indexer.yaml   # 需要 postgre
 
 - **读取方式（`chains[].state_reads`）**：
   - `latest`（默认）：解析不早于当前块的链头，记下实际块高和块哈希 `as_of_height` / `as_of_hash`。普通 EVM 再按该哈希做
-    EIP-1898 调用；TRON 只支持 latest，通过调用前后链头高度和哈希不变来确认。无需历史状态，普通全节点即可追块；
+    EIP-1898 调用；TRON 只支持 latest，会交叉检查 multicall 报告的执行高度，并要求调用前后链头高度和哈希不变。无需历史状态，普通全节点即可追块；
     追块期间中间高度的持有人数会"超前"，追平后正确。
   - `exact`：按当前块哈希读（EIP-1898），逐块精确；落后超过全节点保留的状态（约 128 块）时需要 archive 节点。
   - 两种方式规则相同：每个持仓的余额已包含到 `as_of_height`，块高不超过它的转账不再叠加；exact 下它就是读取的块。

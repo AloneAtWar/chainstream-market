@@ -211,8 +211,9 @@ func TestTronHoldersAreBase58AndExactIsRefused(t *testing.T) {
 }
 
 type tronHeadRead struct {
-	heads []evmsdk.BlockHead
-	calls int
+	heads            []evmsdk.BlockHead
+	executionHeights []int64
+	calls            int
 }
 
 func (read *tronHeadRead) GetBlockHeadByTag(context.Context, evmsdk.BlockNumber) (evmsdk.BlockHead, error) {
@@ -229,6 +230,12 @@ func (read *tronHeadRead) CallContract(_ context.Context, requests []evmsdk.RPCC
 			return nil, evmsdk.ErrStateReadUnstable
 		}
 		responses[index] = evmsdk.RPCCallResp{Success: true, ReturnData: common.LeftPadBytes(big.NewInt(50).Bytes(), 32)}
+		if len(read.executionHeights) > 0 {
+			height := read.executionHeights[min(read.calls-1, len(read.executionHeights)-1)]
+			if height >= 0 {
+				responses[index].Execution = &evmsdk.BlockExecution{BlockNumber: big.NewInt(height)}
+			}
+		}
 	}
 	return responses, nil
 }
@@ -249,5 +256,25 @@ func TestTronLatestRetriesSameHeightHashChange(t *testing.T) {
 	}
 	if len(balances) != 1 || balances[0].Amount.Int64() != 50 || balances[0].Height != 11 || balances[0].Hash != headB.Hash.Hex() {
 		t.Fatalf("balances = %+v, want 50 at %d %s", balances, headB.Number, headB.Hash)
+	}
+}
+
+func TestTronLatestRetriesExecutionHeightMismatch(t *testing.T) {
+	head := evmsdk.BlockHead{Number: 11, Hash: common.HexToHash(blockA)}
+	read := &tronHeadRead{
+		heads: []evmsdk.BlockHead{head, head, head}, executionHeights: []int64{12, 11},
+	}
+	client := &Client{sdk: read, tron: true}
+	balances, err := client.Balances(context.Background(), Block{Height: 10, Hash: blockA}, []BalanceQuery{
+		{Token: token, Holder: alice},
+	})
+	if err != nil {
+		t.Fatalf("Balances() error = %v", err)
+	}
+	if read.calls != 2 {
+		t.Fatalf("eth_call attempts = %d, want the mismatched call and one retry", read.calls)
+	}
+	if len(balances) != 1 || balances[0].Height != 11 || balances[0].Hash != head.Hash.Hex() {
+		t.Fatalf("balances = %+v, want execution at %d %s", balances, head.Number, head.Hash)
 	}
 }

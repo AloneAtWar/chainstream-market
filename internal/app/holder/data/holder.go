@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/AloneAtWar/chainstream-market/internal/app/holder/biz"
 	"github.com/AloneAtWar/chainstream-market/internal/pkg/chainsync"
@@ -66,7 +67,7 @@ func (repo *holderRepo) InvalidateForkReads(ctx context.Context, chainID uint64,
 	err := repo.db.WithContext(ctx).Exec(`UPDATE holder_balances
 		SET as_of_height = ?, as_of_hash = NULL, verified_height = NULL
 		WHERE chain_id = ? AND as_of_height = ? AND as_of_hash IS DISTINCT FROM ?`,
-		model.AsOfReread, int64(chainID), height, hash).Error
+		model.AsOfReread, int64(chainID), height, strings.ToLower(hash)).Error
 	if err != nil {
 		return fmt.Errorf("postgres store: invalidate fork reads: %w", err)
 	}
@@ -139,9 +140,9 @@ func (repo *holderRepo) CommitHolders(ctx context.Context, checkpoint chainsync.
 			asOfHashes := make([]string, len(change.Created))
 			for index, seed := range change.Created {
 				tokens[index], holders[index], balances[index] = seed.Token, seed.Holder, seed.Balance.String()
-				asOf[index], asOfHashes[index] = max(seed.AsOf, change.Height), seed.AsOfHash
+				asOf[index], asOfHashes[index] = max(seed.AsOf, change.Height), strings.ToLower(seed.AsOfHash)
 				if seed.AsOf < change.Height {
-					asOfHashes[index] = checkpoint.Hash
+					asOfHashes[index] = strings.ToLower(checkpoint.Hash)
 				}
 				if seed.Verified {
 					verified[index] = &change.Height
@@ -170,7 +171,7 @@ func (repo *holderRepo) CommitHolders(ctx context.Context, checkpoint chainsync.
 			asOfHashes := make([]string, len(change.Deltas))
 			for index, delta := range change.Deltas {
 				tokens[index], holders[index] = delta.Token, delta.Holder
-				deltas[index], verified[index], asOf[index], asOfHashes[index] = delta.Delta.String(), delta.Verified, delta.AsOf, delta.AsOfHash
+				deltas[index], verified[index], asOf[index], asOfHashes[index] = delta.Delta.String(), delta.Verified, delta.AsOf, strings.ToLower(delta.AsOfHash)
 			}
 			values := map[string]any{
 				"chain": chainID, "height": change.Height, "tokens": pgdb.Array(tokens), "holders": pgdb.Array(holders),
