@@ -11,6 +11,8 @@
 | 写入 | PostgreSQL `token_rankings`、`ranking_checkpoints` |
 | 下游 | market-api 的代币列表，以及 launchpad / wallet 等需要最新价格的读取 |
 
+![market-rankings 24 小时代币榜单刷新流程](../../../generated-images/market-rankings-flow.png)
+
 ## 1. 基本流程
 
 每条链一个独立 refresher，启动后立即执行，随后每隔 `rankings.refresh_interval` 执行：

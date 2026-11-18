@@ -11,6 +11,8 @@
 | 输出 | PostgreSQL `registry_tokens`、`registry_pools`、`registry_undo`、`registry_checkpoints` |
 | 下游 | market-api、market-rankings、market-launchpad 的元数据补充 |
 
+![market-registry 最新元数据与可撤销更新流程](../../../generated-images/market-registry-flow.png)
+
 ## 1. 基本流程
 
 1. `chainsync` 按每条链自己的 offset 顺序提供区块和回滚。

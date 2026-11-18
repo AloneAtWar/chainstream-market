@@ -11,6 +11,8 @@
 | 输出 | ClickHouse 五张事实表与 `raw_checkpoints` |
 | 下游 | market-api 的转账查询；market-engine 的 raw trade 回填 |
 
+![ch-loader 原始事实写入与恢复流程](../../../generated-images/ch-loader-flow.png)
+
 ## 1. 基本流程
 
 1. `chainsync` 按 offset 读 `BlockEvent` / `BlockRevert`，并处理重复记录、高度连续性与 parent hash。
