@@ -404,6 +404,41 @@ func TestLatestReadsAreInvalidatedByUnappliedRevert(t *testing.T) {
 	assertBalances(t, f.balances(token), map[string]int64{alice: 1007})
 }
 
+// A latest head at the applied height must be the same block. A same-height
+// head on another fork must not seed a holding after the pre-read check.
+func TestLatestReadAtAppliedHeightOnAnotherForkIsRejected(t *testing.T) {
+	f := newLatestFixture(t, 0)
+	f.node.SetBalance(f.head(100, "a"), token, alice, 1500)
+	if err := f.apply(100, "", transfer(token, zeroAddress, alice, 1000)); err == nil {
+		t.Fatal("Apply() with same-height latest on another fork error = nil")
+	}
+	holdings, err := f.repo.Holdings(context.Background(), 1, []model.HolderKey{{Token: token, Holder: alice}})
+	if err != nil || len(holdings) != 0 {
+		t.Fatalf("holdings after rejected fork read = %+v, %v", holdings, err)
+	}
+}
+
+// A future latest read carries its hash. When that height arrives on another
+// branch, the old read is invalidated before the block's transfers are applied.
+func TestLatestReadHashMismatchIsInvalidatedWhenItsBlockArrives(t *testing.T) {
+	f := newLatestFixture(t, 0)
+	f.node.SetBalance(f.head(103, "a"), token, alice, 1300)
+	f.mustApply(100, "", transfer(token, zeroAddress, alice, 1000))
+	f.mustApply(101, "")
+	f.mustApply(102, "")
+
+	f.node.SetBalance(f.head(103, "b"), token, alice, 1007)
+	f.mustApply(103, "b", transfer(token, zeroAddress, alice, 7))
+	assertBalances(t, f.balances(token), map[string]int64{alice: 1007})
+	holdings, err := f.repo.Holdings(context.Background(), 1, []model.HolderKey{{Token: token, Holder: alice}})
+	if err != nil || len(holdings) != 1 || holdings[0].AsOf != 103 || holdings[0].AsOfHash != hashOf(103, "b") {
+		t.Fatalf("holding after replacement = %+v, %v", holdings, err)
+	}
+	if f.node.Calls() != 2 {
+		t.Fatalf("balanceOf calls = %d, want the seed and one replacement reread", f.node.Calls())
+	}
+}
+
 // Reconciliation at the latest block replaces the balance and moves AsOf, so
 // the transfers it already includes are not added again.
 func TestLatestReconciliationMovesAsOf(t *testing.T) {

@@ -23,6 +23,8 @@ func (emptyRepo) Holdings(context.Context, uint64, []model.HolderKey) ([]model.H
 	return nil, nil
 }
 
+func (emptyRepo) InvalidateForkReads(context.Context, uint64, int64, string) error { return nil }
+
 func (emptyRepo) StaleHoldings(context.Context, uint64, int, string) ([]model.Holding, error) {
 	return nil, nil
 }

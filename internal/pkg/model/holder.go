@@ -24,6 +24,11 @@ type Holding struct {
 	// AsOf 是 Balance 已经包含的区块（该块及以前的转账不再叠加）；在 latest 读取的余额可能
 	// 领先于正在应用的块。负数表示读取余额的块已被回滚，须重新读取。
 	AsOf int64
+	// AsOfHash is the hash of the block at AsOf. Empty means unknown for rows
+	// written before hash tracking was introduced.
+	//
+	// AsOfHash 是 AsOf 区块的哈希；空值表示引入哈希跟踪前写入的历史数据无法证明其分支。
+	AsOfHash string
 }
 
 // AsOfReread is the AsOf of a holding whose balance must be read again.
@@ -40,12 +45,14 @@ type HolderSeed struct {
 
 // HolderDelta adds Delta to an existing holding. Verified marks the result
 // as checked against balanceOf at the change's height. A positive AsOf
-// replaces the holding's AsOf: the corrected balance was read at that block.
+// replaces the holding's AsOf and AsOfHash: the corrected balance was read at
+// that block.
 type HolderDelta struct {
 	HolderKey
 	Delta    *big.Int
 	Verified bool
 	AsOf     int64
+	AsOfHash string
 }
 
 // HolderChange is what one record changed in the holder balances.
