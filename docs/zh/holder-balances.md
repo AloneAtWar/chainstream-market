@@ -682,7 +682,7 @@ state_reads: latest
 普通 EVM 节点上的过程是：
 
 1. 通过 OMB 的 `GetBlockHeadByTag(latest)`，在同一次 `eth_getBlockByNumber("latest", false)` 应答中取得 `(H, hashH)`；
-2. 检查 `H >= N`，N 是当前应用块高；不满足则报 `ErrStateReadUnstable`，不拿旧状态冒充；
+2. 检查 `H >= N`，N 是当前应用块高；若 `H == N`，还要求 `hashH == BlockEvent.block_hash`。高度不足或同高度异分叉都按不稳定读取重试，不把另一条分支的当次结果落库；
 3. 把每个请求构造成 `RPCCallReq{Address, Calldata, BlockHash: hashH}`；
 4. 用 EIP-1898 按 hashH 执行直接或聚合后的 `eth_call`；
 5. 返回 `Balance{Height: H, Hash: hashH}`，并写入 `as_of_height` / `as_of_hash`。
@@ -691,7 +691,7 @@ state_reads: latest
 
 TRON 不支持 EIP-1898，只能把 `eth_call` 的区块参数写成 `"latest"`，因此采用另一套约束：
 
-1. 调用前读取 `(H, hashH)`，要求 `H >= N`；
+1. 调用前读取 `(H, hashH)`，要求 `H >= N`；若 `H == N`，同样要求 hashH 等于当前应用块哈希；
 2. 在 latest 执行调用；
 3. 如果 multicall 返回 `Execution.BlockNumber`，逐个与 H 交叉校验，不一致就按不稳定读取重试，避免负载均衡把调用路由到更高链头的节点后错误记成 H；
 4. 调用后再次读取链头，只有高度和哈希都不变才接受结果，否则最多重试三轮；没有执行高度证据的直接调用依赖这项前后检查；
@@ -708,7 +708,7 @@ TRON 不支持 EIP-1898，只能把 `eth_call` 的区块参数写成 `"latest"`�
 当前实现不再依赖调用方设置 `StateRead.ExpectedHash`，而是在 `internal/pkg/rpc` 直接完成：
 
 - 普通 EVM latest 和 exact 都把实际区块哈希放进 EIP-1898 请求；
-- latest 的高度和哈希来自同一次区块头应答，不是执行后按高度猜一个哈希；
+- latest 的高度和哈希来自同一次区块头应答，不是执行后按高度猜一个哈希；链头恰好等于当前应用块时，还必须与该块的事件哈希一致，否则重试；
 - 每次结果都携带 Height 和 Hash，并持久化到 `holder_balances.as_of_height` / `as_of_hash`；
 - 当前块到达时，通过 `(chain_id, as_of_height)` 索引检查同高度记录的哈希是否一致；
 - TRON 交叉校验 multicall 执行高度，并比较调用前后的高度和哈希，但不能按哈希固定执行，保证弱于普通 EVM。
@@ -729,7 +729,7 @@ TRON 不支持 EIP-1898，只能把 `eth_call` 的区块参数写成 `"latest"`�
 现有缓解手段包括：
 
 - exact 和普通 EVM latest 用块哈希防止同高度误读另一条分支；
-- latest 用实际执行高水位避免重复累加，并保存执行哈希；
+- latest 用实际执行高水位避免重复累加，并保存执行哈希；当次链头高度恰好等于应用块时，还会先校验它与事件哈希一致；
 - 所有变更进入 undo，旧高度和旧哈希一起恢复；
 - 对可能来自旧分支的余额标 `-1`；
 - 当前块到达时再次检查同高度、异哈希记录；

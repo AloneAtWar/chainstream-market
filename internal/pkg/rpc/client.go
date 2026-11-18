@@ -148,7 +148,8 @@ const (
 // Amount.
 //
 // Balances 读取每个查询的 balanceOf，并返回实际执行块的高度和哈希。普通 EVM 的
-// latest 先解析不早于当前块的链头再按哈希锁定；TRON 交叉检查执行高度，并校验调用前后高度和哈希不变。
+// latest 先解析不早于当前块的链头再按哈希锁定；链头恰好等于当前块时必须同哈希。
+// TRON 交叉检查执行高度，并校验调用前后高度和哈希不变。
 func (client *Client) Balances(ctx context.Context, block Block, queries []BalanceQuery) ([]Balance, error) {
 	requests := make([]evmsdk.RPCCallReq, len(queries))
 	for index, query := range queries {
@@ -175,7 +176,7 @@ func (client *Client) Balances(ctx context.Context, block Block, queries []Balan
 		return []Balance{}, nil
 	}
 	if client.tron && !client.exact {
-		results, read, err := client.callTronLatest(ctx, block.Height, requests)
+		results, read, err := client.callTronLatest(ctx, block, requests)
 		if err != nil {
 			return nil, fmt.Errorf("rpc: balanceOf at %d %s: %w", block.Height, block.Hash, err)
 		}
@@ -183,7 +184,7 @@ func (client *Client) Balances(ctx context.Context, block Block, queries []Balan
 	}
 	read := Block{Height: block.Height, Hash: strings.ToLower(block.Hash)}
 	if !client.exact {
-		head, err := client.latestHead(ctx, block.Height)
+		head, err := client.latestHead(ctx, block)
 		if err != nil {
 			return nil, fmt.Errorf("rpc: balanceOf at %d %s: %w", block.Height, block.Hash, err)
 		}
@@ -210,7 +211,7 @@ func decodeBalances(results [][]byte, block Block) []Balance {
 	return balances
 }
 
-func (client *Client) latestHead(ctx context.Context, minimum int64) (evmsdk.BlockHead, error) {
+func (client *Client) latestHead(ctx context.Context, block Block) (evmsdk.BlockHead, error) {
 	reader, ok := client.sdk.(evmsdk.BlockHeadReader)
 	if !ok {
 		return evmsdk.BlockHead{}, fmt.Errorf("rpc: %T cannot read block heads", client.sdk)
@@ -220,15 +221,23 @@ func (client *Client) latestHead(ctx context.Context, minimum int64) (evmsdk.Blo
 		if err != nil {
 			return evmsdk.BlockHead{}, err
 		}
-		if head.Number >= minimum {
-			if head.Hash == (common.Hash{}) {
-				return evmsdk.BlockHead{}, errors.New("rpc: latest block has no hash")
-			}
+		if head.Hash == (common.Hash{}) {
+			return evmsdk.BlockHead{}, errors.New("rpc: latest block has no hash")
+		}
+		if head.Number > block.Height ||
+			(head.Number == block.Height && strings.EqualFold(head.Hash.Hex(), block.Hash)) {
 			return head, nil
 		}
+		var unstable error
+		if head.Number < block.Height {
+			unstable = fmt.Errorf("%w: latest block %d precedes minimum %d",
+				evmsdk.ErrStateReadUnstable, head.Number, block.Height)
+		} else {
+			unstable = fmt.Errorf("%w: latest block %d hash %s does not match applied hash %s",
+				evmsdk.ErrStateReadUnstable, head.Number, head.Hash, block.Hash)
+		}
 		if attempt == latestReadAttempts-1 {
-			return evmsdk.BlockHead{}, fmt.Errorf("%w: latest block %d precedes minimum %d",
-				evmsdk.ErrStateReadUnstable, head.Number, minimum)
+			return evmsdk.BlockHead{}, unstable
 		}
 		timer := time.NewTimer(latestReadRetryDelay)
 		select {
@@ -240,12 +249,12 @@ func (client *Client) latestHead(ctx context.Context, minimum int64) (evmsdk.Blo
 	}
 }
 
-func (client *Client) callTronLatest(ctx context.Context, minimum int64, requests []evmsdk.RPCCallReq) (
+func (client *Client) callTronLatest(ctx context.Context, block Block, requests []evmsdk.RPCCallReq) (
 	[][]byte, Block, error,
 ) {
 	var unstable error
 	for range latestReadAttempts {
-		before, err := client.latestHead(ctx, minimum)
+		before, err := client.latestHead(ctx, block)
 		if err != nil {
 			return nil, Block{}, err
 		}
@@ -268,7 +277,7 @@ func (client *Client) callTronLatest(ctx context.Context, minimum int64, request
 		if mismatched {
 			continue
 		}
-		after, err := client.latestHead(ctx, minimum)
+		after, err := client.latestHead(ctx, block)
 		if err != nil {
 			return nil, Block{}, err
 		}

@@ -188,6 +188,25 @@ func TestBalancesLatestReportsTheReadBlock(t *testing.T) {
 	}
 }
 
+func TestLatestRetriesAppliedHeightForkMismatch(t *testing.T) {
+	expected := evmsdk.BlockHead{Number: 11, Hash: common.HexToHash(blockA)}
+	otherFork := evmsdk.BlockHead{Number: 11, Hash: common.HexToHash(blockB)}
+	read := &tronHeadRead{heads: []evmsdk.BlockHead{otherFork, expected}}
+	client := &Client{sdk: read}
+	balances, err := client.Balances(context.Background(), Block{Height: 11, Hash: blockA}, []BalanceQuery{
+		{Token: token, Holder: alice},
+	})
+	if err != nil {
+		t.Fatalf("Balances() error = %v", err)
+	}
+	if read.calls != 1 {
+		t.Fatalf("eth_call attempts = %d, want only the matching-fork read", read.calls)
+	}
+	if len(balances) != 1 || balances[0].Height != 11 || balances[0].Hash != blockA {
+		t.Fatalf("balances = %+v, want applied block %d %s", balances, 11, blockA)
+	}
+}
+
 func TestTronHoldersAreBase58AndExactIsRefused(t *testing.T) {
 	if _, err := New(Options{URL: "http://127.0.0.1:1", ChainID: uint64(evm.TRON), Exact: true}); err == nil {
 		t.Fatal("New() exact on TRON error = nil")
@@ -226,7 +245,7 @@ func (read *tronHeadRead) CallContract(_ context.Context, requests []evmsdk.RPCC
 	read.calls++
 	responses := make([]evmsdk.RPCCallResp, len(requests))
 	for index, request := range requests {
-		if request.BlockHeight != evmsdk.LatestBlockNumber {
+		if request.BlockHeight != evmsdk.LatestBlockNumber && request.BlockHash == "" {
 			return nil, evmsdk.ErrStateReadUnstable
 		}
 		responses[index] = evmsdk.RPCCallResp{Success: true, ReturnData: common.LeftPadBytes(big.NewInt(50).Bytes(), 32)}
