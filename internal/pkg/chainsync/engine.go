@@ -180,6 +180,8 @@ func (engine *Engine) revert(ctx context.Context, checkpoint Checkpoint, revert 
 			if err := reverter.RevertUnapplied(ctx, rollbackTo); err != nil {
 				return fmt.Errorf("revert unapplied to %d: %w", rollbackTo, err)
 			}
+			engine.logger.Debug("notified handler of revert without applied block changes",
+				"rollback_to", rollbackTo, "applied_height", checkpoint.Height)
 		}
 		return nil
 	}
