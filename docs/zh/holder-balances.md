@@ -41,6 +41,8 @@ holder-indexer ───────────────► EVM 节点
 market-api / market-rankings
 ```
 
+![持有人余额处理链路：上游事件、holder-indexer、链上节点、PostgreSQL 与 API](../../generated-images/holder-balances-overview.png)
+
 只累加 `Transfer` 会遇到三类问题：
 
 1. **索引器不是从创世块启动**：一个地址在启动前已经有 500 个币，启动后只出现一笔 1000 个币的 mint；如果从零开始加，得到的只有 1000，而链上实际是 1500。
@@ -312,6 +314,8 @@ delta(N, k) = 本块所有转入 amount 之和 - 本块所有转出 amount 之�
 
 如果没有 `as_of_height`，块 102 会再加 300，余额变成 1600。这个小字段让系统可以使用普通全节点的 latest 状态，同时保持增量记账不重复。
 
+![latest 超前读取示例：余额读自块 103，101 至 103 的转账不再重复累加](../../generated-images/holder-balances-latest-asof.png)
+
 它还有一个容易忽略的好处：假设 Bob 在块 102 转出 300，但读取点块 103 上 Bob 已经是 0，那么 seed 直接保存 0，而不是错误地从“未知零值”减成 -300。
 
 ### 4.3 链上重读不是直接覆盖，而是转成 delta
@@ -482,6 +486,8 @@ Alice = 1100 - (-100) = 1200
 因为记录的是每块实际施加的净变化，不需要重新扫描旧块，也不需要保存每个地址每块的完整余额快照。
 
 ### 6.4 latest 读取为什么还需要额外的“失效重读”
+
+![重组时的余额修复：失效旧分支读取，并在替换分支上做同高度哈希校验](../../generated-images/holder-balances-reorg.png)
 
 假设应用块 100 时，余额实际读自 latest 块 103：
 
